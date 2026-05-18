@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Building2, Lock, Mail, Eye, EyeOff, ArrowLeft, User } from 'lucide-react';
+import { Building2, Lock, Eye, EyeOff, ArrowLeft, User, AtSign } from 'lucide-react';
 
 type Step = 'login' | 'register-email' | 'register-otp' | 'register-password';
 
@@ -9,6 +9,7 @@ export default function LoginPage() {
   const { login, sendOtp, verifyOtpAndSetPassword } = useAuth();
   const [step, setStep] = useState<Step>('login');
   const [email, setEmail] = useState('');
+  const [usernameInput, setUsernameInput] = useState('');
   const [password, setPassword] = useState('');
   const [otp, setOtp] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -20,7 +21,7 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      await login(email, password);
+      await login(usernameInput, password);
     } catch (err: any) {
       toast.error(err.message || 'خطأ في تسجيل الدخول');
       setLoading(false);
@@ -79,12 +80,12 @@ export default function LoginPage() {
               <h2 className="text-xl font-bold text-gray-900 text-center mb-6">تسجيل الدخول</h2>
               <form onSubmit={handleLogin} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">البريد الإلكتروني</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">اسم المستخدم</label>
                   <div className="relative">
-                    <Mail size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <AtSign size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input
-                      type="email" value={email} onChange={e => setEmail(e.target.value)} required
-                      placeholder="name@dawaa.com"
+                      type="text" value={usernameInput} onChange={e => setUsernameInput(e.target.value)} required
+                      placeholder="ADMIN"
                       className="w-full pr-10 pl-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300 text-right"
                     />
                   </div>

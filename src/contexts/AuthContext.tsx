@@ -102,12 +102,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [loadProfile]);
 
-  const login = async (email: string, password: string) => {
+  const login = async (usernameOrEmail: string, password: string) => {
     setLoading(true);
+    // If input is a username (no @), resolve to email via user_profiles
+    let email = usernameOrEmail;
+    if (!usernameOrEmail.includes('@')) {
+      const { data: profileData } = await supabase
+        .from('user_profiles')
+        .select('email')
+        .ilike('username', usernameOrEmail)
+        .maybeSingle();
+      if (!profileData?.email) {
+        setLoading(false);
+        throw new Error('اسم المستخدم غير موجود');
+      }
+      email = profileData.email;
+    }
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       setLoading(false);
-      throw error;
+      throw new Error('كلمة المرور غير صحيحة');
     }
     if (data.user) await loadProfile(data.user);
     setLoading(false);
