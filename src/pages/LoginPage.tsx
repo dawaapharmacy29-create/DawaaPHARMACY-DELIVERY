@@ -110,6 +110,13 @@ export default function LoginPage() {
                 >
                   {loading ? 'جارٍ الدخول...' : 'دخول'}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => { setUsernameInput('admin'); setPassword('admin123'); }}
+                  className="w-full border border-dashed border-emerald-300 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5"
+                >
+                  ⚡ دخول سريع (admin / admin123)
+                </button>
               </form>
               <div className="mt-4 text-center">
                 <button onClick={() => setStep('register-email')} className="text-sm text-emerald-600 hover:underline">
