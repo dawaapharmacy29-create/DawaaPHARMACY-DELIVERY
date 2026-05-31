@@ -6,13 +6,14 @@
   "lang": "ar",
   "start_url": "/delivery/rider",
   "scope": "/",
-  "background_color": "#f9fafb",
-  "theme_color": "#059669",
+  "background_color": "#071824",
+  "theme_color": "#071824",
   "icons": [
     {
-      "src": "/favicon.ico",
-      "sizes": "64x64",
-      "type": "image/x-icon"
+      "src": "/icons/dawaa-icon.jpeg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
     }
   ]
 }

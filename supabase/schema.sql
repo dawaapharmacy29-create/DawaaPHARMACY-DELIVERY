@@ -274,6 +274,14 @@ create table if not exists delivery_settings (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists delivery_login_aliases (
+  username text primary key,
+  email text not null unique,
+  role text not null default 'admin',
+  status text not null default 'active',
+  created_at timestamptz not null default now()
+);
+
 create index if not exists delivery_customers_branch_code_idx on delivery_customers (branch_id, customer_code);
 create index if not exists delivery_customers_phone_idx on delivery_customers (phone);
 create index if not exists delivery_customers_name_idx on delivery_customers using gin (to_tsvector('simple', name));
@@ -622,6 +630,7 @@ alter table delivery_internal_trips enable row level security;
 alter table delivery_payroll_adjustments enable row level security;
 alter table delivery_payroll_runs enable row level security;
 alter table delivery_settings enable row level security;
+alter table delivery_login_aliases enable row level security;
 
 drop policy if exists delivery_riders_access on delivery_riders;
 create policy delivery_riders_access on delivery_riders
@@ -694,6 +703,11 @@ create policy delivery_settings_access on delivery_settings
 for all using (delivery_can_access_branch(branch_id))
 with check (delivery_can_access_branch(branch_id));
 
+drop policy if exists delivery_login_aliases_admin_access on delivery_login_aliases;
+create policy delivery_login_aliases_admin_access on delivery_login_aliases
+for all using (delivery_is_admin())
+with check (delivery_is_admin());
+
 -- ===== DAWAA DELIVERY PRODUCTION HARDENING =====
 -- Additive migration only: keeps existing delivery data and tightens behavior with RPCs/triggers.
 
@@ -757,6 +771,24 @@ as $$
   select delivery_is_admin()
     or delivery_is_shift_manager()
     or delivery_current_rider_id() is not null;
+$$;
+
+create or replace function delivery_resolve_login(login_name text)
+returns table (
+  email text,
+  role text,
+  status text
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select dla.email, dla.role, dla.status
+  from delivery_login_aliases as dla
+  where lower(dla.username) = lower(trim(login_name))
+    and length(trim(coalesce(login_name, ''))) > 0
+  limit 1;
 $$;
 
 create or replace function delivery_search_customers(search_text text)

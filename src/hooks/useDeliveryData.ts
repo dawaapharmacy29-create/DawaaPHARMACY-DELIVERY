@@ -36,27 +36,53 @@ export function useDeliveryCustomers(search: string) {
 
 export function useDeliveryDashboard() {
   const range = deliveryMonthRange();
+  const today = new Date().toISOString().slice(0, 10);
   return useQuery({
     queryKey: ['delivery-dashboard', range.start, range.end],
     queryFn: async () => {
-      const [trips, delivered, pendingReview, internalTrips] = await Promise.all([
+      const [availableRiders, activeRuns, todayOrders, todayInternalTrips, trips, delivered, pendingReview, internalTrips] = await Promise.all([
+        supabase.from('delivery_riders').select('id', { count: 'exact', head: true }).eq('is_active', true),
+        supabase.from('delivery_trips').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+        supabase.from('delivery_orders').select('id', { count: 'exact', head: true }).gte('created_at', `${today}T00:00:00`).lte('created_at', `${today}T23:59:59`),
+        supabase.from('delivery_internal_trips').select('id', { count: 'exact', head: true }).gte('created_at', `${today}T00:00:00`).lte('created_at', `${today}T23:59:59`),
         supabase.from('delivery_trips').select('id', { count: 'exact', head: true }).gte('started_at', range.start).lte('started_at', range.end),
         supabase.from('delivery_orders').select('id', { count: 'exact', head: true }).eq('status', 'delivered').gte('created_at', range.start).lte('created_at', range.end),
         supabase.from('delivery_trips').select('id', { count: 'exact', head: true }).eq('status', 'review').gte('started_at', range.start).lte('started_at', range.end),
         supabase.from('delivery_internal_trips').select('id', { count: 'exact', head: true }).in('status', ['approved', 'completed']).gte('created_at', range.start).lte('created_at', range.end),
       ]);
 
-      for (const result of [trips, delivered, pendingReview, internalTrips]) {
+      for (const result of [availableRiders, activeRuns, todayOrders, todayInternalTrips, trips, delivered, pendingReview, internalTrips]) {
         if (result.error) throw result.error;
       }
 
       return {
         range,
+        availableRiders: availableRiders.count || 0,
+        activeRuns: activeRuns.count || 0,
+        todayOrders: todayOrders.count || 0,
+        todayInternalTrips: todayInternalTrips.count || 0,
         trips: trips.count || 0,
         deliveredOrders: delivered.count || 0,
         reviewTrips: pendingReview.count || 0,
         internalTrips: internalTrips.count || 0,
       };
+    },
+  });
+}
+
+export function useDeliveryRiderProfile() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['delivery-rider-profile', user?.id],
+    enabled: Boolean(user?.id),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('delivery_riders')
+        .select('id, display_name, branch_id, tier, is_active, branches(name)')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+      if (error) throw error;
+      return data ? { ...data, branchName: (data as any).branches?.name || '' } : null;
     },
   });
 }

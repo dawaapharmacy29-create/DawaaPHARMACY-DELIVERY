@@ -1,6 +1,7 @@
+import { useNavigate } from 'react-router-dom';
+import { LogOut } from 'lucide-react';
 import Sidebar from './Sidebar';
 import { useAuth } from '@/contexts/AuthContext';
-import { Bell } from 'lucide-react';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -9,38 +10,47 @@ interface AppLayoutProps {
 }
 
 export default function AppLayout({ children, title, subtitle }: AppLayoutProps) {
-  const { user } = useAuth();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login', { replace: true });
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50" dir="rtl">
+    <div className="min-h-screen bg-slate-50" dir="rtl">
       <Sidebar />
-      <div className="mr-56 min-h-screen">
-        <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between sticky top-0 z-40">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 bg-emerald-500 rounded-full flex items-center justify-center text-white text-xs font-bold">
-                {(user?.displayName || 'م')[0]}
-              </div>
-              <div>
-                <div className="text-sm font-medium text-gray-800">{user?.displayName || 'مستخدم'}</div>
-                <div className="text-xs text-gray-500">{user?.role || ''}</div>
+      <div className="min-h-screen lg:mr-64">
+        <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <img src="/brand/dawaa-logo.jpeg" alt="Dawaa Delivery" className="h-11 w-11 rounded-xl object-contain bg-white p-1 ring-1 ring-slate-200" />
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-slate-950">Dawaa Delivery</div>
+                <div className="truncate text-xs text-slate-500">دليفري صيدليات دواء</div>
               </div>
             </div>
-            <button className="relative p-2 text-gray-500 hover:text-gray-700">
-              <Bell size={18} />
-            </button>
+
+            <div className="flex items-center gap-2">
+              <div className="hidden text-left sm:block">
+                <div className="text-sm font-bold text-slate-800">{user?.displayName || 'مستخدم'}</div>
+                <div className="text-xs text-slate-500">{user?.role || ''}</div>
+              </div>
+              <button onClick={handleLogout} className="rounded-xl border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50 hover:text-red-600" aria-label="تسجيل الخروج">
+                <LogOut size={18} />
+              </button>
+            </div>
           </div>
-          <div className="text-right">
-            <span className="text-gray-500 text-sm">صيدليات دواء — نظام المشتريات</span>
-          </div>
-        </div>
-        <div className="p-6">
+        </header>
+
+        <main className="px-4 py-5 sm:px-6">
           <div className="mb-5">
-            <h1 className="text-xl font-bold text-gray-900 text-right">{title}</h1>
-            {subtitle && <p className="text-sm text-gray-500 text-right mt-0.5">{subtitle}</p>}
+            <h1 className="text-2xl font-bold text-slate-950">{title}</h1>
+            {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
           </div>
           {children}
-        </div>
+        </main>
       </div>
     </div>
   );

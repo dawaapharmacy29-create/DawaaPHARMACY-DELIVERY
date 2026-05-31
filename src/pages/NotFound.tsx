@@ -1,27 +1,23 @@
-import { useLocation } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 
-const NotFound = () => {
+export default function NotFound() {
   const location = useLocation();
 
   useEffect(() => {
-    console.error(
-      "404 Error: User attempted to access non-existent route:",
-      location.pathname
-    );
+    if (import.meta.env.DEV) console.error('404 route:', location.pathname);
   }, [location.pathname]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+    <main className="grid min-h-screen place-items-center bg-slate-50 px-4" dir="rtl">
       <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4">404</h1>
-        <p className="text-xl text-gray-600 mb-4">Oops! Page not found</p>
-        <a href="/" className="text-blue-500 hover:text-blue-700 underline">
-          Return to Home
-        </a>
+        <img src="/brand/dawaa-logo.jpeg" alt="Dawaa Delivery" className="mx-auto mb-4 h-24 w-24 rounded-2xl bg-white object-contain p-2 shadow" />
+        <h1 className="text-4xl font-bold text-slate-950">404</h1>
+        <p className="mt-2 text-slate-500">الصفحة غير موجودة داخل Dawaa Delivery.</p>
+        <Link to="/delivery" className="mt-5 inline-flex rounded-xl bg-emerald-500 px-5 py-3 font-bold text-white">
+          العودة للوحة الدليفري
+        </Link>
       </div>
-    </div>
+    </main>
   );
-};
-
-export default NotFound;
+}

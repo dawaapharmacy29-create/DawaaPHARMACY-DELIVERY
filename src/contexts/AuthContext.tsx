@@ -1,8 +1,8 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import type { User, Session } from '@supabase/supabase-js';
+import type { Session, User } from '@supabase/supabase-js';
 
-interface AuthUser {
+export interface AuthUser {
   id: string;
   email: string;
   displayName: string;
@@ -16,13 +16,17 @@ interface AuthContextType {
   user: AuthUser | null;
   session: Session | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (usernameOrEmail: string, password: string) => Promise<AuthUser>;
   logout: () => Promise<void>;
   sendOtp: (email: string) => Promise<void>;
   verifyOtpAndSetPassword: (email: string, otp: string, password: string, displayName: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
+
+function isActiveStatus(status?: string | null) {
+  return ['active', 'نشط'].includes(status || '');
+}
 
 async function fetchProfile(userId: string): Promise<AuthUser | null> {
   const { data, error } = await supabase
@@ -37,11 +41,35 @@ async function fetchProfile(userId: string): Promise<AuthUser | null> {
     id: data.id,
     email: data.email,
     displayName: data.display_name || data.username || data.email.split('@')[0],
-    role: data.role || 'مشاهد',
+    role: data.role || 'unassigned',
     branchId: data.branch_id || null,
     branchName: (data as any).branches?.name || null,
-    status: data.status || 'نشط',
+    status: data.status || 'active',
   };
+}
+
+async function resolveLoginIdentifier(usernameOrEmail: string) {
+  const input = usernameOrEmail.trim();
+  if (input.includes('@')) return input;
+
+  const { data: aliasData, error: aliasError } = await supabase.rpc('delivery_resolve_login', {
+    login_name: input,
+  });
+
+  if (!aliasError && aliasData?.[0]?.email) {
+    if (!isActiveStatus(aliasData[0].status)) throw new Error('هذا الحساب غير مفعل.');
+    return aliasData[0].email as string;
+  }
+
+  const { data: profileData } = await supabase
+    .from('user_profiles')
+    .select('email, status')
+    .ilike('username', input)
+    .maybeSingle();
+
+  if (!profileData?.email) throw new Error('اسم المستخدم غير صحيح أو غير موجود.');
+  if (!isActiveStatus(profileData.status)) throw new Error('هذا الحساب غير مفعل.');
+  return profileData.email;
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -54,15 +82,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (profile) {
       setUser(profile);
     } else {
-      // fallback if profile not created yet
       setUser({
         id: supabaseUser.id,
         email: supabaseUser.email || '',
         displayName: supabaseUser.user_metadata?.display_name || supabaseUser.email?.split('@')[0] || 'مستخدم',
-        role: supabaseUser.user_metadata?.role || 'مدير عام',
+        role: 'unassigned',
         branchId: null,
         branchName: null,
-        status: 'نشط',
+        status: 'inactive',
       });
     }
   }, []);
@@ -104,27 +131,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (usernameOrEmail: string, password: string) => {
     setLoading(true);
-    // If input is a username (no @), resolve to email via user_profiles
-    let email = usernameOrEmail;
-    if (!usernameOrEmail.includes('@')) {
-      const { data: profileData } = await supabase
-        .from('user_profiles')
-        .select('email')
-        .ilike('username', usernameOrEmail)
-        .maybeSingle();
-      if (!profileData?.email) {
-        setLoading(false);
-        throw new Error('اسم المستخدم غير موجود');
+    try {
+      const email = await resolveLoginIdentifier(usernameOrEmail);
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      if (!data.user) throw new Error('حدث خطأ في الاتصال، حاول مرة أخرى.');
+
+      const profile = await fetchProfile(data.user.id);
+      if (!profile) {
+        await supabase.auth.signOut();
+        throw new Error('هذا الحساب غير مربوط بدور داخل نظام الدليفري.');
       }
-      email = profileData.email;
-    }
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
+      if (!isActiveStatus(profile.status)) {
+        await supabase.auth.signOut();
+        throw new Error('هذا الحساب غير مفعل.');
+      }
+
+      setUser(profile);
       setLoading(false);
-      throw new Error('كلمة المرور غير صحيحة');
+      return profile;
+    } catch (error: any) {
+      if (import.meta.env.DEV) console.error('Login failed', error);
+      setLoading(false);
+      if (String(error?.message || '').includes('Invalid login credentials')) {
+        throw new Error('كلمة المرور غير صحيحة.');
+      }
+      throw error;
     }
-    if (data.user) await loadProfile(data.user);
-    setLoading(false);
   };
 
   const logout = async () => {
@@ -152,16 +185,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const { error: updateError } = await supabase.auth.updateUser({
       password,
-      data: { display_name: displayName, role: 'مدير عام' },
+      data: { display_name: displayName, role: 'rider' },
     });
     if (updateError) throw updateError;
 
-    // Update profile
     if (data.user) {
       await supabase.from('user_profiles').update({
         display_name: displayName,
-        role: 'مدير عام',
-        status: 'نشط',
+        role: 'rider',
+        status: 'active',
       }).eq('id', data.user.id);
       await loadProfile(data.user);
     }

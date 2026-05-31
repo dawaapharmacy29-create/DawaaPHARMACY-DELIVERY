@@ -124,3 +124,10 @@ select
   3
 from branches as b
 on conflict (branch_id) do nothing;
+
+insert into delivery_login_aliases (username, email, role, status)
+values ('admin', 'admin@dawaa-delivery.local', 'admin', 'active')
+on conflict (username) do update
+set email = excluded.email,
+    role = excluded.role,
+    status = excluded.status;

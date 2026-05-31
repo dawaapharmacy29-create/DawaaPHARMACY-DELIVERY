@@ -1,6 +1,6 @@
-# Dawaa Pharmacy Bills + Dawaa Delivery
+# Dawaa Delivery
 
-تطبيق واحد حاليًا يحتوي نظام فواتير صيدليات دواء، ومعه Dawaa Delivery كجزء منفصل منطقيًا داخل نفس React/Vite app. جزء الدليفري جاهز للفصل لاحقًا كتطبيق مستقل لأن routes والـ SQL والـ hooks الخاصة به مفصولة بأسماء `delivery_`.
+دليفري صيدليات دواء هو تطبيق React/Vite مرتبط بـ Supabase لإدارة الدليفري، الخروجات، الأوردرات، المشاوير، والمستحقات. التطبيق موجود حاليًا داخل نفس المشروع، لكن جزء الدليفري مفصول منطقيًا عبر routes وhooks وجداول تبدأ بـ `delivery_`.
 
 ## التشغيل
 
@@ -19,11 +19,12 @@ npm run build
 
 ## Routes
 
-- `/delivery`: لوحة متابعة الدليفري.
-- `/delivery/rider`: شاشة المندوب mobile-first.
-- `/delivery/orders`: قائمة أوردرات الدليفري بصفحات وفلاتر.
-- `/delivery/payroll`: حساب الشهر من يوم 26 إلى يوم 25.
-- `/delivery/settings`: مرجع إعدادات الدليفري.
+- `/login`: تسجيل الدخول.
+- `/delivery`: لوحة الإدارة.
+- `/delivery/rider`: شاشة المندوب.
+- `/delivery/orders`: أوردرات الدليفري.
+- `/delivery/payroll`: المستحقات.
+- `/delivery/settings`: إعدادات الدليفري.
 
 ## Environment
 
@@ -32,94 +33,68 @@ VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
 ```
 
-لا تضع `service_role` في الواجهة أو Vercel client env.
+لا تستخدم `service_role` في الواجهة أو في Vercel client env.
 
 ## Supabase Setup
 
-1. شغّل `supabase/schema.sql` من SQL Editor.
-2. شغّل `supabase/seed.sql` لإعداد `delivery_settings` الافتراضية.
-3. أنشئ المستخدمين من Supabase Auth.
-4. تأكد أن كل مستخدم له صف في `user_profiles`.
+1. شغّل `supabase/schema.sql`.
+2. شغّل `supabase/seed.sql`.
+3. أنشئ مستخدمي Supabase Auth من لوحة Supabase.
+4. اربط كل مستخدم بصف في `user_profiles`.
 
-## Delivery Tables
+## أول حساب Admin
 
-- `delivery_riders`
-- `delivery_customers`
-- `delivery_attendance`
-- `delivery_trips`
-- `delivery_orders`
-- `delivery_internal_trips`
-- `delivery_payroll_adjustments`
-- `delivery_payroll_runs`
-- `delivery_settings`
-- `delivery_audit_log`
+التطبيق يستخدم Supabase Auth لتسجيل الدخول. كلمة المرور لا تحفظ في جدول عام. اسم المستخدم `admin` يتحول إلى email عبر جدول `delivery_login_aliases`.
 
-`delivery_trips` تمثل Delivery Run / الخروجة. الخروجة الواحدة تحتوي أكثر من أوردر عبر `delivery_orders.trip_id`. يوجد unique partial index يمنع أكثر من خروجة `active` لنفس المندوب.
+لتفعيل الدخول التجريبي:
 
-## Customers
+- username: `admin`
+- password: `admin123`
 
-لا يوجد في هذا المشروع جدول `customers` عام. لذلك `delivery_customers` هو مصدر العملاء الحقيقي للدليفري في مرحلة pilot، وليس نسخة mock أو sync من جدول آخر.
+نفذ الخطوات:
 
-البحث يتم عبر RPC:
+1. Supabase Dashboard > Authentication > Users.
+2. أنشئ user:
+   - email: `admin@dawaa-delivery.local`
+   - password: `admin123`
+   - email confirmed: enabled
+3. انسخ `user id`.
+4. شغّل SQL التالي بعد استبدال `<auth-user-id>`:
 
 ```sql
-delivery_search_customers(search_text text)
+insert into user_profiles (id, email, username, display_name, role, status)
+values (
+  '<auth-user-id>',
+  'admin@dawaa-delivery.local',
+  'admin',
+  'Admin',
+  'admin',
+  'active'
+)
+on conflict (id) do update
+set email = excluded.email,
+    username = excluded.username,
+    display_name = excluded.display_name,
+    role = excluded.role,
+    status = excluded.status;
+
+insert into delivery_login_aliases (username, email, role, status)
+values ('admin', 'admin@dawaa-delivery.local', 'admin', 'active')
+on conflict (username) do update
+set email = excluded.email,
+    role = excluded.role,
+    status = excluded.status;
 ```
 
-القواعد:
+بعد أول دخول، غيّر كلمة المرور من Supabase Dashboard.
 
-- أقل من حرفين يرجع بدون نتائج.
-- limit 20.
-- البحث في الاسم أو الكود أو الهاتف.
-- يرجع `id`, `name`, `customer_code`, `phone`, `address` فقط.
-- لا يحمل جدول العملاء كاملًا في الواجهة.
-- الأوردر يحفظ snapshot: الاسم، الكود، الهاتف، العنوان.
+## ربط Rider
 
-## GPS / Geofence
-
-عند تسجيل الحضور وبدء/إنهاء الخروجة، الواجهة تطلب GPS وترسله إلى RPC آمنة. الإعدادات في `delivery_settings`:
-
-- `branch_lat`
-- `branch_lng`
-- `geofence_radius_meters` default 100
-- `gps_accuracy_threshold_meters` default 100
-- `max_normal_trip_minutes` default 60
-- `manual_return_requires_review` default true
-
-إذا GPS مرفوض، ضعيف، خارج النطاق، الفرع غير مضبوط، أو مدة الخروجة أطول من الطبيعي، تدخل الخروجة review.
-
-## Payroll
-
-الفئات الافتراضية:
-
-- senior: ساعة 23، أوردر 10، مشوار 4
-- mid: ساعة 21.5، أوردر 8، مشوار 4
-- junior: ساعة 19.25، أوردر 6، مشوار 3
-
-القواعد:
-
-- الفترة من يوم 26 إلى يوم 25.
-- يوم 1 إلى 25 يتبع فترة بدأت يوم 26 من الشهر السابق.
-- يوم 26 إلى آخر الشهر يتبع فترة بدأت يوم 26 من نفس الشهر.
-- الأوردرات المحسوبة `delivered` فقط.
-- المشاوير الداخلية المحسوبة `approved` أو `completed` فقط.
-- الأسعار snapshot.
-- `net_total = hours + orders + trips + bonuses - deductions`.
-- payroll يعرض pending review / unapproved trips / failed orders، ولا يعتبر قابلًا للاعتماد إذا توجد review أو trips غير معتمدة.
-
-## أول Admin
-
-بعد إنشاء المستخدم:
-
-```sql
-update user_profiles
-set role = 'admin', status = 'نشط'
-where email = 'admin@example.com';
-```
-
-## إضافة Rider
-
-أنشئ صفًا في `delivery_riders` مربوطًا بـ `user_profiles.id`:
+1. أنشئ Supabase Auth user للمندوب.
+2. أنشئ/حدّث `user_profiles` بنفس `auth.users.id` واجعل:
+   - `role = 'rider'`
+   - `status = 'active'`
+3. أضف صفًا في `delivery_riders`:
 
 ```sql
 insert into delivery_riders (
@@ -144,53 +119,78 @@ values (
 );
 ```
 
-## RLS Test
+لو دخل حساب غير مربوط بـ `delivery_riders` ستظهر رسالة واضحة للمندوب.
 
-اختبر بثلاثة مستخدمين:
+## جداول الدليفري
 
-- rider: يرى خروجاته وأوردراته فقط، ولا يغير settings أو payroll، ويستخدم `delivery_search_customers` بنتائج محدودة.
-- shift_manager: يرى ويعتمد بيانات فرعه فقط.
-- admin: يرى الكل، يدير settings/payroll، ويرى `delivery_audit_log`.
+- `delivery_riders`
+- `delivery_customers`
+- `delivery_attendance`
+- `delivery_trips`
+- `delivery_orders`
+- `delivery_internal_trips`
+- `delivery_payroll_adjustments`
+- `delivery_payroll_runs`
+- `delivery_settings`
+- `delivery_audit_log`
+- `delivery_login_aliases`
 
-اختبارات SQL مقترحة:
+`delivery_trips` تمثل الخروجة / Delivery Run. الخروجة الواحدة تحتوي أكثر من أوردر عبر `delivery_orders.trip_id`. يوجد unique partial index يمنع فتح أكثر من خروجة `active` لنفس المندوب.
+
+## بحث العملاء
+
+البحث يتم عبر RPC:
 
 ```sql
-select * from delivery_search_customers('01');
-select * from delivery_calculate_payroll(delivery_period_start(current_date), delivery_period_end(current_date));
+delivery_search_customers(search_text text)
 ```
 
-نفّذها من جلسات مستخدمين مختلفة عبر التطبيق أو Supabase client وليس service role.
+القواعد:
 
-## Flow Pilot
+- أقل من حرفين لا يبحث.
+- limit 20.
+- يرجع فقط `id`, `name`, `customer_code`, `phone`, `address`.
+- لا يحمل جدول العملاء كاملًا في الواجهة.
+- الأوردر يحفظ snapshot لبيانات العميل وقت الإضافة.
 
-1. Admin يضيف rider ويضبط `delivery_settings.branch_lat/branch_lng`.
-2. Rider يسجل دخول.
-3. Rider يسجل حضور مع GPS.
-4. Rider يبدأ خروجة.
-5. Rider يبحث عن عميل ويختاره.
-6. يظهر الكود والهاتف والعنوان.
-7. Rider يدخل رقم فاتورة.
-8. Rider يضيف أوردر.
-9. Rider يسجل delivered.
-10. Rider يحاول فتح خروجة ثانية، فيتم منعه.
-11. Rider يسجل رجوع.
-12. إذا GPS خارج النطاق أو ضعيف تدخل الخروجة review.
-13. Rider يسجل مشوار داخلي.
-14. shift_manager/admin يعتمده.
-15. Admin يضيف bonus/deduction.
-16. Payroll يعكس `net_total`.
-17. `delivery_audit_log` يسجل العمليات الحساسة.
+## GPS / Geofence
 
-## PWA
+الإعدادات في `delivery_settings`:
 
-يوجد manifest وservice worker وoffline fallback. لا توجد offline writes في هذه المرحلة، حتى لا نخزن عمليات دليفري حساسة في queue غير مصمم.
+- `branch_lat`
+- `branch_lng`
+- `geofence_radius_meters`
+- `gps_accuracy_threshold_meters`
+- `max_normal_trip_minutes`
+- `manual_return_requires_review`
+
+GPS مرفوض، GPS ضعيف، الرجوع خارج النطاق، أو مدة خروجة طويلة تدخل review.
+
+## Payroll
+
+- الشهر يبدأ يوم 26 وينتهي يوم 25.
+- الأوردرات المحسوبة: `delivered` فقط.
+- المشاوير المحسوبة: `approved` أو `completed` فقط.
+- الأسعار snapshot.
+- `net_total = hours + orders + trips + bonuses - deductions`.
+
+## اختبار RLS
+
+- rider يرى خروجاته وأوردراته فقط.
+- rider لا يدخل صفحات الإدارة.
+- shift_manager يرى فرعه فقط.
+- admin يرى الكل ويدير settings/payroll.
+
+اختبر من جلسات مستخدمين حقيقية، وليس من service role.
 
 ## Vercel
 
 - Build command: `npm run build`
-- Output: `dist`
-- Env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
+- Output directory: `dist`
+- Environment variables:
+  - `VITE_SUPABASE_URL`
+  - `VITE_SUPABASE_ANON_KEY`
 
-## Pilot Notes
+## Pilot
 
-ابدأ بفرع واحد ومندوب أو اثنين. اضبط geofence للفرع أولًا. راقب `delivery_audit_log` و`review` يوميًا قبل اعتماد payroll.
+ابدأ بفرع واحد ومندوب أو اثنين. اضبط geofence أولًا، ثم راقب `delivery_audit_log` وحالات review قبل اعتماد المستحقات.

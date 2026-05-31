@@ -5,6 +5,7 @@ import {
   useAddDeliveryOrder,
   useCreateInternalTrip,
   useDeliveryCustomers,
+  useDeliveryRiderProfile,
   useEndDeliveryTrip,
   useStartAttendance,
   useStartDeliveryTrip,
@@ -49,6 +50,7 @@ export default function RiderConsole() {
   const attendance = useStartAttendance();
   const startTrip = useStartDeliveryTrip();
   const activeTrip = useActiveDeliveryTrip();
+  const riderProfile = useDeliveryRiderProfile();
   const customers = useDeliveryCustomers(debouncedSearch);
   const addOrder = useAddDeliveryOrder();
   const updateOrder = useUpdateDeliveryOrderStatus();
@@ -57,6 +59,8 @@ export default function RiderConsole() {
 
   const trip = activeTrip.data;
   const orders = useMemo(() => trip?.delivery_orders || [], [trip]);
+  const riderStatus = trip?.needs_review ? 'يحتاج مراجعة' : trip ? 'خارج في أوردر' : 'داخل الفرع';
+  const hasRider = Boolean(riderProfile.data);
 
   const handleAddOrder = async () => {
     if (!trip || !selectedCustomer || addOrder.isPending) return;
@@ -75,6 +79,24 @@ export default function RiderConsole() {
 
   return (
     <AppLayout title="كونسول المندوب" subtitle="الحضور، الخروجة، وإضافة الأوردرات">
+      {!riderProfile.isLoading && !riderProfile.data && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-right text-amber-900">
+          هذا الحساب غير مربوط بمندوب دليفري. تواصل مع الإدارة.
+        </div>
+      )}
+
+      {riderProfile.data && (
+        <div className="mb-4 rounded-3xl bg-[#071824] p-4 text-white shadow-lg">
+          <div className="flex items-center gap-3">
+            <img src="/brand/dawaa-logo.jpeg" alt="Dawaa Delivery" className="h-14 w-14 rounded-2xl bg-white object-contain p-1" />
+            <div>
+              <div className="text-lg font-bold">{riderProfile.data.display_name}</div>
+              <div className="text-sm text-emerald-100">{riderProfile.data.branchName || 'بدون فرع'} - {riderStatus}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {!online && (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-right text-sm text-amber-800">
           لا يوجد اتصال بالإنترنت. الحفظ متوقف حتى يعود الاتصال.
@@ -85,10 +107,10 @@ export default function RiderConsole() {
         <section className="bg-white border border-gray-200 rounded-lg p-4 text-right">
           <h2 className="font-bold text-gray-900 mb-3">الحضور والخروجة</h2>
           <div className="space-y-2">
-            <button onClick={() => attendance.mutate()} disabled={!online || attendance.isPending} className="w-full bg-gray-900 disabled:bg-gray-300 text-white rounded-lg px-4 py-4 text-base font-bold">
+            <button onClick={() => attendance.mutate()} disabled={!online || !hasRider || attendance.isPending} className="w-full bg-gray-900 disabled:bg-gray-300 text-white rounded-lg px-4 py-4 text-base font-bold">
               تسجيل الحضور
             </button>
-            <button onClick={() => startTrip.mutate()} disabled={!online || Boolean(trip) || startTrip.isPending} className="w-full bg-emerald-600 disabled:bg-gray-300 text-white rounded-lg px-4 py-4 text-base font-bold">
+            <button onClick={() => startTrip.mutate()} disabled={!online || !hasRider || Boolean(trip) || startTrip.isPending} className="w-full bg-emerald-600 disabled:bg-gray-300 text-white rounded-lg px-4 py-4 text-base font-bold">
               بدء خروجة
             </button>
           </div>
@@ -126,7 +148,7 @@ export default function RiderConsole() {
             </div>
           )}
 
-          <button onClick={handleAddOrder} disabled={!online || !trip || !selectedCustomer || !invoiceNo.trim() || addOrder.isPending} className="mt-3 w-full md:w-auto bg-emerald-600 disabled:bg-gray-300 text-white rounded-lg px-5 py-4 text-base font-bold">
+          <button onClick={handleAddOrder} disabled={!online || !hasRider || !trip || !selectedCustomer || !invoiceNo.trim() || addOrder.isPending} className="mt-3 w-full md:w-auto bg-emerald-600 disabled:bg-gray-300 text-white rounded-lg px-5 py-4 text-base font-bold">
             إضافة الأوردر للخروجة
           </button>
         </section>
@@ -165,7 +187,7 @@ export default function RiderConsole() {
         <section className="bg-white border border-gray-200 rounded-lg p-4 text-right">
           <h2 className="font-bold text-gray-900 mb-3">مشوار داخلي</h2>
           <input value={internalReason} onChange={e => setInternalReason(e.target.value)} placeholder="سبب المشوار" className="w-full border border-gray-200 rounded-lg px-3 py-3 text-base text-right" />
-          <button onClick={() => internalTrip.mutate({ reason: internalReason })} disabled={!online || !internalReason.trim() || internalTrip.isPending} className="mt-2 w-full bg-blue-600 disabled:bg-gray-300 text-white rounded-lg px-4 py-4 text-base font-bold">
+          <button onClick={() => internalTrip.mutate({ reason: internalReason })} disabled={!online || !hasRider || !internalReason.trim() || internalTrip.isPending} className="mt-2 w-full bg-blue-600 disabled:bg-gray-300 text-white rounded-lg px-4 py-4 text-base font-bold">
             تسجيل المشوار
           </button>
         </section>

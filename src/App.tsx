@@ -4,7 +4,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import { AuthProvider } from '@/contexts/AuthContext';
-import ProtectedRoute from '@/components/ProtectedRoute';
+import ProtectedRoute, { ADMIN_DELIVERY_ROLES, RIDER_DELIVERY_ROLES } from '@/components/ProtectedRoute';
 import LoginPage from '@/pages/LoginPage';
 import NotFound from '@/pages/NotFound';
 
@@ -37,8 +37,8 @@ const queryClient = new QueryClient({
   },
 });
 
-function protectedPage(page: ReactNode) {
-  return <ProtectedRoute>{page}</ProtectedRoute>;
+function protectedPage(page: ReactNode, roles = ADMIN_DELIVERY_ROLES) {
+  return <ProtectedRoute roles={roles}>{page}</ProtectedRoute>;
 }
 
 export default function App() {
@@ -64,7 +64,7 @@ export default function App() {
               <Route path="/users" element={protectedPage(<UsersPermissions />)} />
               <Route path="/settings" element={protectedPage(<SettingsPage />)} />
               <Route path="/delivery" element={protectedPage(<DeliveryDashboard />)} />
-              <Route path="/delivery/rider" element={protectedPage(<RiderConsole />)} />
+              <Route path="/delivery/rider" element={protectedPage(<RiderConsole />, RIDER_DELIVERY_ROLES)} />
               <Route path="/delivery/orders" element={protectedPage(<DeliveryOrders />)} />
               <Route path="/delivery/payroll" element={protectedPage(<DeliveryPayroll />)} />
               <Route path="/delivery/settings" element={protectedPage(<DeliverySettings />)} />
