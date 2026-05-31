@@ -332,6 +332,45 @@ export function useUsers() {
   });
 }
 
+export function useCreateUser() {
+  const qc = useQueryClient();
+  const { session } = useAuth();
+  return useMutation({
+    mutationFn: async (data: {
+      username: string;
+      password: string;
+      display_name?: string;
+      role: string;
+      branch_id?: string;
+    }) => {
+      const { data: result, error } = await supabase.functions.invoke('create-user', {
+        body: data,
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      });
+      if (error) {
+        import('@supabase/supabase-js').then(({ FunctionsHttpError }) => {});
+        // Try to get actual error message
+        let msg = error.message;
+        try {
+          const text = await (error as any).context?.text?.();
+          if (text) {
+            const parsed = JSON.parse(text);
+            msg = parsed.error || text;
+          }
+        } catch {}
+        throw new Error(msg);
+      }
+      if (result?.error) throw new Error(result.error);
+      return result;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['users'] });
+      toast.success('تم إنشاء المستخدم بنجاح');
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+}
+
 export function useUpdateUser() {
   const qc = useQueryClient();
   const { user } = useAuth();

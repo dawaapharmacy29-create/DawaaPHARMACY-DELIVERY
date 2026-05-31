@@ -1,10 +1,9 @@
 import { lazy, Suspense } from 'react';
-import type { ReactNode } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import { AuthProvider } from '@/contexts/AuthContext';
-import ProtectedRoute, { ADMIN_DELIVERY_ROLES, RIDER_DELIVERY_ROLES } from '@/components/ProtectedRoute';
+import ProtectedRoute from '@/components/ProtectedRoute';
 import LoginPage from '@/pages/LoginPage';
 import NotFound from '@/pages/NotFound';
 
@@ -22,11 +21,6 @@ const Reports = lazy(() => import('@/pages/Reports'));
 const OperationsLog = lazy(() => import('@/pages/OperationsLog'));
 const UsersPermissions = lazy(() => import('@/pages/UsersPermissions'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
-const DeliveryDashboard = lazy(() => import('@/pages/delivery/DeliveryDashboard'));
-const RiderConsole = lazy(() => import('@/pages/delivery/RiderConsole'));
-const DeliveryOrders = lazy(() => import('@/pages/delivery/DeliveryOrders'));
-const DeliveryPayroll = lazy(() => import('@/pages/delivery/DeliveryPayroll'));
-const DeliverySettings = lazy(() => import('@/pages/delivery/DeliverySettings'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,8 +31,8 @@ const queryClient = new QueryClient({
   },
 });
 
-function protectedPage(page: ReactNode, roles = ADMIN_DELIVERY_ROLES) {
-  return <ProtectedRoute roles={roles}>{page}</ProtectedRoute>;
+function protectedPage(page: React.ReactNode) {
+  return <ProtectedRoute>{page}</ProtectedRoute>;
 }
 
 export default function App() {
@@ -63,11 +57,6 @@ export default function App() {
               <Route path="/operations-log" element={protectedPage(<OperationsLog />)} />
               <Route path="/users" element={protectedPage(<UsersPermissions />)} />
               <Route path="/settings" element={protectedPage(<SettingsPage />)} />
-              <Route path="/delivery" element={protectedPage(<DeliveryDashboard />)} />
-              <Route path="/delivery/rider" element={protectedPage(<RiderConsole />, RIDER_DELIVERY_ROLES)} />
-              <Route path="/delivery/orders" element={protectedPage(<DeliveryOrders />)} />
-              <Route path="/delivery/payroll" element={protectedPage(<DeliveryPayroll />)} />
-              <Route path="/delivery/settings" element={protectedPage(<DeliverySettings />)} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>

@@ -95,39 +95,3 @@ from (values
 ) as p(date,branch_name,category,description,amount,method,status)
 join branches b on b.name = p.branch_name
 on conflict do nothing;
-
--- DELIVERY DEFAULT SETTINGS
-insert into delivery_settings (
-  branch_id,
-  internal_trip_requires_approval,
-  senior_hourly_rate,
-  senior_order_rate,
-  senior_internal_trip_rate,
-  mid_hourly_rate,
-  mid_order_rate,
-  mid_internal_trip_rate,
-  junior_hourly_rate,
-  junior_order_rate,
-  junior_internal_trip_rate
-)
-select
-  b.id,
-  true,
-  23,
-  10,
-  4,
-  21.5,
-  8,
-  4,
-  19.25,
-  6,
-  3
-from branches as b
-on conflict (branch_id) do nothing;
-
-insert into delivery_login_aliases (username, email, role, status)
-values ('admin', 'admin@dawaa-delivery.local', 'admin', 'active')
-on conflict (username) do update
-set email = excluded.email,
-    role = excluded.role,
-    status = excluded.status;
