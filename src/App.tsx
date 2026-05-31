@@ -1,52 +1,79 @@
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import Dashboard from "./pages/Dashboard";
-import Invoices from "./pages/Invoices";
-import PendingReview from "./pages/PendingReview";
-import ControlledMedicines from "./pages/ControlledMedicines";
-import DeadStock from "./pages/DeadStock";
-import Expenses from "./pages/Expenses";
-import Returns from "./pages/Returns";
-import Suppliers from "./pages/Suppliers";
-import SupplierBalances from "./pages/SupplierBalances";
-import Reconciliation from "./pages/Reconciliation";
-import Reports from "./pages/Reports";
-import OperationsLog from "./pages/OperationsLog";
-import UsersPermissions from "./pages/UsersPermissions";
-import SettingsPage from "./pages/SettingsPage";
-import NotFound from "./pages/NotFound";
+import { lazy, Suspense } from 'react';
+import type { ReactNode } from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Toaster } from 'sonner';
+import { AuthProvider } from '@/contexts/AuthContext';
+import ProtectedRoute from '@/components/ProtectedRoute';
+import LoginPage from '@/pages/LoginPage';
+import NotFound from '@/pages/NotFound';
 
-const queryClient = new QueryClient();
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const Invoices = lazy(() => import('@/pages/Invoices'));
+const PendingReview = lazy(() => import('@/pages/PendingReview'));
+const ControlledMedicines = lazy(() => import('@/pages/ControlledMedicines'));
+const DeadStock = lazy(() => import('@/pages/DeadStock'));
+const Expenses = lazy(() => import('@/pages/Expenses'));
+const Returns = lazy(() => import('@/pages/Returns'));
+const Suppliers = lazy(() => import('@/pages/Suppliers'));
+const SupplierBalances = lazy(() => import('@/pages/SupplierBalances'));
+const Reconciliation = lazy(() => import('@/pages/Reconciliation'));
+const Reports = lazy(() => import('@/pages/Reports'));
+const OperationsLog = lazy(() => import('@/pages/OperationsLog'));
+const UsersPermissions = lazy(() => import('@/pages/UsersPermissions'));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
+const DeliveryDashboard = lazy(() => import('@/pages/delivery/DeliveryDashboard'));
+const RiderConsole = lazy(() => import('@/pages/delivery/RiderConsole'));
+const DeliveryOrders = lazy(() => import('@/pages/delivery/DeliveryOrders'));
+const DeliveryPayroll = lazy(() => import('@/pages/delivery/DeliveryPayroll'));
+const DeliverySettings = lazy(() => import('@/pages/delivery/DeliverySettings'));
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/invoices" element={<Invoices />} />
-          <Route path="/pending-review" element={<PendingReview />} />
-          <Route path="/controlled-medicines" element={<ControlledMedicines />} />
-          <Route path="/dead-stock" element={<DeadStock />} />
-          <Route path="/expenses" element={<Expenses />} />
-          <Route path="/returns" element={<Returns />} />
-          <Route path="/suppliers" element={<Suppliers />} />
-          <Route path="/supplier-balances" element={<SupplierBalances />} />
-          <Route path="/reconciliation" element={<Reconciliation />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/operations-log" element={<OperationsLog />} />
-          <Route path="/users" element={<UsersPermissions />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
-);
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 30,
+      retry: 1,
+    },
+  },
+});
 
-export default App;
+function protectedPage(page: ReactNode) {
+  return <ProtectedRoute>{page}</ProtectedRoute>;
+}
+
+export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <BrowserRouter>
+          <Suspense fallback={<div className="p-6 text-right">جاري التحميل...</div>}>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/" element={protectedPage(<Dashboard />)} />
+              <Route path="/invoices" element={protectedPage(<Invoices />)} />
+              <Route path="/pending-review" element={protectedPage(<PendingReview />)} />
+              <Route path="/controlled-medicines" element={protectedPage(<ControlledMedicines />)} />
+              <Route path="/dead-stock" element={protectedPage(<DeadStock />)} />
+              <Route path="/expenses" element={protectedPage(<Expenses />)} />
+              <Route path="/returns" element={protectedPage(<Returns />)} />
+              <Route path="/suppliers" element={protectedPage(<Suppliers />)} />
+              <Route path="/supplier-balances" element={protectedPage(<SupplierBalances />)} />
+              <Route path="/reconciliation" element={protectedPage(<Reconciliation />)} />
+              <Route path="/reports" element={protectedPage(<Reports />)} />
+              <Route path="/operations-log" element={protectedPage(<OperationsLog />)} />
+              <Route path="/users" element={protectedPage(<UsersPermissions />)} />
+              <Route path="/settings" element={protectedPage(<SettingsPage />)} />
+              <Route path="/delivery" element={protectedPage(<DeliveryDashboard />)} />
+              <Route path="/delivery/rider" element={protectedPage(<RiderConsole />)} />
+              <Route path="/delivery/orders" element={protectedPage(<DeliveryOrders />)} />
+              <Route path="/delivery/payroll" element={protectedPage(<DeliveryPayroll />)} />
+              <Route path="/delivery/settings" element={protectedPage(<DeliverySettings />)} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
+          <Toaster position="top-center" richColors />
+        </BrowserRouter>
+      </AuthProvider>
+    </QueryClientProvider>
+  );
+}
