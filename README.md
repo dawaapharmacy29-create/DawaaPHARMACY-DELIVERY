@@ -1,15 +1,15 @@
 # Dawaa Pharmacy Bills + Dawaa Delivery
 
-تطبيق React/Vite لإدارة فواتير صيدليات دواء، مع إضافة مستقلة لتشغيل الدليفري مرتبطة بـ Supabase.
+تطبيق واحد حاليًا يحتوي نظام فواتير صيدليات دواء، ومعه Dawaa Delivery كجزء منفصل منطقيًا داخل نفس React/Vite app. جزء الدليفري جاهز للفصل لاحقًا كتطبيق مستقل لأن routes والـ SQL والـ hooks الخاصة به مفصولة بأسماء `delivery_`.
 
-## التشغيل المحلي
+## التشغيل
 
 ```sh
 npm install
 npm run dev
 ```
 
-للفحص قبل النشر:
+فحص الإنتاج:
 
 ```sh
 npm run typecheck
@@ -17,28 +17,31 @@ npm run lint
 npm run build
 ```
 
-> ملاحظة: سكريبت البناء يستخدم `scripts/build.mjs` لأنه يستدعي Vite بإعداد inline لتفادي مشكلة Windows/OneDrive مع تحميل ملف `vite.config`.
+## Routes
 
-## متغيرات البيئة
+- `/delivery`: لوحة متابعة الدليفري.
+- `/delivery/rider`: شاشة المندوب mobile-first.
+- `/delivery/orders`: قائمة أوردرات الدليفري بصفحات وفلاتر.
+- `/delivery/payroll`: حساب الشهر من يوم 26 إلى يوم 25.
+- `/delivery/settings`: مرجع إعدادات الدليفري.
 
-أنشئ ملف `.env.local`:
+## Environment
 
 ```env
 VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
 ```
 
-لا تضع `service_role` في الواجهة أو في Vercel client env. مفتاح الخدمة يستخدم فقط من بيئة server آمنة عند الحاجة.
+لا تضع `service_role` في الواجهة أو Vercel client env.
 
-## إعداد Supabase
+## Supabase Setup
 
-1. افتح Supabase SQL Editor.
-2. شغّل `supabase/schema.sql`.
-3. شغّل `supabase/seed.sql` للإعدادات الافتراضية.
-4. فعّل Authentication بالبريد وكلمة المرور أو OTP حسب طريقة التشغيل.
-5. تأكد من وجود صف في `user_profiles` لكل مستخدم مسجل.
+1. شغّل `supabase/schema.sql` من SQL Editor.
+2. شغّل `supabase/seed.sql` لإعداد `delivery_settings` الافتراضية.
+3. أنشئ المستخدمين من Supabase Auth.
+4. تأكد أن كل مستخدم له صف في `user_profiles`.
 
-جداول الدليفري المضافة:
+## Delivery Tables
 
 - `delivery_riders`
 - `delivery_customers`
@@ -49,17 +52,64 @@ VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
 - `delivery_payroll_adjustments`
 - `delivery_payroll_runs`
 - `delivery_settings`
+- `delivery_audit_log`
 
-كل جداول `delivery_` عليها RLS. السياسات تقسم الوصول كالتالي:
+`delivery_trips` تمثل Delivery Run / الخروجة. الخروجة الواحدة تحتوي أكثر من أوردر عبر `delivery_orders.trip_id`. يوجد unique partial index يمنع أكثر من خروجة `active` لنفس المندوب.
 
-- `admin` يرى كل الفروع.
-- `shift_manager` يرى فرعه فقط.
-- `rider` يرى بياناته وخروجاته وأوردراته فقط.
+## Customers
 
-## إنشاء أول Admin
+لا يوجد في هذا المشروع جدول `customers` عام. لذلك `delivery_customers` هو مصدر العملاء الحقيقي للدليفري في مرحلة pilot، وليس نسخة mock أو sync من جدول آخر.
 
-1. سجّل أول مستخدم من صفحة الدخول.
-2. من Supabase SQL Editor حدّث صفه في `user_profiles`:
+البحث يتم عبر RPC:
+
+```sql
+delivery_search_customers(search_text text)
+```
+
+القواعد:
+
+- أقل من حرفين يرجع بدون نتائج.
+- limit 20.
+- البحث في الاسم أو الكود أو الهاتف.
+- يرجع `id`, `name`, `customer_code`, `phone`, `address` فقط.
+- لا يحمل جدول العملاء كاملًا في الواجهة.
+- الأوردر يحفظ snapshot: الاسم، الكود، الهاتف، العنوان.
+
+## GPS / Geofence
+
+عند تسجيل الحضور وبدء/إنهاء الخروجة، الواجهة تطلب GPS وترسله إلى RPC آمنة. الإعدادات في `delivery_settings`:
+
+- `branch_lat`
+- `branch_lng`
+- `geofence_radius_meters` default 100
+- `gps_accuracy_threshold_meters` default 100
+- `max_normal_trip_minutes` default 60
+- `manual_return_requires_review` default true
+
+إذا GPS مرفوض، ضعيف، خارج النطاق، الفرع غير مضبوط، أو مدة الخروجة أطول من الطبيعي، تدخل الخروجة review.
+
+## Payroll
+
+الفئات الافتراضية:
+
+- senior: ساعة 23، أوردر 10، مشوار 4
+- mid: ساعة 21.5، أوردر 8، مشوار 4
+- junior: ساعة 19.25، أوردر 6، مشوار 3
+
+القواعد:
+
+- الفترة من يوم 26 إلى يوم 25.
+- يوم 1 إلى 25 يتبع فترة بدأت يوم 26 من الشهر السابق.
+- يوم 26 إلى آخر الشهر يتبع فترة بدأت يوم 26 من نفس الشهر.
+- الأوردرات المحسوبة `delivered` فقط.
+- المشاوير الداخلية المحسوبة `approved` أو `completed` فقط.
+- الأسعار snapshot.
+- `net_total = hours + orders + trips + bonuses - deductions`.
+- payroll يعرض pending review / unapproved trips / failed orders، ولا يعتبر قابلًا للاعتماد إذا توجد review أو trips غير معتمدة.
+
+## أول Admin
+
+بعد إنشاء المستخدم:
 
 ```sql
 update user_profiles
@@ -67,54 +117,80 @@ set role = 'admin', status = 'نشط'
 where email = 'admin@example.com';
 ```
 
-3. اربط المستخدم بفرع عند الحاجة عبر `branch_id`.
+## إضافة Rider
 
-## إعداد Vercel
+أنشئ صفًا في `delivery_riders` مربوطًا بـ `user_profiles.id`:
 
-1. اربط المستودع بمشروع Vercel.
-2. أضف المتغيرات:
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
-3. Build command:
-
-```sh
-npm run build
+```sql
+insert into delivery_riders (
+  user_id,
+  branch_id,
+  display_name,
+  phone,
+  tier,
+  hourly_rate,
+  order_rate,
+  internal_trip_rate
+)
+values (
+  '<profile-id>',
+  '<branch-id>',
+  'اسم المندوب',
+  '01000000000',
+  'junior',
+  19.25,
+  6,
+  3
+);
 ```
 
-4. Output directory:
+## RLS Test
 
-```sh
-dist
+اختبر بثلاثة مستخدمين:
+
+- rider: يرى خروجاته وأوردراته فقط، ولا يغير settings أو payroll، ويستخدم `delivery_search_customers` بنتائج محدودة.
+- shift_manager: يرى ويعتمد بيانات فرعه فقط.
+- admin: يرى الكل، يدير settings/payroll، ويرى `delivery_audit_log`.
+
+اختبارات SQL مقترحة:
+
+```sql
+select * from delivery_search_customers('01');
+select * from delivery_calculate_payroll(delivery_period_start(current_date), delivery_period_end(current_date));
 ```
 
-## اختبار Flow كامل للدليفري
+نفّذها من جلسات مستخدمين مختلفة عبر التطبيق أو Supabase client وليس service role.
 
-1. أنشئ مستخدم admin ومستخدم rider في Supabase Auth.
-2. أضف صفًا للمندوب في `delivery_riders` مربوطًا بـ `user_profiles.id`.
-3. أضف عملاء حقيقيين في `delivery_customers` مع `customer_code`, `phone`, `address`.
-4. ادخل كمندوب وافتح `كونسول المندوب`.
-5. سجّل الحضور.
-6. ابدأ خروجة.
-7. أضف أوردر برقم فاتورة إلزامي وعميل حقيقي.
-8. سلّم الأوردر.
-9. أضف أكثر من أوردر لنفس الخروجة للتأكد من عدم غلقها بعد أول أوردر.
-10. جرّب بدء خروجة ثانية قبل إنهاء الأولى؛ يجب أن يمنعها القيد `delivery_one_active_trip_per_rider`.
-11. أنهِ الخروجة بسبب رجوع يدوي؛ يجب أن تدخل `review`.
-12. سجّل مشوار داخلي؛ حالته تعتمد على `delivery_settings.internal_trip_requires_approval`.
-13. افتح حساب الدليفري وتأكد أن الفترة من يوم 26 إلى يوم 25.
+## Flow Pilot
 
-## الحساب الشهري
+1. Admin يضيف rider ويضبط `delivery_settings.branch_lat/branch_lng`.
+2. Rider يسجل دخول.
+3. Rider يسجل حضور مع GPS.
+4. Rider يبدأ خروجة.
+5. Rider يبحث عن عميل ويختاره.
+6. يظهر الكود والهاتف والعنوان.
+7. Rider يدخل رقم فاتورة.
+8. Rider يضيف أوردر.
+9. Rider يسجل delivered.
+10. Rider يحاول فتح خروجة ثانية، فيتم منعه.
+11. Rider يسجل رجوع.
+12. إذا GPS خارج النطاق أو ضعيف تدخل الخروجة review.
+13. Rider يسجل مشوار داخلي.
+14. shift_manager/admin يعتمده.
+15. Admin يضيف bonus/deduction.
+16. Payroll يعكس `net_total`.
+17. `delivery_audit_log` يسجل العمليات الحساسة.
 
-الفئات الافتراضية محفوظة في `delivery_settings` و`delivery_riders`:
+## PWA
 
-- senior: الساعة 23، الأوردر 10، المشوار الداخلي 4
-- mid: الساعة 21.5، الأوردر 8، المشوار الداخلي 4
-- junior: الساعة 19.25، الأوردر 6، المشوار الداخلي 3
+يوجد manifest وservice worker وoffline fallback. لا توجد offline writes في هذه المرحلة، حتى لا نخزن عمليات دليفري حساسة في queue غير مصمم.
 
-دالة `delivery_calculate_payroll` تحتسب:
+## Vercel
 
-- الشهر من 26 إلى 25.
-- الأوردرات بحالة `delivered` فقط.
-- المشاوير الداخلية بحالة `approved` أو `completed` فقط.
-- أسعار snapshot من وقت تسجيل الحضور/الأوردر/المشوار.
-- المكافآت والخصومات من `delivery_payroll_adjustments` ضمن `net_total`.
+- Build command: `npm run build`
+- Output: `dist`
+- Env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
+
+## Pilot Notes
+
+ابدأ بفرع واحد ومندوب أو اثنين. اضبط geofence للفرع أولًا. راقب `delivery_audit_log` و`review` يوميًا قبل اعتماد payroll.

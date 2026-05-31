@@ -910,7 +910,8 @@ begin
       if new.rider_id is distinct from old.rider_id
         or new.branch_id is distinct from old.branch_id
         or new.started_at is distinct from old.started_at
-        or new.ended_at is distinct from old.ended_at then
+        or new.ended_at is distinct from old.ended_at
+        or new.status is distinct from old.status then
         raise exception 'Rider cannot edit protected trip fields';
       end if;
     end if;
@@ -933,15 +934,16 @@ security definer
 set search_path = public
 as $$
 begin
-  perform delivery_log_audit_event(
-    lower(tg_op) || '_' || tg_table_name,
-    tg_table_name,
-    coalesce(new.id, old.id),
-    case when tg_op in ('UPDATE', 'DELETE') then to_jsonb(old) else null end,
-    case when tg_op in ('INSERT', 'UPDATE') then to_jsonb(new) else null end
-  );
-
-  return coalesce(new, old);
+  if tg_op = 'INSERT' then
+    perform delivery_log_audit_event(lower(tg_op) || '_' || tg_table_name, tg_table_name, new.id, null, to_jsonb(new));
+    return new;
+  elsif tg_op = 'UPDATE' then
+    perform delivery_log_audit_event(lower(tg_op) || '_' || tg_table_name, tg_table_name, new.id, to_jsonb(old), to_jsonb(new));
+    return new;
+  else
+    perform delivery_log_audit_event(lower(tg_op) || '_' || tg_table_name, tg_table_name, old.id, to_jsonb(old), null);
+    return old;
+  end if;
 end;
 $$;
 
