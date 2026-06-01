@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import { supabase, isSupabaseConfigReady } from '@/lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 
 interface AuthUser {
@@ -16,10 +16,12 @@ interface AuthContextType {
   user: AuthUser | null;
   session: Session | null;
   loading: boolean;
+  authError: string | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   sendOtp: (email: string) => Promise<void>;
   verifyOtpAndSetPassword: (email: string, otp: string, password: string, displayName: string) => Promise<void>;
+  retryAuth: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -31,7 +33,8 @@ async function fetchProfile(userId: string): Promise<AuthUser | null> {
     .eq('id', userId)
     .single();
 
-  if (error || !data) return null;
+  if (error) throw error;
+  if (!data) return null;
 
   return {
     id: data.id,
@@ -48,13 +51,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
 
   const loadProfile = useCallback(async (supabaseUser: User) => {
-    const profile = await fetchProfile(supabaseUser.id);
-    if (profile) {
-      setUser(profile);
-    } else {
-      // fallback if profile not created yet
+    try {
+      const profile = await fetchProfile(supabaseUser.id);
+      if (profile) {
+        setUser(profile);
+        setAuthError(null);
+        return true;
+      }
+
       setUser({
         id: supabaseUser.id,
         email: supabaseUser.email || '',
@@ -64,47 +72,115 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         branchName: null,
         status: 'نشط',
       });
+      setAuthError(null);
+      return true;
+    } catch (error) {
+      if (import.meta.env.DEV) console.debug('profile failed', error);
+      setUser(null);
+      setAuthError('قاعدة بيانات الدليفري غير مجهزة بعد. شغّل ملفات Supabase SQL.');
+      return false;
     }
   }, []);
 
-  useEffect(() => {
-    let mounted = true;
+  const initializeAuth = useCallback(async () => {
+    if (!mountedRef.current) return;
+    setLoading(true);
+    setAuthError(null);
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!mounted) return;
-      setSession(session);
-      if (session?.user) {
-        loadProfile(session.user).finally(() => {
-          if (mounted) setLoading(false);
-        });
-      } else {
-        setLoading(false);
-      }
+    if (!isSupabaseConfigReady) {
+      setUser(null);
+      setSession(null);
+      setAuthError('إعدادات Supabase غير مكتملة. راجع VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY.');
+      setLoading(false);
+      if (import.meta.env.DEV) console.debug('auth init finished with missing config');
+      return;
+    }
+
+    if (import.meta.env.DEV) console.debug('auth init started');
+
+    let timeoutId: number | undefined;
+    const timeoutPromise = new Promise<{ timeout: true }>((resolve) => {
+      timeoutId = window.setTimeout(() => resolve({ timeout: true }), 8000);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return;
-      setSession(session);
-      if (event === 'SIGNED_IN' && session?.user) {
-        await loadProfile(session.user);
+    try {
+      const authResult = await Promise.race([supabase.auth.getSession(), timeoutPromise]) as Awaited<ReturnType<typeof supabase.auth.getSession>> | { timeout: true };
+
+      if (!mountedRef.current) return;
+      if ('timeout' in authResult) {
+        setUser(null);
+        setSession(null);
+        setAuthError('انتهى وقت انتظار المصادقة. تحقق من اتصال Supabase أو الإعدادات.');
+        setLoading(false);
+        if (import.meta.env.DEV) console.debug('auth init finished with timeout');
+        return;
+      }
+
+      const { data: { session: currentSession }, error } = authResult;
+      if (error) {
+        throw error;
+      }
+
+      if (import.meta.env.DEV) console.debug('session found', Boolean(currentSession));
+      setSession(currentSession);
+
+      if (!currentSession?.user) {
+        setUser(null);
+        setLoading(false);
+        if (import.meta.env.DEV) console.debug('auth init finished without session');
+        return;
+      }
+
+      const profileLoaded = await loadProfile(currentSession.user);
+      if (!profileLoaded) {
+        setLoading(false);
+        if (import.meta.env.DEV) console.debug('auth init finished with profile error');
+        return;
+      }
+
+      setLoading(false);
+      if (import.meta.env.DEV) console.debug('auth init finished');
+    } catch (error) {
+      if (!mountedRef.current) return;
+      if (import.meta.env.DEV) console.error('auth init failed', error);
+      setUser(null);
+      setSession(null);
+      setAuthError('قاعدة بيانات الدليفري غير مجهزة بعد. شغّل ملفات Supabase SQL.');
+      setLoading(false);
+    } finally {
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
+    }
+  }, [loadProfile]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    initializeAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
+      if (!mountedRef.current) return;
+      setSession(currentSession);
+      if (event === 'SIGNED_IN' && currentSession?.user) {
+        await loadProfile(currentSession.user);
         setLoading(false);
       } else if (event === 'SIGNED_OUT') {
         setUser(null);
         setLoading(false);
-      } else if (event === 'TOKEN_REFRESHED' && session?.user) {
-        await loadProfile(session.user);
+      } else if (event === 'TOKEN_REFRESHED' && currentSession?.user) {
+        await loadProfile(currentSession.user);
       }
     });
 
     return () => {
-      mounted = false;
+      mountedRef.current = false;
       subscription.unsubscribe();
     };
-  }, [loadProfile]);
+  }, [initializeAuth, loadProfile]);
 
   const login = async (usernameOrEmail: string, password: string) => {
     setLoading(true);
-    // If input is a username (no @), resolve to email via user_profiles
+    setAuthError(null);
     let email = usernameOrEmail;
     if (!usernameOrEmail.includes('@')) {
       const { data: resolvedEmail, error: resolveError } = await supabase
@@ -153,7 +229,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     if (updateError) throw updateError;
 
-    // Update profile
     if (data.user) {
       await supabase.from('user_profiles').update({
         display_name: displayName,
@@ -164,8 +239,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const retryAuth = () => {
+    initializeAuth();
+  };
+
   return (
-    <AuthContext.Provider value={{ user, session, loading, login, logout, sendOtp, verifyOtpAndSetPassword }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        session,
+        loading,
+        authError,
+        login,
+        logout,
+        sendOtp,
+        verifyOtpAndSetPassword,
+        retryAuth,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -1,8 +1,9 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import DatabaseNotReady from '@/components/DatabaseNotReady';
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, authError, retryAuth } = useAuth();
 
   if (loading) {
     return (
@@ -13,6 +14,10 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
         </div>
       </div>
     );
+  }
+
+  if (authError) {
+    return <DatabaseNotReady reason={authError} onRetry={retryAuth} />;
   }
 
   if (!user) return <Navigate to="/login" replace />;
