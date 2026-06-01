@@ -1,10 +1,11 @@
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogOut } from 'lucide-react';
 import Sidebar from './Sidebar';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface AppLayoutProps {
-  children: React.ReactNode;
+  children: ReactNode;
   title: string;
   subtitle?: string;
 }

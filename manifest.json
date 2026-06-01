@@ -1,0 +1,22 @@
+{
+  "name": "Dawaa Delivery — دليفري صيدليات دواء",
+  "short_name": "Delivery",
+  "description": "نظام إدارة الدليفري والتوصيل والمشاوير والحوافز",
+  "start_url": "/login",
+  "display": "standalone",
+  "background_color": "#071824",
+  "theme_color": "#10b981",
+  "orientation": "portrait-primary",
+  "lang": "ar",
+  "dir": "rtl",
+  "categories": ["business", "productivity"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "دخول الدليفري", "short_name": "دخول", "url": "/login", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "شاشة المندوب", "short_name": "مندوب", "url": "/delivery/rider", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "لوحة الإدارة", "short_name": "إدارة", "url": "/delivery", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

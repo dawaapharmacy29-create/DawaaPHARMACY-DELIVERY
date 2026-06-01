@@ -1,8 +1,9 @@
+import type { ReactNode } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
 import { Bike, CheckCircle2, ClipboardList, Route, ShieldAlert, Wallet } from 'lucide-react';
 import { useDeliveryDashboard } from '@/hooks/useDeliveryData';
 
-function MetricCard({ label, value, icon, tone }: { label: string; value: number | string; icon: React.ReactNode; tone: string }) {
+function MetricCard({ label, value, icon, tone }: { label: string; value: number | string; icon: ReactNode; tone: string }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className={`mb-4 flex h-11 w-11 items-center justify-center rounded-xl ${tone}`}>{icon}</div>
