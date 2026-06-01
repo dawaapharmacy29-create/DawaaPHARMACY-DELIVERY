@@ -348,7 +348,6 @@ export function useCreateUser() {
         headers: { Authorization: `Bearer ${session?.access_token}` },
       });
       if (error) {
-        import('@supabase/supabase-js').then(({ FunctionsHttpError }) => {});
         // Try to get actual error message
         let msg = error.message;
         try {
@@ -357,7 +356,7 @@ export function useCreateUser() {
             const parsed = JSON.parse(text);
             msg = parsed.error || text;
           }
-        } catch {}
+        } catch (err) { void err; }
         throw new Error(msg);
       }
       if (result?.error) throw new Error(result.error);

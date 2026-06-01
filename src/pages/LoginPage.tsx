@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Building2, Lock, Eye, EyeOff, ArrowLeft, User, AtSign } from 'lucide-react';
+import { Building2, Lock, Eye, EyeOff, ArrowLeft, User, AtSign, Mail } from 'lucide-react';
 
 type Step = 'login' | 'register-email' | 'register-otp' | 'register-password';
 

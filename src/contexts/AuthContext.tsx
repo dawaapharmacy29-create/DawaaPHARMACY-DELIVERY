@@ -107,16 +107,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // If input is a username (no @), resolve to email via user_profiles
     let email = usernameOrEmail;
     if (!usernameOrEmail.includes('@')) {
-      const { data: profileData } = await supabase
-        .from('user_profiles')
-        .select('email')
-        .ilike('username', usernameOrEmail)
-        .maybeSingle();
-      if (!profileData?.email) {
+      const { data: resolvedEmail, error: resolveError } = await supabase
+        .rpc('delivery_resolve_login', { login_name: usernameOrEmail });
+      if (resolveError || !resolvedEmail) {
         setLoading(false);
         throw new Error('اسم المستخدم غير موجود');
       }
-      email = profileData.email;
+      email = String(resolvedEmail);
     }
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
