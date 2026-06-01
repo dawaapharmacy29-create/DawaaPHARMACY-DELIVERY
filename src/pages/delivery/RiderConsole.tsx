@@ -9,6 +9,7 @@ import {
   useEndDeliveryTrip,
   useStartAttendance,
   useStartDeliveryTrip,
+  useHasCheckedIn,
   useUpdateDeliveryOrderStatus,
 } from '@/hooks/useDeliveryData';
 import type { DeliveryCustomer } from '@/types/delivery';
@@ -49,6 +50,7 @@ export default function RiderConsole() {
 
   const attendance = useStartAttendance();
   const startTrip = useStartDeliveryTrip();
+  const hasCheckedIn = useHasCheckedIn();
   const activeTrip = useActiveDeliveryTrip();
   const riderProfile = useDeliveryRiderProfile();
   const customers = useDeliveryCustomers(debouncedSearch);
@@ -110,11 +112,14 @@ export default function RiderConsole() {
             <button onClick={() => attendance.mutate()} disabled={!online || !hasRider || attendance.isPending} className="w-full bg-gray-900 disabled:bg-gray-300 text-white rounded-lg px-4 py-4 text-base font-bold">
               تسجيل الحضور
             </button>
-            <button onClick={() => startTrip.mutate()} disabled={!online || !hasRider || Boolean(trip) || startTrip.isPending} className="w-full bg-emerald-600 disabled:bg-gray-300 text-white rounded-lg px-4 py-4 text-base font-bold">
+            <button onClick={() => startTrip.mutate()} disabled={!online || !hasRider || Boolean(trip) || startTrip.isPending || !hasCheckedIn.data} className="w-full bg-emerald-600 disabled:bg-gray-300 text-white rounded-lg px-4 py-4 text-base font-bold">
               بدء خروجة
             </button>
           </div>
           <div className="mt-4 text-sm text-gray-600">{trip ? 'يوجد خروجة نشطة الآن' : 'لا توجد خروجة نشطة'}</div>
+          {!hasCheckedIn.isLoading && !hasCheckedIn.data && (
+            <div className="mt-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">لم تسجل حضور اليوم، الرجاء تسجيل الحضور قبل بدء الخروجة.</div>
+          )}
           {trip?.needs_review && <div className="mt-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">{trip.review_reason || 'تحتاج مراجعة'}</div>}
         </section>
 

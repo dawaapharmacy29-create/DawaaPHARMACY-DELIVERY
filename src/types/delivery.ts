@@ -50,22 +50,13 @@ export interface DeliveryOrder {
 
 export interface DeliveryPayrollRow {
   rider_id: string;
-  rider_name: string;
-  tier: RiderTier;
-  hours_count: number;
-  delivered_orders_count: number;
-  internal_trips_count: number;
-  hourly_rate_snapshot: number;
-  order_rate_snapshot: number;
-  internal_trip_rate_snapshot: number;
-  gross_total: number;
-  bonuses_total: number;
-  deductions_total: number;
-  net_total: number;
-  pending_review_count: number;
-  unapproved_trips_count: number;
-  failed_orders_count: number;
-  can_approve_payroll: boolean;
+  rider_name?: string;
+  total_work_hours: number;
+  delivered_orders: number;
+  monthly_incentive: number;
+  bonuses: number;
+  penalties: number;
+  net_pay: number;
 }
 
 export interface GeoPoint {

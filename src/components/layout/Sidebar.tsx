@@ -1,12 +1,16 @@
-import { Bike, Calculator, ClipboardList, LayoutDashboard, Route, Settings } from 'lucide-react';
+import { Bell, Bike, Calculator, ClipboardList, LayoutDashboard, Route, Settings, ShieldAlert, Trophy, Wallet } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 const navItems = [
   { label: 'لوحة الدليفري', icon: LayoutDashboard, path: '/delivery' },
   { label: 'شاشة المندوب', icon: Bike, path: '/delivery/rider' },
   { label: 'الأوردرات', icon: ClipboardList, path: '/delivery/orders' },
-  { label: 'المشاوير', icon: Route, path: '/delivery/settings' },
-  { label: 'المستحقات', icon: Calculator, path: '/delivery/payroll' },
+  { label: 'المشاوير', icon: Route, path: '/delivery/trips' },
+  { label: 'الترتيب', icon: Trophy, path: '/delivery/leaderboard' },
+  { label: 'الحوافز', icon: Calculator, path: '/delivery/incentives' },
+  { label: 'المستحقات', icon: Wallet, path: '/delivery/payroll' },
+  { label: 'التنبيهات', icon: Bell, path: '/delivery/notifications' },
+  { label: 'الحوادث', icon: ShieldAlert, path: '/delivery/incidents' },
   { label: 'الإعدادات', icon: Settings, path: '/delivery/settings' },
 ];
 

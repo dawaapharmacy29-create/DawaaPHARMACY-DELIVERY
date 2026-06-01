@@ -57,7 +57,7 @@ async function fetchProfile(supabaseUser: User): Promise<AuthUser> {
     .eq('auth_user_id', supabaseUser.id)
     .maybeSingle();
 
-  const { data, error } = await withTimeout(profileQuery, 8000, 'انتهى وقت تحميل ملف المستخدم.');
+  const { data, error } = await withTimeout(profileQuery as unknown as Promise<any>, 8000, 'انتهى وقت تحميل ملف المستخدم.');
 
   if (error) {
     throw new Error(error.message || 'تعذر تحميل ملف المستخدم من Supabase.');
@@ -179,7 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       let email = cleanLogin;
       if (!cleanLogin.includes('@')) {
         const { data: resolvedEmail, error: resolveError } = await withTimeout(
-          supabase.rpc('delivery_resolve_login', { login_name: cleanLogin }),
+          (supabase.rpc('delivery_resolve_login', { login_name: cleanLogin }) as unknown) as Promise<any>,
           8000,
           'انتهى وقت تحويل اسم المستخدم.'
         );

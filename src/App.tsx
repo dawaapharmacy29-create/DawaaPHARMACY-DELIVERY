@@ -10,6 +10,11 @@ import NotFound from '@/pages/NotFound';
 const DeliveryDashboard = lazy(() => import('@/pages/delivery/DeliveryDashboard'));
 const RiderConsole = lazy(() => import('@/pages/delivery/RiderConsole'));
 const DeliveryOrders = lazy(() => import('@/pages/delivery/DeliveryOrders'));
+const DeliveryTrips = lazy(() => import('@/pages/delivery/DeliveryTrips'));
+const DeliveryIncentives = lazy(() => import('@/pages/delivery/DeliveryIncentives'));
+const DeliveryLeaderboard = lazy(() => import('@/pages/delivery/DeliveryLeaderboard'));
+const DeliveryIncidents = lazy(() => import('@/pages/delivery/DeliveryIncidents'));
+const DeliveryNotifications = lazy(() => import('@/pages/delivery/DeliveryNotifications'));
 const DeliveryPayroll = lazy(() => import('@/pages/delivery/DeliveryPayroll'));
 const DeliverySettings = lazy(() => import('@/pages/delivery/DeliverySettings'));
 
@@ -50,6 +55,11 @@ export default function App() {
               <Route path="/delivery" element={protectedPage(<DeliveryDashboard />)} />
               <Route path="/delivery/rider" element={protectedPage(<RiderConsole />)} />
               <Route path="/delivery/orders" element={protectedPage(<DeliveryOrders />)} />
+              <Route path="/delivery/trips" element={protectedPage(<DeliveryTrips />)} />
+              <Route path="/delivery/incentives" element={protectedPage(<DeliveryIncentives />)} />
+              <Route path="/delivery/leaderboard" element={protectedPage(<DeliveryLeaderboard />)} />
+              <Route path="/delivery/incidents" element={protectedPage(<DeliveryIncidents />)} />
+              <Route path="/delivery/notifications" element={protectedPage(<DeliveryNotifications />)} />
               <Route path="/delivery/payroll" element={protectedPage(<DeliveryPayroll />)} />
               <Route path="/delivery/settings" element={protectedPage(<DeliverySettings />)} />
               <Route path="*" element={<NotFound />} />

@@ -80,6 +80,22 @@ VITE_SUPABASE_ANON_KEY=anon_public_key_from_new_supabase_project
 /delivery/orders
 /delivery/payroll
 /delivery/settings
+
+## SQL الترحيل الجديد (هذا التحديث)
+
+تم إضافة ملف ترحيل آمن يضيف جداول وRPCs وسياسات RLS دون المساس بالجداول الحالية. شغّل الملف التالي في SQL Editor بعد ملف الـ bootstrap:
+
+```text
+supabase/new-project/10_product_upgrade.sql
+```
+
+ماذا يفعل الملف:
+- ينشئ جداول: `delivery_runs`, `delivery_orders`, `delivery_trips`, `delivery_attendance`, `delivery_performance_scores`, `delivery_incentive_rules`, `delivery_incentive_events`, `delivery_notifications`, `delivery_incidents`, `delivery_quarterly_incentives`, `delivery_payrolls`, `delivery_audit_log`.
+- يعرّف دوال `security definer` مثل `current_user_profile_id()` و`current_user_delivery_role()` للمساعدة في سياسات RLS.
+- يعرّف RPCs المستخدمة من الواجهة: `delivery_start_attendance`, `delivery_start_run`, `delivery_finish_run`, `delivery_add_order`.
+- يضيف سياسات RLS أولية (owner or admin) وتقييدات تمنع التلاعب بزمن الخروج/الرجوع من الواجهة.
+
+ملاحظة أمان: لا تستخدم `service_role` من الواجهة. شغّل الترحيل كسكريبت SQL من لوحة Supabase أو كـ migration عبر CI بامتيازات مدير.
 ```
 
 ## إصلاحات مهمة تمت في هذه النسخة

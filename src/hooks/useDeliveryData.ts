@@ -121,40 +121,49 @@ export function useActiveDeliveryTrip() {
       const rider = await getCurrentRider(user?.authUserId, user?.id);
       if (!rider?.id) return null;
 
-      const { data, error } = await supabase
+      const { data: trip, error: tripError } = await supabase
         .from('delivery_trips')
-        .select(`
-          id,
-          rider_id,
-          branch_id,
-          status,
-          started_at,
-          ended_at,
-          needs_review,
-          review_reason,
-          manual_return_reason,
-          delivery_orders(
-            id,
-            trip_id,
-            rider_id,
-            customer_id,
-            invoice_no,
-            amount,
-            status,
-            customer_name_snapshot,
-            customer_code_snapshot,
-            customer_phone_snapshot,
-            customer_address_snapshot,
-            delivered_at,
-            created_at
-          )
-        `)
+        .select('id, rider_id, branch_id, status, started_at, ended_at, needs_review, review_reason, manual_return_reason')
         .eq('rider_id', rider.id)
         .eq('status', 'active')
         .maybeSingle();
-      if (error) throw error;
-      return data;
+      if (tripError) throw tripError;
+      if (!trip) return null;
+
+      const { data: orders, error: ordersError } = await supabase
+        .from('delivery_orders')
+        .select('id, run_id, rider_id, customer_id, invoice_number, invoice_value, status, failed_reason, delivered_at, customer_name_snapshot, customer_code_snapshot, customer_phone_snapshot, customer_address_snapshot, created_at')
+        .eq('run_id', trip.id)
+        .order('created_at', { ascending: false });
+      if (ordersError) throw ordersError;
+
+      return {
+        ...trip,
+        delivery_orders: (orders || []).map((order: any) => ({
+          ...order,
+          invoice_no: order.invoice_number,
+          amount: order.invoice_value,
+        })),
+      };
     },
+  });
+}
+
+export function useHasCheckedIn() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['delivery-has-checked-in', user?.authUserId, user?.id],
+    enabled: Boolean(user?.authUserId || user?.id),
+    queryFn: async () => {
+      const rider = await getCurrentRider(user?.authUserId, user?.id);
+      if (!rider?.id) return false;
+      const todayStart = new Date().toISOString().slice(0, 10) + 'T00:00:00';
+      const todayEnd = new Date().toISOString().slice(0, 10) + 'T23:59:59';
+      const { count, error } = await supabase.from('delivery_attendance').select('id', { count: 'exact', head: true }).eq('rider_id', rider.id).gte('created_at', todayStart).lte('created_at', todayEnd);
+      if (error) throw error;
+      return (count || 0) > 0;
+    },
+    staleTime: 1000 * 60,
   });
 }
 
@@ -213,13 +222,12 @@ export function useAddDeliveryOrder() {
   return useMutation({
     mutationFn: async (order: { trip_id: string; rider_id: string; customer_id: string; invoice_no: string; amount: number }) => {
       if (!order.invoice_no.trim()) throw new Error('رقم الفاتورة إجباري');
-      const { error } = await supabase.from('delivery_orders').insert({
-        trip_id: order.trip_id,
-        rider_id: order.rider_id,
-        customer_id: order.customer_id,
-        invoice_no: order.invoice_no.trim(),
-        amount: order.amount,
-        status: 'pending',
+      const { error } = await supabase.rpc('delivery_add_order', {
+        p_run_id: order.trip_id,
+        p_invoice_number: order.invoice_no.trim(),
+        p_invoice_value: order.amount,
+        p_customer_id: order.customer_id,
+        p_metadata: {},
       });
       if (error) throw error;
     },
@@ -283,13 +291,21 @@ export function useDeliveryOrders(page = 0, status?: OrderStatus) {
     queryFn: async () => {
       let query = supabase
         .from('delivery_orders')
-        .select('id, invoice_no, amount, status, customer_name_snapshot, customer_code_snapshot, customer_phone_snapshot, customer_address_snapshot, created_at', { count: 'exact' })
+        .select('id, invoice_number, invoice_value, status, customer_name_snapshot, customer_code_snapshot, customer_phone_snapshot, customer_address_snapshot, created_at', { count: 'exact' })
         .order('created_at', { ascending: false })
         .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
       if (status) query = query.eq('status', status);
       const { data, count, error } = await query;
       if (error) throw error;
-      return { rows: data || [], count: count || 0, pageSize: PAGE_SIZE };
+      return {
+        rows: (data || []).map((order: any) => ({
+          ...order,
+          invoice_no: order.invoice_number,
+          amount: order.invoice_value,
+        })),
+        count: count || 0,
+        pageSize: PAGE_SIZE,
+      };
     },
   });
 }
@@ -326,5 +342,107 @@ export function useDeliveryPayroll(anchor = new Date()) {
       if (error) throw error;
       return { range, rows: (data || []) as DeliveryPayrollRow[] };
     },
+  });
+}
+
+export function usePendingDeliveryTrips() {
+  return useQuery({
+    queryKey: ['delivery-pending-trips'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('delivery_trips').select('*').eq('status', 'pending_approval').order('created_at', { ascending: false });
+      if (error) throw error;
+      return data || [];
+    },
+    staleTime: 1000 * 30,
+  });
+}
+
+export function useApproveTrip() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('delivery_trips').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: async (_, id) => {
+      await logAudit({ userId: user?.id, userName: user?.displayName, role: user?.role, department: 'delivery_trips', operation: 'approve trip', details: `trip_id: ${id}` });
+      qc.invalidateQueries({ queryKey: ['delivery-pending-trips'] });
+      qc.invalidateQueries({ queryKey: ['delivery-dashboard'] });
+    },
+    onError: (err: any) => {
+      throw err;
+    },
+  });
+}
+
+export function useRejectTrip() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason?: string }) => {
+      const { error } = await supabase.from('delivery_trips').update({ status: 'rejected', notes: reason || null, updated_at: new Date().toISOString() }).eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: async (_, vars) => {
+      await logAudit({ userId: user?.id, userName: user?.displayName, role: user?.role, department: 'delivery_trips', operation: 'reject trip', details: `trip_id: ${vars.id}` });
+      qc.invalidateQueries({ queryKey: ['delivery-pending-trips'] });
+      qc.invalidateQueries({ queryKey: ['delivery-dashboard'] });
+    },
+    onError: (err: any) => {
+      throw err;
+    },
+  });
+}
+
+export function useIncentives() {
+  return useQuery({
+    queryKey: ['delivery-incentives'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('delivery_performance_scores').select('*, delivery_riders(name)');
+      if (error) throw error;
+      return data || [];
+    },
+    staleTime: 1000 * 60,
+  });
+}
+
+export function useLeaderboard() {
+  return useQuery({
+    queryKey: ['delivery-leaderboard'],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('delivery_leaderboard');
+      if (error) throw error;
+      return data || [];
+    },
+    staleTime: 1000 * 60,
+  });
+}
+
+export function useDeliveryIncidents() {
+  return useQuery({
+    queryKey: ['delivery-incidents'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('delivery_incidents').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      return data || [];
+    },
+    staleTime: 1000 * 30,
+  });
+}
+
+export function useDeliveryNotifications() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['delivery-notifications', user?.authUserId, user?.id],
+    enabled: Boolean(user?.authUserId || user?.id),
+    queryFn: async () => {
+      const rider = await getCurrentRider(user?.authUserId, user?.id);
+      if (!rider?.id) return [];
+      const { data, error } = await supabase.from('delivery_notifications').select('*').eq('rider_id', rider.id).order('created_at', { ascending: false });
+      if (error) throw error;
+      return data || [];
+    },
+    staleTime: 1000 * 30,
   });
 }
