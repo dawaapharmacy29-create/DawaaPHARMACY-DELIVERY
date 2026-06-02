@@ -42,6 +42,8 @@ export default function DeliveryOrders() {
         </div>
       </div>
 
+      {data?.error && <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-right text-sm text-amber-800">تعذر تحميل الأوردرات من Supabase: {data.error}</div>}
+
       <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm">
         <table className="min-w-full text-sm text-right">
           <thead className="border-b bg-slate-50 text-slate-600">
@@ -61,7 +63,7 @@ export default function DeliveryOrders() {
             )}
             {!isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-slate-400">لا توجد أوردرات لهذه الصفحة</td>
+                <td colSpan={5} className="px-4 py-8 text-center text-slate-400">لا توجد أوردرات حتى الآن. ابدأ من شاشة المندوب وسجل أول خروجة.</td>
               </tr>
             )}
             {rows.map(order => (

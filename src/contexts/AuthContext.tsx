@@ -45,34 +45,47 @@ function normalizeProfile(row: any, supabaseUser: User): AuthUser {
     displayName: row.display_name || supabaseUser.user_metadata?.display_name || supabaseUser.email?.split('@')[0] || 'مستخدم',
     role: row.role || 'rider',
     branchId: row.branch_id || null,
-    branchName: row.delivery_branches?.name || row.branch_name || null,
+    branchName: row.branch_name || null,
     status: row.status || 'active',
   };
 }
 
 async function fetchProfile(supabaseUser: User): Promise<AuthUser> {
-  const profileQuery = supabase
-    .from('user_profiles')
-    .select('id, auth_user_id, email, display_name, role, branch_id, status, delivery_branches(name)')
-    .eq('auth_user_id', supabaseUser.id)
-    .maybeSingle();
+  const selectFields = 'id, auth_user_id, email, display_name, role, branch_id, status';
+  const attempts = [
+    { column: 'auth_user_id', value: supabaseUser.id },
+    { column: 'id', value: supabaseUser.id },
+    { column: 'email', value: (supabaseUser.email || '').toLowerCase() },
+  ].filter(item => item.value);
 
-  const { data, error } = await withTimeout(profileQuery as unknown as Promise<any>, 8000, 'انتهى وقت تحميل ملف المستخدم.');
+  let lastError: any = null;
+  for (const attempt of attempts) {
+    const profileQuery = supabase
+      .from('user_profiles')
+      .select(selectFields)
+      .eq(attempt.column, attempt.value)
+      .maybeSingle();
 
-  if (error) {
-    throw new Error(error.message || 'تعذر تحميل ملف المستخدم من Supabase.');
+    const { data, error } = await withTimeout(profileQuery as unknown as Promise<any>, 8000, 'انتهى وقت تحميل ملف المستخدم.');
+    if (error) {
+      lastError = error;
+      if (import.meta.env.DEV) console.warn('[Dawaa profile lookup failed]', attempt, error);
+      continue;
+    }
+
+    if (data) {
+      const profile = normalizeProfile(data, supabaseUser);
+      if (profile.status !== 'active' && profile.status !== 'نشط') {
+        throw new Error('هذا الحساب غير مفعل. تواصل مع الإدارة.');
+      }
+      return profile;
+    }
   }
 
-  if (!data) {
-    throw new Error('الحساب موجود في Supabase Auth لكنه غير مربوط بملف مستخدم داخل user_profiles.');
+  if (lastError) {
+    throw new Error(lastError.message || 'تعذر تحميل ملف المستخدم من Supabase.');
   }
-
-  const profile = normalizeProfile(data, supabaseUser);
-  if (profile.status !== 'active' && profile.status !== 'نشط') {
-    throw new Error('هذا الحساب غير مفعل. تواصل مع الإدارة.');
-  }
-
-  return profile;
+  throw new Error('الحساب موجود في Supabase Auth لكنه غير مربوط بملف مستخدم داخل user_profiles.');
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {

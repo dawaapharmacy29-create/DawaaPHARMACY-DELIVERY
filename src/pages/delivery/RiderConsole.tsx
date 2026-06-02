@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bike } from 'lucide-react';
+import { Bike, CheckCircle2, Clock, PackagePlus, Route, ShieldAlert, Wallet } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
 import {
   useActiveDeliveryTrip,
@@ -70,7 +70,7 @@ export default function RiderConsole() {
     await addOrder.mutateAsync({
       trip_id: trip.id,
       rider_id: trip.rider_id,
-      customer_id: selectedCustomer.id,
+      customer: selectedCustomer,
       invoice_no: invoiceNo,
       amount: Number(amount || 0),
     });
@@ -83,12 +83,13 @@ export default function RiderConsole() {
   return (
     <AppLayout title="كونسول المندوب" subtitle="الحضور، الخروجة، وإضافة الأوردرات">
       {riderProfile.data && (
-        <div className="mb-4 rounded-3xl bg-[#071824] p-4 text-white shadow-lg">
+        <div className="mb-4 rounded-3xl bg-gradient-to-l from-[#071824] to-[#0b3b4b] p-4 text-white shadow-lg">
           <div className="flex items-center gap-3">
             <img src="/brand/dawaa-logo.jpeg" alt="Dawaa Delivery" className="h-14 w-14 rounded-2xl bg-white object-contain p-1" />
             <div>
               <div className="text-lg font-bold">{riderProfile.data.display_name}</div>
               <div className="text-sm text-emerald-100">{riderProfile.data.branchName || 'بدون فرع'} - {riderStatus}</div>
+              <div className="mt-1 text-xs text-white/70">حضور اليوم: {hasCheckedIn.data ? 'مسجل' : 'غير مسجل'} · أوردرات الخروجة: {orders.length}</div>
             </div>
           </div>
         </div>
@@ -100,14 +101,21 @@ export default function RiderConsole() {
         </div>
       )}
 
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-3 text-right shadow-sm"><Clock className="mb-2 text-emerald-600" size={20} /><div className="text-xs text-slate-500">الحالة</div><div className="font-bold text-slate-950">{riderStatus}</div></div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-3 text-right shadow-sm"><PackagePlus className="mb-2 text-blue-600" size={20} /><div className="text-xs text-slate-500">أوردرات الخروجة</div><div className="font-bold text-slate-950">{orders.length}</div></div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-3 text-right shadow-sm"><Wallet className="mb-2 text-violet-600" size={20} /><div className="text-xs text-slate-500">حافز الشهر</div><div className="font-bold text-slate-950">تحت التجربة</div></div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-3 text-right shadow-sm"><ShieldAlert className="mb-2 text-amber-600" size={20} /><div className="text-xs text-slate-500">مراجعات</div><div className="font-bold text-slate-950">{trip?.needs_review ? 'يوجد' : 'لا يوجد'}</div></div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <section className="bg-white border border-gray-200 rounded-lg p-4 text-right">
+        <section className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm text-right">
           <h2 className="font-bold text-gray-900 mb-3">الحضور والخروجة</h2>
           <div className="space-y-2">
-            <button onClick={() => attendance.mutate()} disabled={!online || !hasRider || attendance.isPending} className="w-full bg-gray-900 disabled:bg-gray-300 text-white rounded-lg px-4 py-4 text-base font-bold">
+            <button onClick={() => attendance.mutate()} disabled={!online || !hasRider || attendance.isPending} className="w-full bg-gray-900 disabled:bg-gray-300 text-white rounded-xl px-4 py-4 text-base font-bold">
               تسجيل الحضور
             </button>
-            <button onClick={() => startTrip.mutate()} disabled={!online || !hasRider || Boolean(trip) || startTrip.isPending || !hasCheckedIn.data} className="w-full bg-emerald-600 disabled:bg-gray-300 text-white rounded-lg px-4 py-4 text-base font-bold">
+            <button onClick={() => startTrip.mutate()} disabled={!online || !hasRider || Boolean(trip) || startTrip.isPending || !hasCheckedIn.data} className="w-full bg-emerald-600 disabled:bg-gray-300 text-white rounded-xl px-4 py-4 text-base font-bold">
               بدء خروجة
             </button>
           </div>
@@ -118,12 +126,12 @@ export default function RiderConsole() {
           {trip?.needs_review && <div className="mt-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">{trip.review_reason || 'تحتاج مراجعة'}</div>}
         </section>
 
-        <section className="lg:col-span-2 bg-white border border-gray-200 rounded-lg p-4 text-right">
+        <section className="lg:col-span-2 bg-white border border-gray-200 rounded-2xl p-4 shadow-sm text-right">
           <h2 className="font-bold text-gray-900 mb-3">إضافة أوردر</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <input value={search} onChange={e => { setSearch(e.target.value); setSelectedCustomer(null); }} placeholder="ابحث بالكود أو الاسم أو الهاتف" className="border border-gray-200 rounded-lg px-3 py-3 text-base text-right" />
-            <input value={invoiceNo} onChange={e => setInvoiceNo(e.target.value)} placeholder="رقم الفاتورة إجباري" className="border border-gray-200 rounded-lg px-3 py-3 text-base text-right" />
-            <input value={amount} onChange={e => setAmount(e.target.value)} type="number" min="0" placeholder="قيمة اختيارية" className="border border-gray-200 rounded-lg px-3 py-3 text-base text-right" />
+            <input value={search} onChange={e => { setSearch(e.target.value); setSelectedCustomer(null); }} placeholder="ابحث بالكود أو الاسم أو الهاتف" className="border border-gray-200 rounded-xl px-3 py-3 text-base text-right" />
+            <input value={invoiceNo} onChange={e => setInvoiceNo(e.target.value)} placeholder="رقم الفاتورة إجباري" className="border border-gray-200 rounded-xl px-3 py-3 text-base text-right" />
+            <input value={amount} onChange={e => setAmount(e.target.value)} type="number" min="0" placeholder="قيمة اختيارية" className="border border-gray-200 rounded-xl px-3 py-3 text-base text-right" />
           </div>
 
           {debouncedSearch.trim().length === 1 && <div className="mt-2 text-sm text-gray-500">اكتب حرفين على الأقل للبحث.</div>}
@@ -154,7 +162,7 @@ export default function RiderConsole() {
         </section>
       </div>
 
-      <section className="mt-4 bg-white border border-gray-200 rounded-lg p-4 text-right">
+      <section className="mt-4 bg-white border border-gray-200 rounded-2xl p-4 shadow-sm text-right">
         <h2 className="font-bold text-gray-900 mb-3">أوردرات الخروجة الحالية</h2>
         <div className="space-y-2">
           {orders.map((order: any) => (
@@ -165,9 +173,14 @@ export default function RiderConsole() {
                   <div className="text-sm text-gray-500">{order.customer_code_snapshot} - {order.customer_phone_snapshot}</div>
                   <div className="text-xs text-gray-400">{order.customer_address_snapshot}</div>
                 </div>
-                <button disabled={!online || updateOrder.isPending || order.status === 'delivered'} onClick={() => updateOrder.mutate({ id: order.id, status: 'delivered' })} className="rounded-lg bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700 disabled:text-gray-300">
-                  تم التسليم
-                </button>
+                <div className="flex gap-2">
+                  <button disabled={!online || updateOrder.isPending || order.status === 'delivered'} onClick={() => updateOrder.mutate({ id: order.id, status: 'delivered' })} className="rounded-xl bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700 disabled:text-gray-300">
+                    تم التسليم
+                  </button>
+                  <button disabled={!online || updateOrder.isPending || order.status === 'failed'} onClick={() => { const reason = window.prompt('اكتب سبب فشل الأوردر'); if (reason) updateOrder.mutate({ id: order.id, status: 'cancelled', reason }); }} className="rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700 disabled:text-gray-300">
+                    فشل
+                  </button>
+                </div>
               </div>
               <div className="mt-2 text-xs text-gray-500">الحالة: {order.status}</div>
             </div>
@@ -177,17 +190,17 @@ export default function RiderConsole() {
       </section>
 
       <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <section className="bg-white border border-gray-200 rounded-lg p-4 text-right">
+        <section className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm text-right">
           <h2 className="font-bold text-gray-900 mb-3">إنهاء الخروجة</h2>
-          <textarea value={manualReason} onChange={e => setManualReason(e.target.value)} placeholder="سبب الرجوع اليدوي إن وجد" className="w-full border border-gray-200 rounded-lg px-3 py-3 text-base text-right" />
-          <button onClick={() => trip && endTrip.mutate({ tripId: trip.id, manualReason: manualReason.trim() || undefined })} disabled={!online || !trip || endTrip.isPending} className="mt-2 w-full bg-gray-900 disabled:bg-gray-300 text-white rounded-lg px-4 py-4 text-base font-bold">
+          <textarea value={manualReason} onChange={e => setManualReason(e.target.value)} placeholder="سبب الرجوع اليدوي إن وجد" className="w-full border border-gray-200 rounded-xl px-3 py-3 text-base text-right" />
+          <button onClick={() => trip && endTrip.mutate({ tripId: trip.id, manualReason: manualReason.trim() || undefined })} disabled={!online || !trip || endTrip.isPending} className="mt-2 w-full bg-gray-900 disabled:bg-gray-300 text-white rounded-xl px-4 py-4 text-base font-bold">
             إنهاء الخروجة
           </button>
         </section>
-        <section className="bg-white border border-gray-200 rounded-lg p-4 text-right">
+        <section className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm text-right">
           <h2 className="font-bold text-gray-900 mb-3">مشوار داخلي</h2>
-          <input value={internalReason} onChange={e => setInternalReason(e.target.value)} placeholder="سبب المشوار" className="w-full border border-gray-200 rounded-lg px-3 py-3 text-base text-right" />
-          <button onClick={() => internalTrip.mutate({ reason: internalReason })} disabled={!online || !hasRider || !internalReason.trim() || internalTrip.isPending} className="mt-2 w-full bg-blue-600 disabled:bg-gray-300 text-white rounded-lg px-4 py-4 text-base font-bold">
+          <input value={internalReason} onChange={e => setInternalReason(e.target.value)} placeholder="سبب المشوار" className="w-full border border-gray-200 rounded-xl px-3 py-3 text-base text-right" />
+          <button onClick={() => internalTrip.mutate({ reason: internalReason })} disabled={!online || !hasRider || !internalReason.trim() || internalTrip.isPending} className="mt-2 w-full bg-blue-600 disabled:bg-gray-300 text-white rounded-xl px-4 py-4 text-base font-bold">
             تسجيل المشوار
           </button>
         </section>
