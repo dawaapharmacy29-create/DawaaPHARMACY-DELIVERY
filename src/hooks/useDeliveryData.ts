@@ -446,3 +446,37 @@ export function useDeliveryNotifications() {
     staleTime: 1000 * 30,
   });
 }
+
+export function useMarkDeliveryNotificationRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (notificationId: string) => {
+      const { error } = await supabase.from('delivery_notifications').update({ is_read: true }).eq('id', notificationId);
+      if (error) throw error;
+    },
+    onSuccess: async () => {
+      qc.invalidateQueries({ queryKey: ['delivery-notifications'] });
+    },
+    onError: (error: any) => {
+      throw error;
+    },
+  });
+}
+
+export function useUpdateDeliveryIncidentStatus() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      const { error } = await supabase.from('delivery_incidents').update({ status, resolved_at: status === 'resolved' ? new Date().toISOString() : null }).eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: async (_, vars) => {
+      await logAudit({ userId: user?.id, userName: user?.displayName, role: user?.role, department: 'delivery_incidents', operation: 'update incident status', details: `incident_id: ${vars.id} status: ${vars.status}` });
+      qc.invalidateQueries({ queryKey: ['delivery-incidents'] });
+    },
+    onError: (error: any) => {
+      throw error;
+    },
+  });
+}

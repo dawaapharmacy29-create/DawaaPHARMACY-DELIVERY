@@ -48,6 +48,28 @@ export interface DeliveryOrder {
   customers?: DeliveryCustomer | null;
 }
 
+export interface DeliveryNotification {
+  id: string;
+  rider_id?: string;
+  category?: string;
+  payload?: Record<string, any>;
+  is_read?: boolean;
+  created_at: string;
+}
+
+export interface DeliveryIncident {
+  id: string;
+  rider_id?: string;
+  run_id?: string;
+  category?: string;
+  severity?: string;
+  description?: string;
+  status?: string;
+  created_at: string;
+  resolved_at?: string | null;
+  metadata?: Record<string, any>;
+}
+
 export interface DeliveryPayrollRow {
   rider_id: string;
   rider_name?: string;
