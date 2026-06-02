@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Bike } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
 import {
   useActiveDeliveryTrip,
@@ -81,12 +82,6 @@ export default function RiderConsole() {
 
   return (
     <AppLayout title="كونسول المندوب" subtitle="الحضور، الخروجة، وإضافة الأوردرات">
-      {!riderProfile.isLoading && !riderProfile.data && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-right text-amber-900">
-          هذا الحساب غير مربوط بمندوب دليفري. تواصل مع الإدارة.
-        </div>
-      )}
-
       {riderProfile.data && (
         <div className="mb-4 rounded-3xl bg-[#071824] p-4 text-white shadow-lg">
           <div className="flex items-center gap-3">
