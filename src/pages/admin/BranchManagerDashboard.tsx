@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, Bell, Bike, CheckCircle2, Gift, LogOut, Package, RefreshCw, Search, XCircle } from 'lucide-react'
@@ -52,10 +51,7 @@ export default function BranchManagerDashboard() {
   const [loading, setLoading] = useState(true)
   const period = getOperationalPeriod()
 
-  // The 'react-hooks/exhaustive-deps' rule is an ESLint rule, not a TypeScript syntax error.
-  // The original code already has `// eslint-disable-next-line react-hooks/exhaustive-deps` which disables the rule.
-  // No TypeScript syntax correction is needed here.
-
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   async function load() {
     setLoading(true)
     try {
@@ -66,8 +62,8 @@ export default function BranchManagerDashboard() {
         ? { id: localSession.account_id, display_name: localSession.rider_name || localSession.username || 'مدير الفرع', role: localSession.role || 'branch_manager', branch_id: localSession.branch_id }
         : null
       const activeProfile = (prof as any) || fallbackProfile
-      setProfile(activeProfile as Profile) // Cast to Profile
-      const bId = activeProfile?.branch_id || branchId
+      setProfile(activeProfile as any)
+      const bId = (activeProfile as any)?.branch_id || branchId
       setBranchId(bId)
       if (bId) {
         const { data: b } = await supabase.from('branches').select('*').eq('id', bId).maybeSingle()
@@ -81,12 +77,12 @@ export default function BranchManagerDashboard() {
       if (or.error) throw or.error
       if (tr.error) throw tr.error
       if (rr.error) throw rr.error
-      setOrders((or.data || []) as DeliveryOrder[]) // Cast to DeliveryOrder[]
-      setTrips((tr.data || []) as InternalTrip[]) // Cast to InternalTrip[]
-      setRiders((rr.data || []) as Rider[]) // Cast to Rider[]
+      setOrders((or.data || []) as any)
+      setTrips((tr.data || []) as any)
+      setRiders((rr.data || []) as any)
       const currentCanonicalBranch = canonicalBranchName(branchName || (prof as any)?.branch_name)
       const branchDeviceRows = ((dr as any).data || []).filter((x: any) => !bId || x.branch_id === bId || (currentCanonicalBranch && canonicalBranchName(x.branch_name) === currentCanonicalBranch))
-      setDeviceRows(branchDeviceRows as RiderDeviceStatusRow[]) // Cast to RiderDeviceStatusRow[]
+      setDeviceRows(branchDeviceRows as any)
     } catch (e: any) {
       toast.error(e?.message || 'تعذر تحميل بيانات الفرع')
     } finally { setLoading(false) }
@@ -126,16 +122,16 @@ export default function BranchManagerDashboard() {
   }), [orders, trips])
 
   const timelineKpi = useMemo(() => {
-    const pendingDispatch = orders.filter((o: DeliveryOrder) => !o.dispatched_at && !isDelivered(o) && !isFailed(o)).length
-    const dispatched = orders.filter((o: DeliveryOrder) => !!o.dispatched_at).length
-    const deliveredWithDispatch = orders.filter((o: DeliveryOrder) => o.dispatched_at && o.delivered_at)
+    const pendingDispatch = orders.filter((o: any) => !o.dispatched_at && !isDelivered(o) && !isFailed(o)).length
+    const dispatched = orders.filter((o: any) => !!o.dispatched_at).length
+    const deliveredWithDispatch = orders.filter((o: any) => o.dispatched_at && o.delivered_at)
     const avgDelivery = deliveredWithDispatch.length
-      ? Math.round(deliveredWithDispatch.reduce((sum: number, o: DeliveryOrder) => sum + (minutesBetween(o.dispatched_at, o.delivered_at) || 0), 0) / deliveredWithDispatch.length)
+      ? Math.round(deliveredWithDispatch.reduce((sum: number, o: any) => sum + (minutesBetween(o.dispatched_at, o.delivered_at) || 0), 0) / deliveredWithDispatch.length)
       : 0
     return { pendingDispatch, dispatched, avgDelivery }
   }, [orders])
 
-  async function handleDispatchOrder(row: DeliveryOrder) { // Changed 'any' to 'DeliveryOrder'
+  async function handleDispatchOrder(row: any) {
     if (!profile) return
     const actor = profile.display_name || 'مدير الفرع'
     try {
@@ -285,7 +281,7 @@ export default function BranchManagerDashboard() {
         <div className="overflow-x-auto">
           <table className="min-w-full text-right text-sm">
             <thead><tr className="border-b bg-slate-50 text-slate-500"><th className="p-3">الفاتورة</th><th className="p-3">العميل</th><th className="p-3">المندوب</th><th className="p-3">خط خروج الأوردر</th><th className="p-3">الحالة</th><th className="p-3">إجراءات مدير الفرع</th></tr></thead>
-            <tbody>{filteredOrders.slice(0,30).map((o: DeliveryOrder)=><tr key={o.id} className="border-b last:border-0 align-top"><td className="p-3 font-black">{o.invoice_number || (o as any).invoice_no || (o as any).order_no || '—'}</td><td className="p-3"><p className="font-black">{o.customer_name_snapshot || (o as any).customer_name || '—'}</p><p className="text-xs text-slate-400">{o.customer_phone_snapshot || (o as any).customer_phone || ''}</p></td><td className="p-3 font-bold">{o.rider_name || (o as any).driver_name || 'غير محدد'}</td><td className="min-w-[260px] p-3"><OrderTimelineBadge order={o} compact /></td><td className="p-3"><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black">{isFailed(o)?'فاشل':isDelivered(o)?'تم التسليم':isMultiplier(o)?'×1.5':isDuplicate(o)?'مكرر':'مراجعة'}</span></td><td className="p-3"><div className="flex flex-wrap gap-2">{!o.dispatched_at && <ActionButton label="تأكيد خروج" tone="green" onClick={()=>handleDispatchOrder(o)}/>}<ActionButton label="تعديل رقم الفاتورة" tone="orange" onClick={()=>{ setNewInvoiceNumber(String(o.invoice_number || (o as any).invoice_no || '')); setModal({type:'edit_invoice',row:o}) }}/><ActionButton label="تحويل لمندوب" tone="blue" onClick={()=>setModal({type:'reassign',row:o})}/><ActionButton label="تحويل لمشوار" tone="orange" onClick={()=>setModal({type:'order_to_trip',row:o})}/><ActionButton label="خصم" tone="red" onClick={()=>setModal({type:'penalty',row:o})}/><ActionButton label="مكافأة" tone="green" onClick={()=>setModal({type:'reward',row:o})}/><ActionButton label="حذف حفظي" tone="red" onClick={()=>setModal({type:'delete',row:o})}/></div></td></tr>)}{!filteredOrders.length&&<tr><td colSpan={6} className="p-8 text-center font-black text-slate-400">لا توجد بيانات مطابقة</td></tr>}</tbody>
+            <tbody>{filteredOrders.slice(0,30).map((o:any)=><tr key={o.id} className="border-b last:border-0 align-top"><td className="p-3 font-black">{o.invoice_number || o.invoice_no || o.order_no || '—'}</td><td className="p-3"><p className="font-black">{o.customer_name_snapshot || o.customer_name || '—'}</p><p className="text-xs text-slate-400">{o.customer_phone_snapshot || o.customer_phone || ''}</p></td><td className="p-3 font-bold">{o.rider_name || o.driver_name || 'غير محدد'}</td><td className="min-w-[260px] p-3"><OrderTimelineBadge order={o} compact /></td><td className="p-3"><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black">{isFailed(o)?'فاشل':isDelivered(o)?'تم التسليم':isMultiplier(o)?'×1.5':isDuplicate(o)?'مكرر':'مراجعة'}</span></td><td className="p-3"><div className="flex flex-wrap gap-2">{!o.dispatched_at && <ActionButton label="تأكيد خروج" tone="green" onClick={()=>handleDispatchOrder(o)}/>}<ActionButton label="تعديل رقم الفاتورة" tone="orange" onClick={()=>{ setNewInvoiceNumber(String(o.invoice_number || o.invoice_no || '')); setModal({type:'edit_invoice',row:o}) }}/><ActionButton label="تحويل لمندوب" tone="blue" onClick={()=>setModal({type:'reassign',row:o})}/><ActionButton label="تحويل لمشوار" tone="orange" onClick={()=>setModal({type:'order_to_trip',row:o})}/><ActionButton label="خصم" tone="red" onClick={()=>setModal({type:'penalty',row:o})}/><ActionButton label="مكافأة" tone="green" onClick={()=>setModal({type:'reward',row:o})}/><ActionButton label="حذف حفظي" tone="red" onClick={()=>setModal({type:'delete',row:o})}/></div></td></tr>)}{!filteredOrders.length&&<tr><td colSpan={6} className="p-8 text-center font-black text-slate-400">لا توجد بيانات مطابقة</td></tr>}</tbody>
           </table>
         </div>
       </section>
