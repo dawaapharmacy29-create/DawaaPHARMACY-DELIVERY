@@ -1,160 +1,123 @@
-# Dawaa Delivery — دليفري صيدليات دواء
+# 🚀 دواء دليفري — Dawaa Delivery Management System
 
-نسخة مطورة ومركزة على تشغيل تطبيق الدليفري فقط، مع إصلاحات مهمة في:
-- تسجيل الدخول باسم مستخدم ورقم سري.
-- منع التعليق على شاشة “جاري الدخول”.
-- ربط Supabase Project جديد مستقل.
-- تحسين تصميم صفحة الدخول باستخدام لوجو صيدليات دواء.
-- توجيه التطبيق افتراضيًا إلى صفحات الدليفري بدل صفحات المشتريات.
-- دعم Vercel SPA routing عبر `vercel.json`.
+  نظام متكامل لإدارة عمليات التوصيل — مبني بـ React + Vite + Supabase.
 
-## بيانات الدخول التجريبية
+  ---
 
-بعد تجهيز Supabase الجديد وإنشاء المستخدم:
+  ## ⚡ المميزات
 
-```text
-Username: DR.MOAZ
-Password: 9493
-Internal Email: dr.moaz@dawaa-delivery.local
-```
+  - لوحة إدارة ذكية مع رسوم بيانية تفاعلية (Recharts)
+  - تتبع أداء المندوبين مع مقارنة حقيقية بين الفترات (يومي/أسبوعي/شهري/ربع سنوي)
+  - تحليل العملاء حسب التصنيف ومستوى الخطر
+  - مراقبة الحضور وإدارة الجداول
+  - مطابقة الفواتير مع BConnect
+  - تقارير PDF شاملة
+  - PWA يعمل بدون إنترنت
+  - تحديث لحظي عبر Supabase Realtime
+  - دعم RTL عربي كامل
 
-يوجد alias إضافي مؤقت:
+  ---
 
-```text
-admin -> dr.moaz@dawaa-delivery.local
-```
+  ## 🛠️ التثبيت المحلي
 
-وكلمة المرور له هي نفس كلمة مرور المستخدم الداخلي، أي `9493`، وليس `admin123`.
+  ```bash
+  # 1. استنسخ المشروع
+  git clone https://github.com/YOUR_USERNAME/dawaa-delivery.git
+  cd dawaa-delivery
 
-## تشغيل Supabase الجديد
+  # 2. ثبّت الحزم
+  npm install
 
-1. افتح Supabase Project الجديد.
-2. من Authentication → Users → Add user:
-   - Email: `dr.moaz@dawaa-delivery.local`
-   - Password: `9493`
-   - اجعل المستخدم Confirmed.
-3. افتح SQL Editor.
-4. شغّل الملف:
+  # 3. انسخ ملف البيئة وأضف بياناتك
+  cp .env.example .env.local
+  # ثم عدّل .env.local بمفاتيح Supabase الخاصة بك
 
-```text
-supabase/new-project/00_minimal_bootstrap.sql
-```
+  # 4. شغّل المشروع
+  npm run dev
+  ```
 
-5. بعد تشغيل الملف وإنشاء Auth user، نفّذ:
+  ---
 
-```sql
-select public.delivery_link_admin_profile();
-```
+  ## 🔑 متغيرات البيئة
 
-6. اختبر:
+  ```env
+  VITE_SUPABASE_URL=https://your-project.supabase.co
+  VITE_SUPABASE_ANON_KEY=your-anon-key
+  ```
 
-```sql
-select public.delivery_resolve_login('DR.MOAZ') as resolved_email;
-```
+  أضف هذه المتغيرات في:
+  - **محلياً**: ملف `.env.local`
+  - **Vercel**: Settings → Environment Variables
+  - **GitHub Actions**: Settings → Secrets and variables → Actions
 
-المفروض يرجع:
+  ---
 
-```text
-dr.moaz@dawaa-delivery.local
-```
+  ## 🚀 النشر على Vercel
 
-## إعداد Vercel
+  ### الطريقة السريعة (موصى بها):
 
-في Vercel → Project → Settings → Environment Variables:
+  1. ارفع المشروع على GitHub
+  2. اذهب لـ [vercel.com](https://vercel.com) → Import Project
+  3. اختر الـ repository
+  4. أضف متغيرات البيئة:
+     - `VITE_SUPABASE_URL`
+     - `VITE_SUPABASE_ANON_KEY`
+  5. اضغط Deploy ✅
 
-```env
-VITE_SUPABASE_URL=https://qlugjplnnkjzxcbhwopg.supabase.co
-VITE_SUPABASE_ANON_KEY=anon_public_key_from_new_supabase_project
-```
+  ### عبر GitHub Actions (تلقائي):
 
-لا تستخدم `service_role` داخل Vercel أو الكود.
+  أضف هذه الـ Secrets في GitHub → Settings → Secrets:
+  - `VITE_SUPABASE_URL` — رابط Supabase
+  - `VITE_SUPABASE_ANON_KEY` — مفتاح Supabase
+  - `VERCEL_TOKEN` — من Vercel → Account Settings → Tokens
+  - `VERCEL_ORG_ID` — من Vercel Project Settings
+  - `VERCEL_PROJECT_ID` — من Vercel Project Settings
 
-بعد تعديل env اعمل Redeploy.
+  بعدها كل push على `main` يُنشر تلقائياً 🎉
 
-## المسارات المهمة
+  ---
 
-```text
-/login
-/delivery
-/delivery/rider
-/delivery/orders
-/delivery/payroll
-/delivery/settings
+  ## 📦 البنية
 
-## SQL الترحيل الجديد (هذا التحديث)
+  ```
+  src/
+  ├── pages/
+  │   ├── admin/
+  │   │   ├── AdminDashboard.tsx     ← لوحة الإدارة الرئيسية
+  │   │   ├── Performance.tsx        ← أداء المندوبين
+  │   │   ├── CustomerAnalytics.tsx  ← تحليل العملاء
+  │   │   ├── Reconciliation.tsx     ← مطابقة الفواتير
+  │   │   └── ...
+  │   └── rider/
+  │       └── RiderDashboard.tsx     ← لوحة المندوب
+  ├── lib/
+  │   ├── delivery.ts    ← كل عمليات Supabase
+  │   ├── auth.ts        ← المصادقة
+  │   ├── helpers.ts     ← أدوات مساعدة
+  │   └── types.ts       ← TypeScript types
+  └── components/        ← مكونات مشتركة
+  ```
 
-تم إضافة ملف ترحيل آمن يضيف جداول وRPCs وسياسات RLS دون المساس بالجداول الحالية. شغّل الملف التالي في SQL Editor بعد ملف الـ bootstrap:
+  ---
 
-```text
-supabase/new-project/10_product_upgrade.sql
-```
+  ## 🗄️ قاعدة البيانات
 
-ماذا يفعل الملف:
-- ينشئ جداول: `delivery_runs`, `delivery_orders`, `delivery_trips`, `delivery_attendance`, `delivery_performance_scores`, `delivery_incentive_rules`, `delivery_incentive_events`, `delivery_notifications`, `delivery_incidents`, `delivery_quarterly_incentives`, `delivery_payrolls`, `delivery_audit_log`.
-- يعرّف دوال `security definer` مثل `current_user_profile_id()` و`current_user_delivery_role()` للمساعدة في سياسات RLS.
-- يعرّف RPCs المستخدمة من الواجهة: `delivery_start_attendance`, `delivery_start_run`, `delivery_finish_run`, `delivery_add_order`.
-- يضيف سياسات RLS أولية (owner or admin) وتقييدات تمنع التلاعب بزمن الخروج/الرجوع من الواجهة.
+  ملفات SQL موجودة في مجلد `supabase/` — شغّلها بالترتيب في Supabase SQL Editor:
 
-ملاحظة أمان: لا تستخدم `service_role` من الواجهة. شغّل الترحيل كسكريبت SQL من لوحة Supabase أو كـ migration عبر CI بامتيازات مدير.
-```
+  ```
+  supabase/00_full_safe_schema.sql  ← الأساس
+  supabase/01_schema.sql
+  supabase/02_functions.sql
+  ...
+  ```
 
-## إصلاحات مهمة تمت في هذه النسخة
+  ---
 
-### Auth
-- `AuthContext` أصبح يمنع التعليق النهائي.
-- كل عمليات auth/profile لها timeout.
-- `login()` يعمل بـ username alias من RPC `delivery_resolve_login`.
-- يجلب profile من `user_profiles.auth_user_id` بدل `id` فقط.
-- يعرض أخطاء واضحة عند:
-  - اسم مستخدم غير موجود.
-  - كلمة مرور خطأ.
-  - profile غير مربوط.
-  - Supabase غير مجهز.
+  ## 📝 الدورة التشغيلية
 
-### Login
-- تم تغيير الدخول السريع إلى `DR.MOAZ / 9493`.
-- تم استخدام لوجو صيدليات دواء.
-- تم حذف نص “نظام المشتريات” من صفحة الدخول.
-- بعد الدخول يتم التوجيه إلى:
-  - `/delivery` للمدير.
-  - `/delivery/rider` للمندوب.
+  الدورة تبدأ من يوم **26** وتنتهي يوم **25** من الشهر التالي.
 
-### Delivery
-- تم جعل التطبيق يفتح صفحات الدليفري افتراضيًا.
-- تم توحيد استخدام الجداول:
-  - `delivery_trips` = الخروجة / Delivery Run.
-  - `delivery_orders`.
-  - `delivery_riders`.
-  - `delivery_customers`.
-  - `delivery_attendance`.
-- تم تجهيز SQL minimal لتشغيل التطبيق فورًا.
+  ---
 
-## ملاحظات Pilot
-
-ابدأ بتجربة صغيرة:
-
-1. أدخل بحساب `DR.MOAZ / 9493`.
-2. افتح `/delivery/rider`.
-3. جرّب تسجيل حضور.
-4. جرّب بدء خروجة.
-5. ابحث عن عميل تجربة مثل `عميل` أو `CUST`.
-6. أضف أوردر برقم فاتورة.
-7. علّم الأوردر “تم التسليم”.
-8. أنهِ الخروجة.
-9. راجع `/delivery` و `/delivery/payroll`.
-
-## أوامر محلية
-
-```bash
-npm install
-npm run typecheck
-npm run lint
-npm run build
-npm run dev
-```
-
-## ملاحظات مهمة
-
-- هذه النسخة تستخدم Supabase الجديد فقط عبر env.
-- الجداول الأساسية موجودة في `00_minimal_bootstrap.sql`.
-- نظام الحوافز والتنبيهات المتقدم يتم إضافته بعد التأكد أن الدخول والخروجة والأوردرات تعمل.
+  Built with ❤️ for Dawaa Pharmacy operations team.
+  

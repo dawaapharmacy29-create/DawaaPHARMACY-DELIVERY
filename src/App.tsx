@@ -1,73 +1,80 @@
-import { lazy, Suspense, type ReactNode } from 'react';
-import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Toaster } from 'sonner';
-import { AuthProvider } from '@/contexts/AuthContext';
-import ProtectedRoute from '@/components/ProtectedRoute';
-import LoginPage from '@/pages/LoginPage';
-import NotFound from '@/pages/NotFound';
+import { lazy, Suspense } from 'react'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { Toaster } from 'sonner'
+import ErrorBoundary from './components/ErrorBoundary'
+import ProtectedRoute from './components/ProtectedRoute'
 
-const DeliveryDashboard = lazy(() => import('@/pages/delivery/DeliveryDashboard'));
-const RiderConsole = lazy(() => import('@/pages/delivery/RiderConsole'));
-const DeliveryOrders = lazy(() => import('@/pages/delivery/DeliveryOrders'));
-const DeliveryTrips = lazy(() => import('@/pages/delivery/DeliveryTrips'));
-const DeliveryIncentives = lazy(() => import('@/pages/delivery/DeliveryIncentives'));
-const DeliveryLeaderboard = lazy(() => import('@/pages/delivery/DeliveryLeaderboard'));
-const DeliveryIncidents = lazy(() => import('@/pages/delivery/DeliveryIncidents'));
-const DeliveryNotifications = lazy(() => import('@/pages/delivery/DeliveryNotifications'));
-const DeliveryPayroll = lazy(() => import('@/pages/delivery/DeliveryPayroll'));
-const DeliverySettings = lazy(() => import('@/pages/delivery/DeliverySettings'));
+// ── Lazy load all pages (dramatically reduces initial bundle size) ──────────
+const Login          = lazy(() => import('./pages/Login'))
+const RiderLogin     = lazy(() => import('./pages/RiderLogin'))
+const Health         = lazy(() => import('./pages/Health'))
+const SafeAdmin      = lazy(() => import('./pages/SafeAdmin'))
+const RiderDashboard = lazy(() => import('./pages/rider/RiderDashboard'))
+const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'))
+const RiderSchedules = lazy(() => import('./pages/admin/RiderSchedules'))
+const Riders         = lazy(() => import('./pages/admin/Riders'))
+const Performance    = lazy(() => import('./pages/admin/Performance'))
+const DuplicateInvoices   = lazy(() => import('./pages/admin/DuplicateInvoices'))
+const Reconciliation      = lazy(() => import('./pages/admin/Reconciliation'))
+const Trips               = lazy(() => import('./pages/admin/Trips'))
+const TripsWithoutInvoice = lazy(() => import('./pages/admin/TripsWithoutInvoice'))
+const RiderAccounts       = lazy(() => import('./pages/admin/RiderAccounts'))
+const RiderActions        = lazy(() => import('./pages/admin/RiderActions'))
+const BranchManagerDashboard = lazy(() => import('./pages/admin/BranchManagerDashboard'))
+const CustomerImport = lazy(() => import('./pages/admin/CustomerImport'))
+const CustomerAnalytics = lazy(() => import('./pages/admin/CustomerAnalytics'))
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 30,
-      retry: 1,
-      refetchOnWindowFocus: false,
-    },
-  },
-});
-
-function protectedPage(page: ReactNode) {
-  return <ProtectedRoute>{page}</ProtectedRoute>;
-}
-
-function AppLoading() {
+// ── Page loader skeleton ─────────────────────────────────────────────────────
+function PageLoader() {
   return (
-    <div className="min-h-screen bg-[#0f172a] flex items-center justify-center" dir="rtl">
-      <div className="text-center text-white">
-        <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-        <p className="text-sm">جاري تحميل الواجهة...</p>
+    <div className="flex min-h-screen items-center justify-center bg-[#F3F7F8]" dir="rtl">
+      <div className="text-center">
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#008E92] border-t-transparent mx-auto" />
+        <p className="mt-3 text-sm font-bold text-slate-400">جاري التحميل...</p>
       </div>
     </div>
-  );
+  )
 }
 
-export default function App() {
+function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <BrowserRouter>
-          <Suspense fallback={<AppLoading />}>
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/" element={protectedPage(<Navigate to="/delivery" replace />)} />
-              <Route path="/delivery" element={protectedPage(<DeliveryDashboard />)} />
-              <Route path="/delivery/rider" element={protectedPage(<RiderConsole />)} />
-              <Route path="/delivery/orders" element={protectedPage(<DeliveryOrders />)} />
-              <Route path="/delivery/trips" element={protectedPage(<DeliveryTrips />)} />
-              <Route path="/delivery/incentives" element={protectedPage(<DeliveryIncentives />)} />
-              <Route path="/delivery/leaderboard" element={protectedPage(<DeliveryLeaderboard />)} />
-              <Route path="/delivery/incidents" element={protectedPage(<DeliveryIncidents />)} />
-              <Route path="/delivery/notifications" element={protectedPage(<DeliveryNotifications />)} />
-              <Route path="/delivery/payroll" element={protectedPage(<DeliveryPayroll />)} />
-              <Route path="/delivery/settings" element={protectedPage(<DeliverySettings />)} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
-          <Toaster position="top-center" richColors />
-        </BrowserRouter>
-      </AuthProvider>
-    </QueryClientProvider>
-  );
+    <ErrorBoundary>
+      <BrowserRouter>
+        <Toaster richColors position="top-center" dir="rtl" />
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            {/* Public routes */}
+            <Route path="/health"      element={<Health />} />
+            <Route path="/safe-admin"  element={<SafeAdmin />} />
+            <Route path="/login"       element={<Login />} />
+            <Route path="/rider-login" element={<RiderLogin />} />
+
+            {/* Protected — Rider */}
+            <Route path="/rider" element={<ProtectedRoute pageKey="rider"><RiderDashboard /></ProtectedRoute>} />
+
+            {/* Protected — Admin */}
+            <Route path="/admin"                       element={<ProtectedRoute pageKey="dashboard"><AdminDashboard /></ProtectedRoute>} />
+            <Route path="/admin/rider-schedules"       element={<ProtectedRoute pageKey="rider_schedules"><RiderSchedules /></ProtectedRoute>} />
+            <Route path="/admin/riders"                element={<ProtectedRoute pageKey="riders"><Riders /></ProtectedRoute>} />
+            <Route path="/admin/rider-accounts"        element={<ProtectedRoute pageKey="rider_accounts"><RiderAccounts /></ProtectedRoute>} />
+            <Route path="/admin/performance"           element={<ProtectedRoute pageKey="performance"><Performance /></ProtectedRoute>} />
+            <Route path="/admin/duplicate-invoices"    element={<ProtectedRoute pageKey="duplicate_invoices"><DuplicateInvoices /></ProtectedRoute>} />
+            <Route path="/admin/reconciliation"        element={<ProtectedRoute pageKey="reconciliation"><Reconciliation /></ProtectedRoute>} />
+            <Route path="/admin/trips"                 element={<ProtectedRoute pageKey="trips"><Trips /></ProtectedRoute>} />
+            <Route path="/admin/branch"                element={<ProtectedRoute pageKey="branch_dashboard"><BranchManagerDashboard /></ProtectedRoute>} />
+            <Route path="/admin/rider-actions"         element={<ProtectedRoute pageKey="rider_actions"><RiderActions /></ProtectedRoute>} />
+            <Route path="/admin/trips-without-invoice" element={<ProtectedRoute pageKey="trips_without_invoice"><TripsWithoutInvoice /></ProtectedRoute>} />
+            <Route path="/admin/customer-import" element={<ProtectedRoute pageKey="customer_import"><CustomerImport /></ProtectedRoute>} />
+            <Route path="/admin/customer-analytics" element={<ProtectedRoute pageKey="customer_analytics"><CustomerAnalytics /></ProtectedRoute>} />
+
+            {/* Fallback */}
+            <Route path="/"  element={<Navigate to="/login" replace />} />
+            <Route path="*"  element={<Navigate to="/login" replace />} />
+          </Routes>
+        </Suspense>
+      </BrowserRouter>
+    </ErrorBoundary>
+  )
 }
+
+export default App

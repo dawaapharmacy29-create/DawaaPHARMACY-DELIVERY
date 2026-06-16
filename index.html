@@ -1,29 +1,33 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dawaa Delivery — دليفري صيدليات دواء</title>
-    <meta name="description" content="دليفري صيدليات دواء - نظام إدارة الدليفري والتوصيل" />
-    <meta name="keywords" content="Dawaa Delivery, دليفري صيدليات دواء, توصيل, مشاوير" />
-    <meta name="author" content="Dawaa Pharmacies" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <title>Dawaa Delivery Control</title>
+    <meta name="description" content="نظام إدارة الدليفري لصيدليات دواء" />
 
-    <meta property="og:type" content="website" />
-    <meta property="og:title" content="Dawaa Delivery" />
-    <meta property="og:description" content="نظام إدارة الدليفري والتوصيل" />
-
-    <link rel="icon" type="image/jpeg" href="/icons/dawaa-icon.jpeg" />
+    <!-- PWA / iPhone Home Screen -->
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#071824" />
+    <meta name="application-name" content="Dawaa Delivery" />
+    <meta name="theme-color" content="#008E92" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Dawaa Delivery" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/pwa-icon-180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png" />
+    <link rel="icon" type="image/jpeg" href="/dawaa-logo.jpeg" />
 
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "WebSite",
-      "name": "Dawaa Delivery",
-      "description": "نظام إدارة الدليفري والتوصيل"
-    }
-    </script>
+    <!-- Prevent iOS phone number detection -->
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- Faster tap on mobile -->
+    <style>
+      * { -webkit-tap-highlight-color: transparent; }
+      html, body { min-height: 100%; }
+      body { overscroll-behavior-y: contain; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

@@ -1,26 +1,32 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+# dependencies
+  node_modules/
+  .pnp
+  .pnp.js
 
-node_modules
-.npm-cache
-dist
-dist-ssr
-*.local
+  # build output
+  dist/
+  build/
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-.env
+  # env files — NEVER commit real credentials
+  .env.local
+  .env.development.local
+  .env.test.local
+  .env.production.local
+
+  # keep .env.example (safe — no real keys)
+  # .env.example is intentionally NOT gitignored
+
+  # editor & OS
+  .DS_Store
+  .vscode/
+  *.local.bak
+
+  # Vercel
+  .vercel
+
+  # TypeScript
+  *.tsbuildinfo
+
+  # Vite
+  vite.config.ts.timestamp*
+  

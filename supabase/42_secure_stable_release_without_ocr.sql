@@ -1,0 +1,103 @@
+-- ============================================================
+-- SQL 42: secure stable release without OCR requirement
+-- Safe: no delete, no truncate
+-- ============================================================
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_image_path TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_image_url TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_file_name TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_file_size BIGINT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_mime_type TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_ocr_status TEXT DEFAULT 'not_uploaded';
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_ocr_note TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_ocr_json JSONB;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_ocr_confidence NUMERIC;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_extracted_invoice_no TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_extracted_customer_code TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_extracted_customer_name TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_extracted_customer_phone TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_extracted_address TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_extracted_doctor_name TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_extracted_invoice_date TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS receipt_review_status TEXT DEFAULT 'not_required';
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS preparing_doctor_name TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS is_countable BOOLEAN DEFAULT TRUE;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS final_count_status TEXT DEFAULT 'pending_review';
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS count_exclusion_reason TEXT;
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS review_status TEXT DEFAULT 'pending';
+ALTER TABLE public.delivery_orders ADD COLUMN IF NOT EXISTS approval_status TEXT DEFAULT 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_delivery_orders_rider_date ON public.delivery_orders(rider_id, delivery_date);
+CREATE INDEX IF NOT EXISTS idx_delivery_orders_invoice_number ON public.delivery_orders(invoice_number);
+CREATE INDEX IF NOT EXISTS idx_delivery_orders_review_status ON public.delivery_orders(review_status);
+CREATE INDEX IF NOT EXISTS idx_delivery_orders_receipt_review_status ON public.delivery_orders(receipt_review_status);
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('delivery-receipts', 'delivery-receipts', TRUE, 10485760, ARRAY['image/jpeg','image/png','image/webp','image/heic','image/heif'])
+ON CONFLICT (id) DO UPDATE SET
+  public = TRUE,
+  file_size_limit = 10485760,
+  allowed_mime_types = ARRAY['image/jpeg','image/png','image/webp','image/heic','image/heif'];
+
+DROP POLICY IF EXISTS "delivery_receipts_public_read" ON storage.objects;
+CREATE POLICY "delivery_receipts_public_read" ON storage.objects FOR SELECT USING (bucket_id = 'delivery-receipts');
+
+DROP POLICY IF EXISTS "delivery_receipts_insert" ON storage.objects;
+CREATE POLICY "delivery_receipts_insert" ON storage.objects FOR INSERT TO anon, authenticated WITH CHECK (bucket_id = 'delivery-receipts');
+
+ALTER TABLE public.rider_accounts ADD COLUMN IF NOT EXISTS legacy_username TEXT;
+ALTER TABLE public.rider_accounts ADD COLUMN IF NOT EXISTS display_name TEXT;
+ALTER TABLE public.rider_accounts ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'rider';
+ALTER TABLE public.rider_accounts ADD COLUMN IF NOT EXISTS pin_hash TEXT;
+ALTER TABLE public.rider_accounts ADD COLUMN IF NOT EXISTS pin_plain TEXT;
+ALTER TABLE public.rider_accounts ADD COLUMN IF NOT EXISTS pin_enabled BOOLEAN DEFAULT TRUE;
+ALTER TABLE public.rider_accounts ADD COLUMN IF NOT EXISTS must_change_pin BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.rider_accounts ADD COLUMN IF NOT EXISTS pin_changed_at TIMESTAMPTZ;
+ALTER TABLE public.rider_accounts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.rider_accounts ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
+
+UPDATE public.rider_accounts SET legacy_username = username WHERE legacy_username IS NULL AND username IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS public.rider_pin_reset_audit (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rider_id UUID,
+  account_id UUID,
+  rider_name TEXT,
+  username TEXT,
+  reset_by UUID,
+  reset_by_name TEXT,
+  reason TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='delivery_policies') THEN
+    ALTER TABLE public.delivery_policies ADD COLUMN IF NOT EXISTS policy_type TEXT DEFAULT 'general';
+    ALTER TABLE public.delivery_policies ADD COLUMN IF NOT EXISTS title TEXT;
+    ALTER TABLE public.delivery_policies ADD COLUMN IF NOT EXISTS description TEXT;
+    ALTER TABLE public.delivery_policies ADD COLUMN IF NOT EXISTS body TEXT DEFAULT '';
+    ALTER TABLE public.delivery_policies ADD COLUMN IF NOT EXISTS severity TEXT DEFAULT 'medium';
+    ALTER TABLE public.delivery_policies ADD COLUMN IF NOT EXISTS sort_order INT DEFAULT 100;
+    ALTER TABLE public.delivery_policies ADD COLUMN IF NOT EXISTS role_scope TEXT DEFAULT 'rider';
+    ALTER TABLE public.delivery_policies ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+    ALTER TABLE public.delivery_policies ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+    ALTER TABLE public.delivery_policies ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+    UPDATE public.delivery_policies SET body = COALESCE(body, description, title, '') WHERE body IS NULL;
+
+    INSERT INTO public.delivery_policies (policy_type, title, description, body, severity, sort_order, role_scope, is_active)
+    VALUES
+      ('order_rules', 'رقم الفاتورة إلزامي', 'لا يتم احتساب أي أوردر بدون رقم فاتورة صحيح وواضح.', 'اكتب رقم الفاتورة كما هو ظاهر في برنامج الصيدلية أو الريسيت.', 'high', 10, 'rider', TRUE),
+      ('order_rules', 'تصوير أو رفع الريسيت', 'يمكن تصوير الريسيت بالكاميرا أو رفع صورة محفوظة كإثبات.', 'الصورة تستخدم كإثبات للمراجعة ومنع التلاعب، وخاصة عند وجود فاتورة مكررة أو طلب ×1.5.', 'high', 20, 'rider', TRUE),
+      ('order_rules', 'طلبات ×1.5 تحت المراجعة', 'لا تحتسب طلبات ×1.5 إلا بعد موافقة الإدارة.', 'اختيار ×1.5 هو طلب مراجعة فقط وليس اعتماد نهائي للراتب.', 'high', 30, 'rider', TRUE),
+      ('trip_rules', 'المشاوير تحتاج سبب وإثبات', 'كل مشوار يجب أن يحتوي على سبب واضح وجهة خروج وجهة وصول.', 'يفضل ربط المشوار برقم فاتورة أو صورة إثبات عند المشاوير بين الفروع أو المخازن.', 'medium', 40, 'rider', TRUE),
+      ('attendance_rules', 'الحضور والانصراف إلزامي', 'يجب تسجيل الحضور في بداية الشيفت والانصراف في نهايته.', 'يتم استخدام الحضور والانصراف لحساب أيام وساعات العمل ومراجعة الالتزام.', 'high', 50, 'rider', TRUE),
+      ('security_rules', 'منع التلاعب', 'أي بيانات غير واضحة أو غير مكتملة يتم وضعها تحت المراجعة.', 'الأوردرات الفاشلة والمكررة وطلبات ×1.5 لا تدخل في الحساب النهائي إلا بعد اعتماد الإدارة.', 'high', 60, 'rider', TRUE)
+    ON CONFLICT DO NOTHING;
+  END IF;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
