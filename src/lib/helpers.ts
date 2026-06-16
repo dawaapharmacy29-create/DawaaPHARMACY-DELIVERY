@@ -1,7 +1,5 @@
 import { OperationalPeriod } from './types'
 
-// ─── Operational Period ───────────────────────────────────────────────────────
-
 export function getOperationalPeriod(date: Date = new Date()): OperationalPeriod {
   const day = date.getDate()
   const month = date.getMonth()
@@ -11,31 +9,24 @@ export function getOperationalPeriod(date: Date = new Date()): OperationalPeriod
   let end: Date
 
   if (day >= 26) {
+    // Current month 26 to next month 25
     start = new Date(year, month, 26)
     end = new Date(year, month + 1, 25)
   } else {
+    // Previous month 26 to current month 25
     start = new Date(year, month - 1, 26)
     end = new Date(year, month, 25)
   }
 
   return {
     start: localIsoDate(start),
-    end: localIsoDate(end),
+    end: localIsoDate(end)
   }
 }
 
-// ─── Date helpers ─────────────────────────────────────────────────────────────
-
-export function localIsoDate(date: Date = new Date()): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-/** Returns today's date as YYYY-MM-DD in local time. Single source of truth — do not redefine elsewhere. */
-export function todayIso(): string {
-  return localIsoDate(new Date())
+export function formatMoney(value: number | null | undefined): string {
+  const numeric = Number(value ?? 0)
+  return `${numeric.toLocaleString('ar-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ج.م`
 }
 
 export function formatDate(date: string | null | undefined): string {
@@ -49,13 +40,7 @@ export function formatDateTime(date: string | null | undefined): string {
   if (!date) return 'غير محدد'
   const d = new Date(date)
   if (Number.isNaN(d.getTime())) return String(date)
-  return d.toLocaleString('ar-EG', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  return d.toLocaleString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 export function formatTime(date: string | null | undefined): string {
@@ -66,21 +51,35 @@ export function formatTime(date: string | null | undefined): string {
 }
 
 export function calculateMinutesBetween(start: string, end: string): number {
-  return Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 60_000)
-}
-
-// ─── Financial ────────────────────────────────────────────────────────────────
-
-export function formatMoney(value: number | null | undefined): string {
-  const numeric = Number(value ?? 0)
-  return `${numeric.toLocaleString('ar-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ج.م`
+  const startDate = new Date(start)
+  const endDate = new Date(end)
+  const diff = endDate.getTime() - startDate.getTime()
+  return Math.floor(diff / 60000)
 }
 
 export function getRiderRates(level: 'junior' | 'mid' | 'senior') {
   const rates = {
-    junior: { hourly_rate: 19.25, order_rate: 6, trip_rate: 3, monthly_incentive_base: 750, quarterly_incentive_base: 750 },
-    mid:    { hourly_rate: 21.5,  order_rate: 8, trip_rate: 4, monthly_incentive_base: 750, quarterly_incentive_base: 750 },
-    senior: { hourly_rate: 23,    order_rate: 10, trip_rate: 4, monthly_incentive_base: 1000, quarterly_incentive_base: 1000 },
+    junior: {
+      hourly_rate: 19.25,
+      order_rate: 6,
+      trip_rate: 3,
+      monthly_incentive_base: 750,
+      quarterly_incentive_base: 750
+    },
+    mid: {
+      hourly_rate: 21.5,
+      order_rate: 8,
+      trip_rate: 4,
+      monthly_incentive_base: 750,
+      quarterly_incentive_base: 750
+    },
+    senior: {
+      hourly_rate: 23,
+      order_rate: 10,
+      trip_rate: 4,
+      monthly_incentive_base: 1000,
+      quarterly_incentive_base: 1000
+    }
   }
   return rates[level]
 }
@@ -93,7 +92,14 @@ export function calculateIncentivePercentage(score: number): number {
   return 0
 }
 
-// ─── Search ───────────────────────────────────────────────────────────────────
+// ─── Date helpers ─────────────────────────────────────────────────────────────
+
+export function localIsoDate(date: Date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 export function wildcardMatchText(value: string, rawQuery: string): boolean {
   const q = String(rawQuery || '').trim().toLowerCase()
@@ -111,57 +117,33 @@ export function wildcardMatchText(value: string, rawQuery: string): boolean {
   return true
 }
 
-// ─── CSV export (shared — do NOT redefine in page components) ─────────────────
-
-export function csvCell(value: unknown): string {
-  if (value === null || value === undefined) return ''
-  const str = String(value)
-  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-    return `"${str.replace(/"/g, '""')}"`
-  }
-  return str
+export function todayIso(): string {
+  return localIsoDate(new Date())
 }
 
-export function downloadCsv(fileName: string, rows: Array<Record<string, unknown>>): void {
-  if (!rows.length) return
-  const headers = Object.keys(rows[0])
-  const csvLines = [
-    '\ufeff' + headers.map(csvCell).join(','),
-    ...rows.map(row => headers.map(h => csvCell(row[h])).join(',')),
-  ]
-  const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = fileName
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-// ─── Label maps ───────────────────────────────────────────────────────────────
-
+// ─── Label maps used by RiderDashboard ───────────────────────────────────────
 export const TRIP_TYPE_LABELS: Record<string, string> = {
-  branch_to_branch:      'بين الفروع',
-  warehouse:             'مخزن',
-  supplies:              'مستلزمات',
-  pharmacy:              'صيدلية',
-  shipment_pickup:       'استلام شحن',
-  accessories:           'إكسسوار',
+  branch_to_branch:    'بين الفروع',
+  warehouse:           'مخزن',
+  supplies:            'مستلزمات',
+  pharmacy:            'صيدلية',
+  shipment_pickup:     'استلام شحن',
+  accessories:         'إكسسوار',
   purchase_missing_item: 'شراء نواقص',
-  supplier:              'مورد',
-  returns:               'مرتجع',
-  collection:            'تحصيل',
-  visit_again:           'زيارة تانية',
+  supplier:            'مورد',
+  returns:             'مرتجع',
+  collection:          'تحصيل',
+  visit_again:         'زيارة تانية',
   customer_second_visit: 'زيارة تانية للعميل',
-  other:                 'أخرى',
+  other:               'أخرى',
 }
 
 export const DUPLICATE_REASON_LABELS: Record<string, string> = {
-  return:             'مرتجع',
-  preparation_error:  'خطأ في تحضير الأوردر',
-  invoice_correction: 'تعديل على الفاتورة',
-  second_visit:       'روحت للعميل تاني',
-  other:              'سبب آخر',
+  return:              'مرتجع',
+  preparation_error:   'خطأ في تحضير الأوردر',
+  invoice_correction:  'تعديل على الفاتورة',
+  second_visit:        'روحت للعميل تاني',
+  other:               'سبب آخر',
 }
 
 export const ORDER_STATUS_LABELS: Record<string, string> = {

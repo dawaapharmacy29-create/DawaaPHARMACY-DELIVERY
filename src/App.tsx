@@ -23,6 +23,7 @@ const RiderActions        = lazy(() => import('./pages/admin/RiderActions'))
 const BranchManagerDashboard = lazy(() => import('./pages/admin/BranchManagerDashboard'))
 const CustomerImport = lazy(() => import('./pages/admin/CustomerImport'))
 const CustomerAnalytics = lazy(() => import('./pages/admin/CustomerAnalytics'))
+const RiderPerformanceDetail = lazy(() => import('./pages/admin/RiderPerformanceDetail'))
 
 // ── Page loader skeleton ─────────────────────────────────────────────────────
 function PageLoader() {
@@ -58,6 +59,7 @@ function App() {
             <Route path="/admin/riders"                element={<ProtectedRoute pageKey="riders"><Riders /></ProtectedRoute>} />
             <Route path="/admin/rider-accounts"        element={<ProtectedRoute pageKey="rider_accounts"><RiderAccounts /></ProtectedRoute>} />
             <Route path="/admin/performance"           element={<ProtectedRoute pageKey="performance"><Performance /></ProtectedRoute>} />
+            <Route path="/admin/riders/:riderId/performance" element={<ProtectedRoute pageKey="performance"><RiderPerformanceDetail /></ProtectedRoute>} />
             <Route path="/admin/duplicate-invoices"    element={<ProtectedRoute pageKey="duplicate_invoices"><DuplicateInvoices /></ProtectedRoute>} />
             <Route path="/admin/reconciliation"        element={<ProtectedRoute pageKey="reconciliation"><Reconciliation /></ProtectedRoute>} />
             <Route path="/admin/trips"                 element={<ProtectedRoute pageKey="trips"><Trips /></ProtectedRoute>} />

@@ -159,7 +159,7 @@ export default function Login() {
 
           <div className="hidden bg-gradient-to-br from-[#051827] to-[#0E5A5F] p-8 text-white md:flex md:flex-col md:justify-between">
             <div>
-              <img src="/dawaa-logo.jpeg" alt="صيدليات دواء"
+              <img src="/logo.png" alt="صيدليات دواء"
                 className="h-24 w-24 rounded-3xl bg-white object-contain p-2 shadow-xl" />
               <h1 className="mt-8 text-4xl font-black">Dawaa Delivery</h1>
               <p className="mt-3 max-w-md text-lg text-teal-50">
@@ -174,7 +174,7 @@ export default function Login() {
 
           <div className="p-6 sm:p-10">
             <div className="mb-8 text-center">
-              <img src="/dawaa-logo.jpeg" alt="صيدليات دواء"
+              <img src="/logo.png" alt="صيدليات دواء"
                 className="mx-auto h-24 w-24 rounded-3xl object-contain shadow-sm" />
               <h2 className="mt-4 text-3xl font-black text-[#061827]">
                 {looksLikeAdmin ? 'دخول الإدارة' : 'دخول الدليفري'}

@@ -15,11 +15,38 @@ export function normalizeArabic(value: unknown) {
 }
 
 export function canonicalBranchName(value: unknown): CanonicalBranch | null {
-  const v = normalizeArabic(value)
-  if (!v) return null
-  if (v.includes('شامي') || v.includes('الشامي')) return 'فرع الشامي'
-  if (v.includes('شكري') || v.includes('شكرى')) return 'فرع شكري'
+  const raw = String(value ?? '').trim()
+  const latin = raw.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const v = normalizeArabic(raw)
+  if (!v && !latin) return null
+
+  if (
+    v.includes('شامي') ||
+    v.includes('الشامي') ||
+    latin.includes('shamy') ||
+    latin.includes('shami') ||
+    latin.includes('elshamy') ||
+    latin.includes('alshamy')
+  ) return 'فرع الشامي'
+
+  if (
+    v.includes('شكري') ||
+    v.includes('شكرى') ||
+    latin.includes('shkri') ||
+    latin.includes('shukri') ||
+    latin.includes('shokry') ||
+    latin.includes('shoukry')
+  ) return 'فرع شكري'
+
   return null
+}
+
+export function displayBranchName(value: unknown, fallback = 'غير محدد') {
+  return canonicalBranchName(value) || String(value ?? '').trim() || fallback
+}
+
+export function branchKeyFromRow(row: any, fallback?: unknown) {
+  return displayBranchName(row?.branch_name || row?.branch || row?.branch_label || fallback)
 }
 
 export function isCanonicalBranch(value: unknown) {

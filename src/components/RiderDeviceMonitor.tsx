@@ -1,4 +1,3 @@
-
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { supabase } from '../lib/supabase'
@@ -148,8 +147,7 @@ export default function RiderDeviceMonitor({ riderId, riderName, branchId, branc
     window.addEventListener('offline', onlineHandler)
 
     let cleanupBattery: (() => void) | null = null
-    // Immediately invoked async function expression to handle battery API cleanup
-    (async () => {
+    ;(async () => {
       try {
         if (typeof navigator.getBattery === 'function') {
           const battery = await navigator.getBattery()
@@ -161,11 +159,8 @@ export default function RiderDeviceMonitor({ riderId, riderName, branchId, branc
             battery.removeEventListener('chargingchange', batteryHandler)
           }
         }
-      } catch (e) {
-        // Optionally log error for battery API access
-        console.error("Failed to access battery API:", e);
-      }
-    })();
+      } catch {}
+    })()
 
     return () => {
       window.clearInterval(interval)
@@ -178,7 +173,8 @@ export default function RiderDeviceMonitor({ riderId, riderName, branchId, branc
       }
       void saveDeviceStatus(offlineSnapshot, 'unmount')
     }
-  }, [riderId, riderName, branchId, branchName, snapshot])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [riderId])
 
   const percentText = snapshot.battery_supported && snapshot.battery_percent !== null ? `${snapshot.battery_percent}%` : 'غير مدعوم'
   const tone =

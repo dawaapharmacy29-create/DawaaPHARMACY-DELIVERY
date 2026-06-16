@@ -351,7 +351,7 @@ export default function RiderAccounts() {
           <button onClick={() => navigate('/admin')} className="rounded-xl bg-white/10 p-2 hover:bg-white/20">
             <ArrowLeft size={20} />
           </button>
-          <img src="/dawaa-logo.jpeg" className="h-10 w-10 rounded-xl bg-white object-contain p-1" alt="دواء" />
+          <img src="/logo.png" className="h-10 w-10 rounded-xl bg-white object-contain p-1" alt="دواء" />
           <div className="flex-1">
             <h1 className="text-xl font-black">كل حسابات الفريق</h1>
             <p className="text-xs text-teal-100">الدليفري · مدير الفرع · مدير التشغيل · مدير الفروع · المدير العام · الأدمن</p>

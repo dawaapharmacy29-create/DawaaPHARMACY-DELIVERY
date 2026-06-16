@@ -464,7 +464,7 @@ export default function RiderSchedules() {
           <button onClick={() => navigate('/admin')} className="rounded-xl bg-white/10 p-2 hover:bg-white/20">
             <ArrowLeft size={22} />
           </button>
-          <img src="/dawaa-logo.jpeg" className="h-10 w-10 rounded-xl bg-white object-contain p-1" alt="دواء" />
+          <img src="/logo.png" className="h-10 w-10 rounded-xl bg-white object-contain p-1" alt="دواء" />
           <div>
             <h1 className="text-xl font-black">استيراد جدول الدليفري</h1>
             <p className="text-xs text-teal-100">رفع Excel أو CSV لجداول الدليفري والمواعيد</p>

@@ -135,7 +135,7 @@ export default function Trips() {
           <button onClick={() => navigate('/admin')} className="rounded-xl bg-white/10 p-2 hover:bg-white/20">
             <ArrowLeft size={22} />
           </button>
-          <img src="/dawaa-logo.jpeg" className="h-10 w-10 rounded-xl bg-white object-contain p-1" alt="دواء" />
+          <img src="/logo.png" className="h-10 w-10 rounded-xl bg-white object-contain p-1" alt="دواء" />
           <div>
             <h1 className="text-xl font-black">إدارة المشاوير</h1>
             <p className="text-xs text-teal-100">

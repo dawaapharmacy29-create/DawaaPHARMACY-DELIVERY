@@ -257,7 +257,7 @@ async function showDawaaBrowserNotification(
   try {
     new Notification(title, {
       body,
-      icon: "/dawaa-logo.jpeg",
+      icon: "/logo.png",
       dir: "rtl",
       lang: "ar-EG",
     });
@@ -1579,7 +1579,7 @@ export default function RiderDashboard() {
       >
         <div className="text-center">
           <img
-            src="/dawaa-logo.jpeg"
+            src="/logo.png"
             className="mx-auto mb-4 h-20 w-20 rounded-2xl object-contain shadow-lg"
             alt="دواء"
           />
@@ -1598,7 +1598,7 @@ export default function RiderDashboard() {
       >
         <div className="w-full max-w-sm rounded-3xl bg-white p-8 text-center shadow-xl">
           <img
-            src="/dawaa-logo.jpeg"
+            src="/logo.png"
             className="mx-auto mb-4 h-20 w-20 rounded-2xl object-contain"
             alt="دواء"
           />
@@ -1752,7 +1752,7 @@ export default function RiderDashboard() {
                   </p>
                 </div>
                 <img
-                  src="/dawaa-logo.jpeg"
+                  src="/logo.png"
                   className="h-16 w-16 rounded-3xl border-2 border-white/70 bg-white object-contain p-1 shadow-xl"
                   alt="شعار صيدليات دواء"
                 />

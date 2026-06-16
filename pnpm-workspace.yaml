@@ -1,5 +1,4 @@
 packages:
   - '.'
 allowBuilds:
-  '@swc/core': true
-  esbuild: true
+  esbuild: set this to true or false

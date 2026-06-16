@@ -1,123 +1,209 @@
-# 🚀 دواء دليفري — Dawaa Delivery Management System
+# Dawaa Delivery Control
 
-  نظام متكامل لإدارة عمليات التوصيل — مبني بـ React + Vite + Supabase.
+نظام إدارة الدليفري لصيدليات دواء - تحويل دفتر الدليفري الورقي إلى تطبيق إلكتروني ذكي.
 
-  ---
+**ملاحظة مهمة:** PWA/Service Worker معطل أثناء التطوير لتجنب cache قديم بعد التحديث.
 
-  ## ⚡ المميزات
+## المتطلبات
 
-  - لوحة إدارة ذكية مع رسوم بيانية تفاعلية (Recharts)
-  - تتبع أداء المندوبين مع مقارنة حقيقية بين الفترات (يومي/أسبوعي/شهري/ربع سنوي)
-  - تحليل العملاء حسب التصنيف ومستوى الخطر
-  - مراقبة الحضور وإدارة الجداول
-  - مطابقة الفواتير مع BConnect
-  - تقارير PDF شاملة
-  - PWA يعمل بدون إنترنت
-  - تحديث لحظي عبر Supabase Realtime
-  - دعم RTL عربي كامل
+- Node.js 18 أو أحدث
+- حساب Supabase
+- Git
 
-  ---
+## الإعداد الأولي
 
-  ## 🛠️ التثبيت المحلي
+### 1. إنشاء مشروع Supabase جديد
 
-  ```bash
-  # 1. استنسخ المشروع
-  git clone https://github.com/YOUR_USERNAME/dawaa-delivery.git
-  cd dawaa-delivery
+1. اذهب إلى [Supabase](https://supabase.com) وسجل حساب جديد
+2. أنشئ مشروع جديد باسم `dawaa-delivery-control`
+3. انتظر حتى يكتمل إنشاء المشروع
 
-  # 2. ثبّت الحزم
-  npm install
+### 2. تشغيل ملفات SQL
 
-  # 3. انسخ ملف البيئة وأضف بياناتك
-  cp .env.example .env.local
-  # ثم عدّل .env.local بمفاتيح Supabase الخاصة بك
+افتح Supabase SQL Editor وشغل الملفات بالترتيب:
 
-  # 4. شغّل المشروع
-  npm run dev
-  ```
+1. `supabase/01_schema.sql` - إنشاء الجداول
+2. `supabase/02_functions.sql` - إنشاء الدوال
+3. `supabase/03_rls.sql` - إعداد سياسات الأمان
+4. `supabase/04_seed_admin.sql` - إنشاء المستخدم الأول
 
-  ---
+### 3. إنشاء Auth User الأول
 
-  ## 🔑 متغيرات البيئة
+**مهم جداً:** قبل تشغيل `04_seed_admin.sql`، يجب إنشاء Auth User من Supabase Dashboard:
 
-  ```env
-  VITE_SUPABASE_URL=https://your-project.supabase.co
-  VITE_SUPABASE_ANON_KEY=your-anon-key
-  ```
+1. اذهب إلى Authentication > Users
+2. اضغط Add user
+3. أدخل:
+   - Email: `dr.moaz@dawaa-delivery.local`
+   - Password: `9493`
+   - Auto-confirm user: نعم
+4. احفظ المستخدم
+5. انسخ User ID من الصفحة
+6. عد إلى SQL Editor واستبدل `AUTH_USER_ID` في `04_seed_admin.sql` بالـ UUID الفعلي
+7. شغل الجزء المعلق في `04_seed_admin.sql`
 
-  أضف هذه المتغيرات في:
-  - **محلياً**: ملف `.env.local`
-  - **Vercel**: Settings → Environment Variables
-  - **GitHub Actions**: Settings → Secrets and variables → Actions
+### 4. إعداد البيئة
 
-  ---
+1. انسخ `.env.example` إلى `.env`
+2. افتح `.env` وأضف:
+   ```
+   VITE_SUPABASE_URL=https://your-project.supabase.co
+   VITE_SUPABASE_ANON_KEY=your-anon-key
+   ```
+3. يمكنك الحصول على هذه القيم من Supabase Dashboard > Settings > API
 
-  ## 🚀 النشر على Vercel
+### 5. تشغيل المشروع محلياً
 
-  ### الطريقة السريعة (موصى بها):
+```bash
+# تثبيت الاعتماديات
+npm install
 
-  1. ارفع المشروع على GitHub
-  2. اذهب لـ [vercel.com](https://vercel.com) → Import Project
-  3. اختر الـ repository
-  4. أضف متغيرات البيئة:
-     - `VITE_SUPABASE_URL`
-     - `VITE_SUPABASE_ANON_KEY`
-  5. اضغط Deploy ✅
+# تشغيل خادم التطوير
+npm run dev
+```
 
-  ### عبر GitHub Actions (تلقائي):
+افتح المتصفح على `http://localhost:5173`
 
-  أضف هذه الـ Secrets في GitHub → Settings → Secrets:
-  - `VITE_SUPABASE_URL` — رابط Supabase
-  - `VITE_SUPABASE_ANON_KEY` — مفتاح Supabase
-  - `VERCEL_TOKEN` — من Vercel → Account Settings → Tokens
-  - `VERCEL_ORG_ID` — من Vercel Project Settings
-  - `VERCEL_PROJECT_ID` — من Vercel Project Settings
+### 6. تسجيل الدخول
 
-  بعدها كل push على `main` يُنشر تلقائياً 🎉
+استخدم:
+- Username: `DR.MOAZ`
+- Password: `9493`
 
-  ---
+## هيكل المشروع
 
-  ## 📦 البنية
+```
+dawaa-delivery-control/
+├── src/
+│   ├── lib/
+│   │   ├── supabase.ts       # إعداد Supabase
+│   │   ├── types.ts          # تعريفات TypeScript
+│   │   ├── helpers.ts        # دوال مساعدة
+│   │   └── auth.ts           # دوال المصادقة
+│   ├── pages/
+│   │   ├── Login.tsx         # صفحة تسجيل الدخول
+│   │   ├── rider/
+│   │   │   └── RiderDashboard.tsx  # لوحة الدليفري
+│   │   └── admin/
+│   │       └── AdminDashboard.tsx  # لوحة الإدارة
+│   ├── App.tsx               # التطبيق الرئيسي
+│   ├── main.tsx              # نقطة الدخول
+│   └── index.css             # التنسيقات
+├── supabase/
+│   ├── 01_schema.sql         # إنشاء الجداول
+│   ├── 02_functions.sql      # الدوال
+│   ├── 03_rls.sql            # سياسات الأمان
+│   ├── 04_seed_admin.sql     # بيانات الإدارة
+│   └── 05_seed_demo.sql      # بيانات تجريبية
+├── package.json
+├── tsconfig.json
+├── vite.config.ts
+├── tailwind.config.js
+└── README.md
+```
 
-  ```
-  src/
-  ├── pages/
-  │   ├── admin/
-  │   │   ├── AdminDashboard.tsx     ← لوحة الإدارة الرئيسية
-  │   │   ├── Performance.tsx        ← أداء المندوبين
-  │   │   ├── CustomerAnalytics.tsx  ← تحليل العملاء
-  │   │   ├── Reconciliation.tsx     ← مطابقة الفواتير
-  │   │   └── ...
-  │   └── rider/
-  │       └── RiderDashboard.tsx     ← لوحة المندوب
-  ├── lib/
-  │   ├── delivery.ts    ← كل عمليات Supabase
-  │   ├── auth.ts        ← المصادقة
-  │   ├── helpers.ts     ← أدوات مساعدة
-  │   └── types.ts       ← TypeScript types
-  └── components/        ← مكونات مشتركة
-  ```
+## الجداول الرئيسية
 
-  ---
+- `branches` - الفروع
+- `user_profiles` - بيانات المستخدمين
+- `riders` - بيانات الدليفري
+- `customers` - بيانات العملاء
+- `attendance` - سجل الحضور والانصراف
+- `delivery_orders` - أوردرات التوصيل
+- `internal_trips` - المشاوير الداخلية
+- `bconnect_invoices` - فواتير بي كونكت
+- `reconciliation_results` - نتائج المطابقة
+- `monthly_payroll` - المستحقات الشهرية
+- `incidents` - الأخطاء والملاحظات
+- `performance_scores` - درجات الأداء
+- `notifications` - التنبيهات
+- `audit_log` - سجل التدقيق
 
-  ## 🗄️ قاعدة البيانات
+## الصفحات
 
-  ملفات SQL موجودة في مجلد `supabase/` — شغّلها بالترتيب في Supabase SQL Editor:
+### صفحة الدخول
+- `/login` - تسجيل الدخول باسم المستخدم وكلمة السر
 
-  ```
-  supabase/00_full_safe_schema.sql  ← الأساس
-  supabase/01_schema.sql
-  supabase/02_functions.sql
-  ...
-  ```
+### صفحات الدليفري
+- `/rider` - لوحة الدليفري الرئيسية
+- `/rider/orders` - أوردرات اليوم
+- `/rider/trips` - مشاوير اليوم
+- `/rider/pay` - المستحقات
 
-  ---
+### صفحات الإدارة
+- `/admin` - لوحة الإدارة الرئيسية
+- `/admin/orders` - إدارة الأوردرات
+- `/admin/trips` - إدارة المشاوير
+- `/admin/bconnect-import` - رفع فواتير بي كونكت
+- `/admin/reconciliation` - مطابقة الفواتير
+- `/admin/monthly-review` - مراجعة الشهر
+- `/admin/payroll` - المستحقات والحوافز
+- `/admin/incidents` - الأخطاء والملاحظات
+- `/admin/leaderboard` - ترتيب الدليفري
+- `/admin/riders` - إدارة الدليفري
+- `/admin/customers` - إدارة العملاء
+- `/admin/settings` - الإعدادات
 
-  ## 📝 الدورة التشغيلية
+## الفترة التشغيلية
 
-  الدورة تبدأ من يوم **26** وتنتهي يوم **25** من الشهر التالي.
+الشهر التشغيلي من يوم 26 إلى 25:
+- لو اليوم >= 26: من 26 من نفس الشهر إلى 25 من الشهر التالي
+- لو اليوم < 26: من 26 من الشهر السابق إلى 25 من نفس الشهر
 
-  ---
+## نظام الأسعار
 
-  Built with ❤️ for Dawaa Pharmacy operations team.
-  
+### Senior
+- hourly_rate: 23 ج.م/ساعة
+- order_rate: 10 ج.م/أوردر
+- trip_rate: 4 ج.م/مشوار
+- monthly_incentive_base: 1000 ج.م
+- quarterly_incentive_base: 1000 ج.م
+
+### Mid
+- hourly_rate: 21.5 ج.م/ساعة
+- order_rate: 8 ج.م/أوردر
+- trip_rate: 4 ج.م/مشوار
+- monthly_incentive_base: 750 ج.م
+- quarterly_incentive_base: 750 ج.م
+
+### Junior
+- hourly_rate: 19.25 ج.م/ساعة
+- order_rate: 6 ج.م/أوردر
+- trip_rate: 3 ج.م/مشوار
+- monthly_incentive_base: 750 ج.م
+- quarterly_incentive_base: 750 ج.م
+
+## الحوافز
+
+حسب درجة الأداء:
+- 95-100: 100%
+- 90-94: 95%
+- 80-89: 80%
+- 70-79: 60%
+- أقل من 70: 0 أو مراجعة
+
+## النشر على Vercel
+
+1. ارفع الكود على GitHub
+2. أنشئ مشروع جديد على Vercel
+3. أضف متغيرات البيئة:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+4. انشر
+
+## الاختبار
+
+```bash
+# فحص الأنواع
+npm run typecheck
+
+# فحص الكود
+npm run lint
+
+# بناء التطبيق
+npm run build
+```
+
+## الدعم
+
+لأي مشاكل أو استفسارات، تواصل مع فريق التطوير.

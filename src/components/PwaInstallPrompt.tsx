@@ -67,7 +67,7 @@ export default function PwaInstallPrompt() {
   return (
     <div className="fixed inset-x-3 bottom-3 z-[9999] mx-auto max-w-xl rounded-[28px] border border-teal-100 bg-white p-4 text-right shadow-2xl" dir="rtl">
       <div className="flex items-start gap-3">
-        <img src="/dawaa-logo.jpeg" alt="Dawaa" className="h-12 w-12 rounded-2xl object-contain shadow-sm" />
+        <img src="/logo.png" alt="Dawaa" className="h-12 w-12 rounded-2xl object-contain shadow-sm" />
         <div className="min-w-0 flex-1">
           <p className="font-black text-[#061827]">حمّل تطبيق Dawaa Delivery على التليفون</p>
           <p className="mt-1 text-xs font-bold text-slate-500">

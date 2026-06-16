@@ -253,7 +253,7 @@ export default function RiderLogin() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="mb-8 text-center">
-          <img src="/dawaa-logo.jpeg" className="mx-auto h-20 w-20 rounded-3xl bg-white object-contain p-2 shadow-2xl" alt="دواء" />
+          <img src="/logo.png" className="mx-auto h-20 w-20 rounded-3xl bg-white object-contain p-2 shadow-2xl" alt="دواء" />
           <h1 className="mt-4 text-3xl font-black text-white">دخول الدليفري</h1>
           <p className="mt-1 text-sm text-teal-200">صيدليات دواء — نظام إدارة الدليفري</p>
         </div>

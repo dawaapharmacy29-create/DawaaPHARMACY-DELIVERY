@@ -23,12 +23,6 @@ export type PageKey =
   | 'customer_import'
   | 'customer_analytics'
 
-/** Roles with full access to all management pages. */
-export const SENIOR_ROLES: AppRole[] = ['admin', 'general_manager', 'operations_manager', 'branches_manager']
-
-/** All roles that count as management (not riders). */
-export const MANAGER_ROLES: AppRole[] = [...SENIOR_ROLES, 'branch_manager', 'shift_manager']
-
 const GENERAL_MANAGER_PAGES: PageKey[] = [
   'dashboard',
   'branch_dashboard',
@@ -60,38 +54,39 @@ const BRANCH_MANAGER_PAGES: PageKey[] = [
   'customer_analytics',
 ]
 
-export function isManagerRole(role?: string | null): boolean {
-  return MANAGER_ROLES.includes(String(role || '') as AppRole)
+export function isManagerRole(role?: string | null) {
+  return [
+    'admin',
+    'general_manager',
+    'operations_manager',
+    'branches_manager',
+    'branch_manager',
+    'shift_manager',
+  ].includes(String(role || ''))
 }
 
-export function isSeniorRole(role?: string | null): boolean {
-  return SENIOR_ROLES.includes(String(role || '') as AppRole)
-}
-
-export function canAccessPage(role?: string | null, pageKey?: PageKey): boolean {
+export function canAccessPage(role?: string | null, pageKey?: PageKey) {
   const normalized = String(role || 'rider') as AppRole
   if (!pageKey) return true
   if (pageKey === 'rider') return normalized === 'rider'
-  if (SENIOR_ROLES.includes(normalized)) return GENERAL_MANAGER_PAGES.includes(pageKey)
+  if (['admin', 'general_manager', 'operations_manager', 'branches_manager'].includes(normalized)) {
+    return GENERAL_MANAGER_PAGES.includes(pageKey)
+  }
   if (normalized === 'branch_manager' || normalized === 'shift_manager') {
     return BRANCH_MANAGER_PAGES.includes(pageKey)
   }
   return false
 }
 
-export function canManageBranch(
-  role?: string | null,
-  userBranchId?: string | null,
-  targetBranchId?: string | null
-): boolean {
-  const normalized = String(role || 'rider') as AppRole
-  if (SENIOR_ROLES.includes(normalized)) return true
+export function canManageBranch(role?: string | null, userBranchId?: string | null, targetBranchId?: string | null) {
+  const normalized = String(role || 'rider')
+  if (['admin', 'general_manager', 'operations_manager', 'branches_manager'].includes(normalized)) return true
   if (normalized === 'branch_manager' || normalized === 'shift_manager') {
     return !!userBranchId && !!targetBranchId && userBranchId === targetBranchId
   }
   return false
 }
 
-export function isBranchScopedRole(role?: string | null): boolean {
+export function isBranchScopedRole(role?: string | null) {
   return ['branch_manager', 'shift_manager'].includes(String(role || ''))
 }

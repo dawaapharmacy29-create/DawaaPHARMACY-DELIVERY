@@ -1,35 +1,7 @@
-# dependencies
-  node_modules/
-  .pnp
-  .pnp.js
-
-  # build output
-  dist/
-  build/
-
-  # env files — NEVER commit real credentials
-  .env.local
-  .env.development.local
-  .env.test.local
-  .env.production.local
-
-  # keep .env.example (safe — no real keys)
-  # .env.example is intentionally NOT gitignored
-
-  # editor & OS
-  .DS_Store
-  .vscode/
-  *.local.bak
-
-  # Vercel
-  .vercel
-
-  # TypeScript
-  *.tsbuildinfo
-
-  # Vite
-  vite.config.ts.timestamp*
-  
-node_modules/
-dist/.vercel/
-
+﻿node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+.DS_Store
+.vite/
