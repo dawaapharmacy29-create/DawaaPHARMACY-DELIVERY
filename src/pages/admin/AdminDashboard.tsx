@@ -551,6 +551,7 @@ export default function AdminDashboard() {
 
   const navItems: NavItem[] = [
     { label: 'الرئيسية', icon: <Home size={18} />, path: '/admin', active: true },
+    { label: 'غرفة التحكم', icon: <BarChart3 size={18} />, path: '/admin/executive' },
     { label: 'إدارة الدليفري', icon: <Bike size={18} />, path: '/admin/riders' },
     { label: 'حسابات الدليفري', icon: <ShieldCheck size={18} />, path: '/admin/rider-accounts' },
     { label: 'لوحة مدير الفرع', icon: <Store size={18} />, path: '/admin/branch' },
@@ -664,6 +665,7 @@ export default function AdminDashboard() {
           </section>
 
           <section className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <QuickAction label="غرفة التحكم التنفيذية" value="مخاطر وحوافز" icon={<BarChart3 size={18} />} path="/admin/executive" />
             <QuickAction label="اعتماد طلبات ×1.5" value={`${onePointFive} طلب`} icon={<TrendingUp size={18} />} path="/admin/reconciliation" />
             <QuickAction label="تحويل أوردر لمشوار" value="من المراجعة" icon={<Route size={18} />} path="/admin/reconciliation" />
             <QuickAction label="السياسات والتنبيهات" value="بنود الدليفري" icon={<Bell size={18} />} path="/admin/rider-actions" />

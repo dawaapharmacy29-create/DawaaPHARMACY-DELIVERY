@@ -11,6 +11,7 @@ const Health         = lazy(() => import('./pages/Health'))
 const SafeAdmin      = lazy(() => import('./pages/SafeAdmin'))
 const RiderDashboard = lazy(() => import('./pages/rider/RiderDashboard'))
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'))
+const ExecutiveDashboard = lazy(() => import('./pages/admin/ExecutiveDashboard'))
 const RiderSchedules = lazy(() => import('./pages/admin/RiderSchedules'))
 const Riders         = lazy(() => import('./pages/admin/Riders'))
 const Performance    = lazy(() => import('./pages/admin/Performance'))
@@ -55,6 +56,7 @@ function App() {
 
             {/* Protected — Admin */}
             <Route path="/admin"                       element={<ProtectedRoute pageKey="dashboard"><AdminDashboard /></ProtectedRoute>} />
+            <Route path="/admin/executive"                 element={<ProtectedRoute pageKey="dashboard"><ExecutiveDashboard /></ProtectedRoute>} />
             <Route path="/admin/rider-schedules"       element={<ProtectedRoute pageKey="rider_schedules"><RiderSchedules /></ProtectedRoute>} />
             <Route path="/admin/riders"                element={<ProtectedRoute pageKey="riders"><Riders /></ProtectedRoute>} />
             <Route path="/admin/rider-accounts"        element={<ProtectedRoute pageKey="rider_accounts"><RiderAccounts /></ProtectedRoute>} />

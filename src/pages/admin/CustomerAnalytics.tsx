@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, RefreshCw, Search, Star, TrendingDown, Users } from 'lucide-react'
+import { ArrowRight, ExternalLink, RefreshCw, Search, Star, TrendingDown, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
+import { displayBranchName } from '../../lib/branchUtils'
 
 type CustomerAnalyticsRow = {
   customer_id: string
@@ -24,6 +25,34 @@ type CustomerAnalyticsRow = {
   risk_level: string | null
 }
 
+
+function deriveSegment(r: CustomerAnalyticsRow) {
+  if (r.customer_segment) return r.customer_segment
+  const sales = Number(r.total_sales || 0)
+  const days = Number(r.days_since_last_invoice || 0)
+  const problems = Number(r.delivery_problem_count || 0)
+  if (problems > 0) return 'delivery_problem'
+  if (sales >= 8000) return 'vip'
+  if (days >= 60) return 'stopped'
+  if (days >= 30) return 'at_risk'
+  if (Number(r.invoices_count || 0) <= 1) return 'new'
+  return 'active'
+}
+function deriveRisk(r: CustomerAnalyticsRow) {
+  if (r.risk_level) return r.risk_level
+  if (Number(r.delivery_problem_count || 0) > 0) return 'high'
+  if (Number(r.days_since_last_invoice || 0) >= 60) return 'high'
+  if (Number(r.days_since_last_invoice || 0) >= 30) return 'medium'
+  return 'low'
+}
+function waLink(phone?: string | null, name?: string | null) {
+  const digits = String(phone || '').replace(/\D/g, '')
+  if (!digits) return '#'
+  const normalized = digits.startsWith('2') ? digits : `2${digits}`
+  const text = encodeURIComponent(`أهلاً ${name || ''}، مع حضرتك صيدلية دواء، بنطمن على طلب حضرتك وخدمة التوصيل.`)
+  return `https://wa.me/${normalized}?text=${text}`
+}
+
 const SEGMENT_LABELS: Record<string, string> = {
   vip: 'VIP', active: 'نشط', declining: 'منخفض', at_risk: 'قابل للتوقف', stopped: 'متوقف', new: 'جديد', delivery_problem: 'مشاكل توصيل'
 }
@@ -37,9 +66,32 @@ export default function CustomerAnalytics() {
   async function load() {
     try {
       setLoading(true)
-      const { data, error } = await supabase.from('customer_delivery_analytics').select('*').order('total_sales', { ascending: false }).limit(500)
-      if (error) throw error
-      setRows((data || []) as CustomerAnalyticsRow[])
+      const { data, error } = await supabase.from('customer_delivery_analytics').select('*').order('total_sales', { ascending: false }).limit(1000)
+      if (error) {
+        const fallback = await supabase.from('delivery_customers').select('*').limit(1000)
+        if (fallback.error) throw error
+        setRows((fallback.data || []).map((c: any) => ({
+          customer_id: c.id || c.customer_id || c.customer_code || c.phone,
+          customer_code: c.customer_code || c.code || null,
+          customer_name: c.customer_name || c.name || null,
+          phone: c.phone || c.customer_phone || null,
+          branch_name: displayBranchName(c.branch || c.branch_name),
+          total_orders: 0,
+          matched_orders: 0,
+          rejected_orders: 0,
+          last_delivery_order_at: null,
+          last_invoice_date: c.last_invoice_date || c.last_purchase_date || null,
+          total_sales: Number(c.total_sales || c.total_purchases || c.total_amount || 0),
+          invoices_count: Number(c.invoices_count || c.invoice_count || 0),
+          average_invoice: Number(c.average_invoice || c.avg_invoice || 0),
+          days_since_last_invoice: c.days_since_last_invoice || null,
+          delivery_problem_count: Number(c.delivery_problem_count || 0),
+          customer_segment: c.customer_segment || null,
+          risk_level: c.risk_level || null,
+        })) as CustomerAnalyticsRow[])
+        return
+      }
+      setRows(((data || []) as CustomerAnalyticsRow[]).map(r => ({ ...r, branch_name: displayBranchName(r.branch_name), customer_segment: deriveSegment(r), risk_level: deriveRisk(r) })))
     } catch (e: any) {
       toast.error(`تعذر تحميل تحليل العملاء: ${e?.message || e}`)
     } finally {
@@ -88,8 +140,8 @@ export default function CustomerAnalytics() {
           <div className="border-b p-4 font-black text-slate-700">قائمة العملاء التحليلية {loading ? '— جاري التحميل...' : `— ${filtered.length} عميل`}</div>
           <div className="max-h-[70vh] overflow-auto">
             <table className="w-full min-w-[1200px] text-sm">
-              <thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="p-3">العميل</th><th className="p-3">الفرع</th><th className="p-3">إجمالي مشتريات</th><th className="p-3">فواتير</th><th className="p-3">أوردرات توصيل</th><th className="p-3">مطابقة</th><th className="p-3">مشاكل</th><th className="p-3">آخر شراء</th><th className="p-3">تصنيف</th><th className="p-3">خطر</th></tr></thead>
-              <tbody>{filtered.map(r => <tr key={r.customer_id} className="border-t align-top"><td className="p-3"><p className="font-black text-[#061827]">{r.customer_name || '—'}</p><p className="text-xs font-bold text-slate-400">{r.customer_code || '—'} · {r.phone || '—'}</p></td><td className="p-3">{r.branch_name || '—'}</td><td className="p-3 font-black">{Number(r.total_sales || 0).toLocaleString('ar-EG')}</td><td className="p-3">{r.invoices_count || 0}</td><td className="p-3">{r.total_orders || 0}</td><td className="p-3">{r.matched_orders || 0}</td><td className="p-3">{r.delivery_problem_count || 0}</td><td className="p-3">{r.last_invoice_date || '—'}<p className="text-xs text-slate-400">{r.days_since_last_invoice ?? '—'} يوم</p></td><td className="p-3"><span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">{SEGMENT_LABELS[String(r.customer_segment || '')] || r.customer_segment || '—'}</span></td><td className="p-3"><span className={`rounded-full px-3 py-1 text-xs font-black ${r.risk_level === 'high' ? 'bg-rose-50 text-rose-700' : r.risk_level === 'medium' ? 'bg-amber-50 text-amber-700' : 'bg-slate-50 text-slate-600'}`}>{r.risk_level || 'low'}</span></td></tr>)}</tbody>
+              <thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="p-3">العميل</th><th className="p-3">الفرع</th><th className="p-3">إجمالي مشتريات</th><th className="p-3">فواتير</th><th className="p-3">أوردرات توصيل</th><th className="p-3">مطابقة</th><th className="p-3">مشاكل</th><th className="p-3">آخر شراء</th><th className="p-3">تصنيف</th><th className="p-3">خطر</th><th className="p-3">واتساب</th></tr></thead>
+              <tbody>{filtered.map(r => <tr key={r.customer_id} className="border-t align-top"><td className="p-3"><p className="font-black text-[#061827]">{r.customer_name || '—'}</p><p className="text-xs font-bold text-slate-400">{r.customer_code || '—'} · {r.phone || '—'}</p></td><td className="p-3">{r.branch_name || '—'}</td><td className="p-3 font-black">{Number(r.total_sales || 0).toLocaleString('ar-EG')}</td><td className="p-3">{r.invoices_count || 0}</td><td className="p-3">{r.total_orders || 0}</td><td className="p-3">{r.matched_orders || 0}</td><td className="p-3">{r.delivery_problem_count || 0}</td><td className="p-3">{r.last_invoice_date || '—'}<p className="text-xs text-slate-400">{r.days_since_last_invoice ?? '—'} يوم</p></td><td className="p-3"><span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">{SEGMENT_LABELS[String(r.customer_segment || '')] || r.customer_segment || '—'}</span></td><td className="p-3"><span className={`rounded-full px-3 py-1 text-xs font-black ${r.risk_level === 'high' ? 'bg-rose-50 text-rose-700' : r.risk_level === 'medium' ? 'bg-amber-50 text-amber-700' : 'bg-slate-50 text-slate-600'}`}>{r.risk_level || 'low'}</span></td><td className="p-3"><a href={waLink(r.phone, r.customer_name)} target="_blank" className="inline-flex items-center gap-1 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">واتساب <ExternalLink size={12}/></a></td></tr>)}</tbody>
             </table>
           </div>
         </div>
