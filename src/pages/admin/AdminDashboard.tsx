@@ -1,762 +1,191 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  AlertTriangle,
-  BarChart3,
-  Bell,
-  Bike,
-  CheckCircle2,
-  ClipboardCheck,
-  ClipboardList,
-  Clock3,
-  Download,
-  FileCheck2,
-  FileText,
-  Gift,
-  Home,
-  LogOut,
-  Package,
-  RefreshCw,
-  Route,
-  Search,
-  ShieldCheck,
-  Eye,
-  Store,
-  TrendingUp,
-  Users,
-  UploadCloud,
-  XCircle
+  Activity, AlertTriangle, ArrowLeft, BarChart3, Bike, Building2, CheckCircle2,
+  ChevronLeft, CircleDollarSign, Clock3, FileWarning, Gift, LayoutDashboard,
+  LogOut, Menu, PackageCheck, RefreshCw, Route, Search, ShieldCheck,
+  Star, TrendingDown, TrendingUp, Users, Wallet, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { getCurrentSession, getRiderSession, getUserProfile, logout } from '../../lib/auth'
-import { getAdminStats, getRiderScheduleExceptions } from '../../lib/delivery'
-import { formatMoney, getOperationalPeriod, wildcardMatchText, TRIP_TYPE_LABELS, TRIP_STATUS_LABELS } from '../../lib/helpers'
-import { DeliveryOrder, InternalTrip, Rider } from '../../lib/types'
+import { getAdminStats } from '../../lib/delivery'
+import { getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
 import { CANONICAL_BRANCHES, displayBranchName } from '../../lib/branchUtils'
-import { supabase } from '../../lib/supabase'
-import RiderDeviceStatusTable, { type RiderDeviceStatusRow } from '../../components/RiderDeviceStatusTable'
 import { isBranchScopedRole } from '../../lib/permissions'
+import { supabase } from '../../lib/supabase'
 
 type AdminStats = Awaited<ReturnType<typeof getAdminStats>>
-type NavItem = { label: string; icon: React.ReactNode; path?: string; badge?: number; active?: boolean }
-type Drilldown = { title: string; type: 'orders' | 'trips' | 'alerts' | 'riders'; rows: any[] } | null
-
-type MetricCardProps = {
-  title: string
-  value: string | number
-  subtitle?: string
-  icon: React.ReactNode
-  tone?: 'green' | 'blue' | 'orange' | 'red' | 'purple' | 'slate'
-  onClick?: () => void
+type ViewKey = 'overview' | 'riders' | 'customers' | 'branches'
+type CustomerRow = {
+  customer_id: string; customer_code?: string | null; customer_name?: string | null; phone?: string | null
+  branch_name?: string | null; total_orders?: number | null; matched_orders?: number | null
+  rejected_orders?: number | null; total_sales?: number | null; invoices_count?: number | null
+  average_invoice?: number | null; days_since_last_invoice?: number | null
+  delivery_problem_count?: number | null; customer_segment?: string | null; risk_level?: string | null
 }
+type DrawerData = { title: string; subtitle: string; rows: any[]; kind: 'orders' | 'riders' | 'customers' | 'branches' } | null
 
-const toneClasses: Record<NonNullable<MetricCardProps['tone']>, { icon: string; accent: string; ring: string }> = {
-  green: { icon: 'bg-emerald-50 text-emerald-600', accent: 'text-emerald-600', ring: 'hover:border-emerald-200' },
-  blue: { icon: 'bg-sky-50 text-sky-600', accent: 'text-sky-600', ring: 'hover:border-sky-200' },
-  orange: { icon: 'bg-orange-50 text-orange-600', accent: 'text-orange-600', ring: 'hover:border-orange-200' },
-  red: { icon: 'bg-rose-50 text-rose-600', accent: 'text-rose-600', ring: 'hover:border-rose-200' },
-  purple: { icon: 'bg-purple-50 text-purple-600', accent: 'text-purple-600', ring: 'hover:border-purple-200' },
-  slate: { icon: 'bg-slate-100 text-slate-600', accent: 'text-slate-600', ring: 'hover:border-slate-200' }
-}
+const n = (value: unknown) => Number(value || 0) || 0
+const pct = (value: number) => `${Math.round(value)}%`
+const money = (value: number) => `${Math.round(value).toLocaleString('ar-EG')} ج.م`
+const orderDate = (o: any) => o.delivery_date || String(o.registered_at || o.created_at || '').slice(0, 10)
+const delivered = (o: any) => Boolean(o.delivered_at) || ['delivered', 'تم التسليم'].includes(String(o.status || '').toLowerCase())
+const failed = (o: any) => Boolean(o.failed_at || o.failed_reason) || String(o.status || '').toLowerCase().includes('fail')
+const duplicate = (o: any) => Boolean(o.is_duplicate_invoice || o.duplicate_warning)
+const review = (o: any) => Boolean(o.needs_review) || ['pending', 'needs_review'].includes(String(o.review_status || '').toLowerCase())
 
-function getOrderDate(order: any): string {
-  return order?.delivery_date || (order?.registered_at || order?.created_at || '').slice(0, 10)
-}
-
-function getTripDate(trip: any): string {
-  return trip?.trip_date || (trip?.registered_at || trip?.created_at || '').slice(0, 10)
-}
-
-function isDeleted(row: any) {
-  return Boolean(row?.deleted_at)
-}
-
-function isDelivered(order: any) {
-  return ['delivered', 'تم التسليم'].includes(String(order?.status || '').toLowerCase()) || Boolean(order?.delivered_at)
-}
-
-function isFailed(order: any) {
-  const status = String(order?.status || '').toLowerCase()
-  return status.includes('fail') || status === 'failed' || Boolean(order?.failed_at) || Boolean(order?.failed_reason)
-}
-
-function isReview(order: any) {
-  return Boolean(order?.needs_review) || ['pending', 'needs_review', 'registered'].includes(String(order?.review_status || order?.status || '').toLowerCase())
-}
-
-function isMultiplier(order: any) {
-  return Number(order?.order_multiplier ?? (order?.is_multiplier_order ? 1.5 : 1)) >= 1.5
-}
-
-function cycleLabel(period: { start: string; end: string }) {
-  return `${period.start} → ${period.end}`
-}
-
-function daysBetween(startIso: string, endIso: string) {
-  const start = new Date(`${startIso}T00:00:00`)
-  const end = new Date(`${endIso}T00:00:00`)
-  const diff = Math.round((end.getTime() - start.getTime()) / 86400000)
-  return Array.from({ length: Math.max(1, diff + 1) }, (_, i) => {
-    const d = new Date(start)
-    d.setDate(start.getDate() + i)
-    return d.toISOString().slice(0, 10)
-  })
-}
-
-function MetricCard({ title, value, subtitle, icon, tone = 'green', onClick }: MetricCardProps) {
-  const t = toneClasses[tone]
+function StatCard({ label, value, hint, icon, tone = 'emerald', onClick }: { label: string; value: string | number; hint: string; icon: ReactNode; tone?: 'emerald' | 'sky' | 'amber' | 'rose' | 'violet'; onClick?: () => void }) {
+  const colors = {
+    emerald: 'from-emerald-500 to-teal-600 shadow-emerald-100', sky: 'from-sky-500 to-blue-600 shadow-sky-100',
+    amber: 'from-amber-400 to-orange-500 shadow-amber-100', rose: 'from-rose-500 to-red-600 shadow-rose-100',
+    violet: 'from-violet-500 to-purple-600 shadow-violet-100',
+  }
   const Comp = onClick ? 'button' : 'div'
-  return (
-    <Comp
-      onClick={onClick as any}
-      className={`group rounded-3xl border border-slate-100 bg-white p-4 text-right shadow-sm transition-all ${t.ring} ${onClick ? 'hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0 w-full' : ''}`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${t.icon}`}>{icon}</div>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-black text-slate-600">{title}</p>
-          <p className="mt-2 text-3xl font-black leading-none text-[#061827]">{value}</p>
-          {subtitle && <p className={`mt-2 text-xs font-black ${t.accent}`}>{subtitle}</p>}
-        </div>
-      </div>
-    </Comp>
-  )
+  return <Comp onClick={onClick} className={`group w-full rounded-[1.6rem] border border-slate-100 bg-white p-4 text-right shadow-sm transition ${onClick ? 'hover:-translate-y-1 hover:shadow-xl' : ''}`}>
+    <div className="flex items-start justify-between gap-3">
+      <div><p className="text-xs font-black text-slate-500">{label}</p><p className="mt-2 text-3xl font-black tracking-tight text-[#102a32]">{value}</p></div>
+      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br text-white shadow-lg ${colors[tone]}`}>{icon}</span>
+    </div>
+    <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-50 pt-3"><p className="text-[11px] font-bold text-slate-400">{hint}</p>{onClick && <ChevronLeft size={15} className="text-slate-300 transition group-hover:-translate-x-1 group-hover:text-emerald-600" />}</div>
+  </Comp>
 }
 
-function SideBar({ items, onLogout }: { items: NavItem[]; onLogout: () => void }) {
-  return (
-    <aside className="hidden w-[260px] shrink-0 border-l border-slate-100 bg-white p-5 lg:flex lg:flex-col">
-      <div className="mb-8 flex items-center gap-3">
-        <img src="/logo.png" className="h-12 w-12 rounded-2xl border object-contain p-1 shadow-sm" alt="Dawaa" />
-        <div>
-          <p className="font-black text-[#061827]">لوحة إدارة الدليفري</p>
-          <p className="text-xs font-bold text-slate-400">نظام إدارة عمليات التوصيل</p>
-        </div>
-      </div>
-      <nav className="space-y-1">
-        {items.map((item) => (
-          <button
-            key={item.label}
-            onClick={() => item.path && (window.location.href = item.path)}
-            className={`relative flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-right text-sm font-black transition ${item.active ? 'bg-emerald-50 text-emerald-700' : 'text-slate-600 hover:bg-slate-50'}`}
-          >
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/70">{item.icon}</span>
-            <span className="flex-1">{item.label}</span>
-            {!!item.badge && <span className="rounded-full bg-rose-500 px-2 py-0.5 text-xs text-white">{item.badge}</span>}
-          </button>
-        ))}
-      </nav>
-      <div className="mt-auto rounded-3xl border bg-slate-50 p-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600"><Users size={22} /></div>
-          <div className="flex-1">
-            <p className="font-black text-[#061827]">المدير التنفيذي</p>
-            <p className="text-xs text-slate-400">dr.moaz</p>
-          </div>
-        </div>
-        <button onClick={onLogout} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-3 py-2 text-sm font-black text-slate-600 hover:bg-slate-100">
-          <LogOut size={16} /> تسجيل خروج
-        </button>
-      </div>
-    </aside>
-  )
+function AreaChart({ data }: { data: { label: string; orders: number; delivered: number }[] }) {
+  const max = Math.max(1, ...data.map(x => x.orders)); const width = 700; const height = 210
+  const points = data.map((x, i) => `${data.length === 1 ? width / 2 : i * width / (data.length - 1)},${height - 20 - x.orders / max * 165}`).join(' ')
+  const deliveredPoints = data.map((x, i) => `${data.length === 1 ? width / 2 : i * width / (data.length - 1)},${height - 20 - x.delivered / max * 165}`).join(' ')
+  const fill = `0,${height} ${points} ${width},${height}`
+  return <div className="rounded-[1.8rem] border border-slate-100 bg-white p-5 shadow-sm xl:col-span-2">
+    <div className="mb-5 flex items-start justify-between"><div><h3 className="font-black text-[#102a32]">حركة الأوردرات خلال الدورة</h3><p className="mt-1 text-xs font-bold text-slate-400">الإجمالي مقابل ما تم تسليمه فعليًا</p></div><div className="flex gap-3 text-[11px] font-black"><span className="text-emerald-600">● الإجمالي</span><span className="text-sky-500">● تم التسليم</span></div></div>
+    <div className="h-56 w-full overflow-hidden rounded-2xl bg-gradient-to-b from-emerald-50/60 to-white">
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="h-full w-full">
+        <defs><linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#10b981" stopOpacity=".24"/><stop offset="1" stopColor="#10b981" stopOpacity="0"/></linearGradient></defs>
+        {[45, 90, 135, 180].map(y => <line key={y} x1="0" x2={width} y1={y} y2={y} stroke="#e2e8f0" strokeDasharray="5 7" />)}
+        <polygon points={fill} fill="url(#chartFill)"/><polyline points={points} fill="none" stroke="#059669" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"/><polyline points={deliveredPoints} fill="none" stroke="#38bdf8" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    </div>
+    <div className="mt-2 flex justify-between text-[10px] font-bold text-slate-400">{data.map(x => <span key={x.label}>{x.label}</span>)}</div>
+  </div>
 }
 
-function MiniBarChart({ title, rows, tone = 'green' }: { title: string; rows: { label: string; value: number }[]; tone?: 'green' | 'red' | 'blue' | 'orange' }) {
+function Donut({ deliveredCount, reviewCount, failedCount, other }: { deliveredCount: number; reviewCount: number; failedCount: number; other: number }) {
+  const total = Math.max(1, deliveredCount + reviewCount + failedCount + other)
+  const a = deliveredCount / total * 100, b = reviewCount / total * 100, c = failedCount / total * 100
+  const bg = `conic-gradient(#10b981 0 ${a}%,#f59e0b ${a}% ${a + b}%,#f43f5e ${a + b}% ${a + b + c}%,#cbd5e1 0)`
+  return <div className="rounded-[1.8rem] border border-slate-100 bg-white p-5 shadow-sm"><h3 className="font-black text-[#102a32]">جودة دورة التشغيل</h3><p className="mt-1 text-xs font-bold text-slate-400">توزيع الحالات في لقطة واحدة</p><div className="mt-5 flex items-center justify-center gap-5"><div className="relative h-36 w-36 rounded-full" style={{ background: bg }}><div className="absolute inset-5 flex flex-col items-center justify-center rounded-full bg-white"><b className="text-2xl text-[#102a32]">{pct(deliveredCount / total * 100)}</b><span className="text-[10px] font-bold text-slate-400">تسليم</span></div></div><div className="space-y-2 text-xs font-black text-slate-600"><Legend color="bg-emerald-500" label="تم التسليم" value={deliveredCount}/><Legend color="bg-amber-500" label="مراجعة" value={reviewCount}/><Legend color="bg-rose-500" label="فاشل" value={failedCount}/><Legend color="bg-slate-300" label="أخرى" value={other}/></div></div></div>
+}
+function Legend({ color, label, value }: { color: string; label: string; value: number }) { return <div className="flex items-center gap-2"><i className={`h-2.5 w-2.5 rounded-full ${color}`}/><span className="min-w-[68px]">{label}</span><b>{value}</b></div> }
+
+function ProgressList({ title, subtitle, rows, onRow }: { title: string; subtitle: string; rows: { id: string; label: string; sub?: string; value: number; rate?: number; tone?: string }[]; onRow?: (id: string) => void }) {
   const max = Math.max(1, ...rows.map(r => r.value))
-  const barClass = tone === 'red' ? 'bg-rose-500' : tone === 'blue' ? 'bg-sky-500' : tone === 'orange' ? 'bg-orange-500' : 'bg-emerald-500'
-  return (
-    <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
-      <h3 className="mb-5 text-base font-black text-[#061827]">{title}</h3>
-      {rows.length ? (
-        <div className="flex h-48 items-end gap-3 border-b border-slate-100 px-2 pb-3">
-          {rows.map(row => (
-            <div key={row.label} className="flex min-w-0 flex-1 flex-col items-center gap-2">
-              <span className="text-xs font-black text-slate-600">{row.value}</span>
-              <div className="flex h-32 w-full items-end rounded-t-2xl bg-slate-50">
-                <div className={`w-full rounded-t-2xl ${barClass}`} style={{ height: `${Math.max(6, Math.round(row.value / max * 100))}%` }} />
-              </div>
-              <span className="w-full truncate text-center text-[11px] font-bold text-slate-400">{row.label}</span>
-            </div>
-          ))}
-        </div>
-      ) : <EmptyLine text="لا توجد بيانات كافية" />}
-    </div>
-  )
+  return <div className="rounded-[1.8rem] border border-slate-100 bg-white p-5 shadow-sm"><h3 className="font-black text-[#102a32]">{title}</h3><p className="mt-1 text-xs font-bold text-slate-400">{subtitle}</p><div className="mt-5 space-y-4">{rows.slice(0, 6).map((r, i) => <button key={r.id} onClick={() => onRow?.(r.id)} className="block w-full text-right group"><div className="mb-1.5 flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-50 text-xs font-black text-slate-500">{i + 1}</span><div className="min-w-0 flex-1"><p className="truncate text-xs font-black text-slate-700">{r.label}</p><p className="truncate text-[10px] font-bold text-slate-400">{r.sub}</p></div><b className={r.tone || 'text-[#102a32]'}>{r.value}</b>{r.rate != null && <span className="text-[10px] font-black text-slate-400">{pct(r.rate)}</span>}</div><div className="mr-9 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-l from-emerald-500 to-teal-400 transition-all group-hover:from-emerald-600" style={{ width: `${Math.max(4, r.value / max * 100)}%` }}/></div></button>)}{!rows.length && <p className="py-12 text-center text-sm font-bold text-slate-400">لا توجد بيانات ضمن الفلتر الحالي</p>}</div></div>
 }
 
-function LineChartCard({ title, values }: { title: string; values: { label: string; value: number }[] }) {
-  const max = Math.max(1, ...values.map(v => v.value))
-  const points = values.map((v, i) => {
-    const x = values.length <= 1 ? 50 : (i / (values.length - 1)) * 100
-    const y = 100 - (v.value / max) * 80 - 10
-    return `${x},${y}`
-  }).join(' ')
-  return (
-    <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
-      <h3 className="mb-4 text-base font-black text-[#061827]">{title}</h3>
-      <div className="relative h-56 rounded-3xl bg-gradient-to-b from-emerald-50/70 to-white p-4">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full overflow-visible">
-          <polyline points={points} fill="none" stroke="#059669" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-          {values.map((v, i) => {
-            const x = values.length <= 1 ? 50 : (i / (values.length - 1)) * 100
-            const y = 100 - (v.value / max) * 80 - 10
-            return <circle key={v.label} cx={x} cy={y} r="1.7" fill="#059669" />
-          })}
-        </svg>
-        <div className="absolute inset-x-4 bottom-3 flex justify-between text-[10px] font-bold text-slate-400">
-          {values.map(v => <span key={v.label}>{v.label}</span>)}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function DonutStatus({ delivered, review, failed, duplicate }: { delivered: number; review: number; failed: number; duplicate: number }) {
-  const total = Math.max(1, delivered + review + failed + duplicate)
-  const green = delivered / total * 100
-  const orange = review / total * 100
-  const red = failed / total * 100
-  const purple = duplicate / total * 100
-  const bg = `conic-gradient(#10b981 0 ${green}%, #f59e0b ${green}% ${green + orange}%, #ef4444 ${green + orange}% ${green + orange + red}%, #8b5cf6 ${green + orange + red}% ${green + orange + red + purple}%, #e5e7eb 0)`
-  return (
-    <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
-      <h3 className="mb-4 text-base font-black text-[#061827]">حالات الأوردرات</h3>
-      <div className="flex items-center justify-center gap-6">
-        <div className="relative h-36 w-36 rounded-full" style={{ background: bg }}>
-          <div className="absolute inset-5 flex flex-col items-center justify-center rounded-full bg-white">
-            <span className="text-xs font-bold text-slate-400">الإجمالي</span>
-            <span className="text-2xl font-black text-[#061827]">{total}</span>
-          </div>
-        </div>
-        <div className="space-y-2 text-sm font-bold text-slate-600">
-          <Legend color="bg-emerald-500" label="تم التسليم" value={delivered} />
-          <Legend color="bg-amber-500" label="تحت المراجعة" value={review} />
-          <Legend color="bg-rose-500" label="فاشل" value={failed} />
-          <Legend color="bg-purple-500" label="مكرر" value={duplicate} />
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function Legend({ color, label, value }: { color: string; label: string; value: number }) {
-  return <div className="flex items-center gap-2"><span className={`h-3 w-3 rounded-full ${color}`} /><span>{label}</span><span className="text-[#061827]">{value}</span></div>
-}
-
-function EmptyLine({ text }: { text: string }) {
-  return <div className="rounded-2xl bg-slate-50 p-6 text-center text-sm font-black text-slate-400">{text}</div>
-}
-
-function RankingList({ riders }: { riders: Array<{ id: string; name: string; orders: number; branch?: string }> }) {
-  return (
-    <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
-      <h3 className="mb-4 text-base font-black text-[#061827]">أفضل المندوبين</h3>
-      <div className="space-y-3">
-        {riders.slice(0, 6).length ? riders.slice(0, 6).map((r, i) => (
-          <div key={r.id} className="flex items-center gap-3 rounded-2xl bg-slate-50 p-3">
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-white font-black text-emerald-600">{i + 1}</span>
-            <div className="flex-1">
-              <p className="font-black text-[#061827]">{r.name}</p>
-              <p className="text-xs font-bold text-slate-400">{r.branch || 'كل الفروع'}</p>
-            </div>
-            <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-black text-emerald-700">{r.orders}</span>
-          </div>
-        )) : <EmptyLine text="لا توجد بيانات ترتيب بعد" />}
-      </div>
-    </div>
-  )
-}
-
-function ReviewTable({ orders, riders }: { orders: DeliveryOrder[]; riders: Rider[] }) {
-  const rows = orders.filter((o: any) => !isDeleted(o) && (isReview(o) || isFailed(o) || o.is_duplicate_invoice || isMultiplier(o))).slice(0, 8)
-  return (
-    <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm lg:col-span-2">
-      <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-base font-black text-[#061827]">أوردرات تحت المراجعة</h3>
-        <button onClick={() => (window.location.href = '/admin/reconciliation')} className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">عرض الكل</button>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[760px] text-right text-sm">
-          <thead className="text-xs font-black text-slate-400">
-            <tr>
-              <th className="p-3">رقم الفاتورة</th>
-              <th className="p-3">العميل</th>
-              <th className="p-3">المندوب</th>
-              <th className="p-3">الحالة</th>
-              <th className="p-3">الإجراء</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {rows.length ? rows.map((o: any) => {
-              const rider = riders.find(r => r.id === o.rider_id)
-              return (
-                <tr key={o.id} className="hover:bg-slate-50">
-                  <td className="p-3 font-black text-[#061827]">{o.invoice_no || o.invoice_number || o.order_no || 'بدون رقم'}</td>
-                  <td className="p-3"><p className="font-bold text-slate-700">{o.customer_name || o.customer_name_snapshot || 'عميل غير محدد'}</p><p className="text-xs text-slate-400">{o.customer_code || o.customer_code_snapshot || ''}</p></td>
-                  <td className="p-3 font-bold text-slate-600">{o.rider_name || rider?.name || o.driver_name || 'غير مربوط'}</td>
-                  <td className="p-3"><StatusBadges order={o} /></td>
-                  <td className="p-3"><div className="flex gap-2"><button className="rounded-xl border border-emerald-200 px-3 py-1 text-xs font-black text-emerald-700">موافقة</button><button className="rounded-xl border border-sky-200 px-3 py-1 text-xs font-black text-sky-700">تحويل</button><button className="rounded-xl border border-rose-200 px-3 py-1 text-xs font-black text-rose-700">استبعاد</button></div></td>
-                </tr>
-              )
-            }) : <tr><td colSpan={5} className="p-6 text-center font-bold text-slate-400">لا توجد أوردرات تحت المراجعة حاليًا</td></tr>}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
-
-function StatusBadges({ order }: { order: any }) {
-  const badges: { text: string; cls: string }[] = []
-  if (isFailed(order)) badges.push({ text: 'فاشل', cls: 'bg-rose-50 text-rose-700' })
-  if (order?.is_duplicate_invoice) badges.push({ text: 'مكرر', cls: 'bg-amber-50 text-amber-700' })
-  if (isMultiplier(order)) badges.push({ text: '×1.5', cls: 'bg-orange-50 text-orange-700' })
-  if (isReview(order)) badges.push({ text: 'مراجعة', cls: 'bg-sky-50 text-sky-700' })
-  if (!badges.length) badges.push({ text: 'عادي', cls: 'bg-slate-100 text-slate-600' })
-  return <div className="flex flex-wrap gap-1">{badges.map(b => <span key={b.text} className={`rounded-full px-2 py-1 text-[11px] font-black ${b.cls}`}>{b.text}</span>)}</div>
-}
-
-function AlertList({ duplicate, failed, multiplier, late, pendingActions }: { duplicate: number; failed: number; multiplier: number; late: number; pendingActions: number }) {
-  const alerts = [
-    { icon: <FileText size={18} />, title: 'فواتير مكررة بحاجة لتدقيق', sub: `${duplicate} فاتورة مكررة`, tone: 'text-rose-600 bg-rose-50' },
-    { icon: <XCircle size={18} />, title: 'أوردرات فاشلة لا تحتسب', sub: `${failed} أوردر فاشل`, tone: 'text-rose-600 bg-rose-50' },
-    { icon: <TrendingUp size={18} />, title: 'طلبات ×1.5 تنتظر الموافقة', sub: `${multiplier} طلب تحت المراجعة`, tone: 'text-orange-600 bg-orange-50' },
-    { icon: <Clock3 size={18} />, title: 'مشاكل في الحضور', sub: `${late} تأخير/حضور ناقص`, tone: 'text-amber-600 bg-amber-50' },
-    { icon: <Gift size={18} />, title: 'خصومات ومكافآت تحت المراجعة', sub: `${pendingActions} موقف`, tone: 'text-purple-600 bg-purple-50' }
-  ]
-  return (
-    <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
-      <h3 className="mb-4 text-base font-black text-[#061827]">أهم التنبيهات</h3>
-      <div className="space-y-2">
-        {alerts.map((a) => (
-          <div key={a.title} className="flex items-center gap-3 rounded-2xl bg-slate-50 p-3">
-            <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${a.tone}`}>{a.icon}</span>
-            <div className="flex-1">
-              <p className="text-sm font-black text-[#061827]">{a.title}</p>
-              <p className="text-xs font-bold text-slate-400">{a.sub}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
+function SectionTitle({ eyebrow, title, action }: { eyebrow: string; title: string; action?: ReactNode }) { return <div className="mb-4 flex items-end justify-between gap-3"><div><p className="text-[11px] font-black text-emerald-600">{eyebrow}</p><h2 className="mt-1 text-xl font-black text-[#102a32]">{title}</h2></div>{action}</div> }
 
 export default function AdminDashboard() {
-  const navigate = useNavigate()
-  const [stats, setStats] = useState<AdminStats | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [deviceRows, setDeviceRows] = useState<RiderDeviceStatusRow[]>([])
-  const [search, setSearch] = useState('')
-  const [branch, setBranch] = useState('all')
-  const [lockedBranchId, setLockedBranchId] = useState<string | null>(null)
-  const [lockedBranchName, setLockedBranchName] = useState<string | null>(null)
-  const [refreshKey, setRefreshKey] = useState(0)
-  const [pendingExceptions, setPendingExceptions] = useState(0)
-  const [, setLastUpdated] = useState<Date | null>(null)
-  const [drilldown, setDrilldown] = useState<Drilldown>(null)
-  const period = useMemo(() => getOperationalPeriod(), [])
+  const navigate = useNavigate(); const period = useMemo(() => getOperationalPeriod(), [])
+  const [stats, setStats] = useState<AdminStats | null>(null); const [customers, setCustomers] = useState<CustomerRow[]>([])
+  const [loading, setLoading] = useState(true); const [view, setView] = useState<ViewKey>('overview'); const [mobileNav, setMobileNav] = useState(false)
+  const [search, setSearch] = useState(''); const [branch, setBranch] = useState('all'); const [lockedBranchId, setLockedBranchId] = useState<string | null>(null); const [lockedBranchName, setLockedBranchName] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null); const [drawer, setDrawer] = useState<DrawerData>(null)
 
-  async function loadStats() {
+  async function load() {
+    setLoading(true)
     try {
-      setLoading(true)
-      let branchScopeId: string | null = null
-      let branchScopeName: string | null = null
-      const localSession = getRiderSession()
-      if (isBranchScopedRole(localSession.role)) {
-        branchScopeId = localSession.branch_id
-        branchScopeName = localSession.branch_name
-      } else {
-        const session = await getCurrentSession()
-        const profile = session?.user?.id ? await getUserProfile(session.user.id) : null
-        if (isBranchScopedRole(profile?.role)) branchScopeId = profile?.branch_id || null
+      let branchId: string | null = null, branchName: string | null = null
+      const local = getRiderSession()
+      if (isBranchScopedRole(local.role)) { branchId = local.branch_id; branchName = local.branch_name }
+      else { const session = await getCurrentSession(); const profile = session?.user?.id ? await getUserProfile(session.user.id) : null; if (isBranchScopedRole(profile?.role)) branchId = profile?.branch_id || null }
+      if (branchId && !branchName) { const { data } = await supabase.from('branches').select('name,display_name').eq('id', branchId).maybeSingle(); branchName = (data as any)?.display_name || (data as any)?.name || null }
+      setLockedBranchId(branchId); setLockedBranchName(branchName); if (branchId) setBranch(branchId)
+      const [admin, customerRes] = await Promise.all([getAdminStats(branchId), supabase.from('customer_delivery_analytics').select('*').order('total_sales', { ascending: false }).limit(1500)])
+      let customerRows = ((customerRes as any).data || []) as CustomerRow[]
+      if ((customerRes as any).error) {
+        const fallback = await supabase.from('delivery_customers').select('*').limit(1500)
+        customerRows = ((fallback.data || []) as any[]).map(c => ({ customer_id: c.id || c.customer_code, customer_code: c.customer_code, customer_name: c.name || c.customer_name, phone: c.phone, branch_name: c.branch_name || c.branch, total_sales: n(c.total_sales), invoices_count: n(c.invoices_count), average_invoice: n(c.average_invoice), days_since_last_invoice: c.days_since_last_invoice, delivery_problem_count: n(c.delivery_problem_count), customer_segment: c.customer_segment, risk_level: c.risk_level }))
       }
-      if (branchScopeId && !branchScopeName) {
-        const { data: b } = await supabase.from('branches').select('name, display_name').eq('id', branchScopeId).maybeSingle()
-        branchScopeName = (b as any)?.display_name || (b as any)?.name || null
-      }
-      setLockedBranchId(branchScopeId)
-      setLockedBranchName(branchScopeName)
-      if (branchScopeId) setBranch(branchScopeId)
-      const [s, exceptions, devices] = await Promise.all([
-        getAdminStats(branchScopeId),
-        getRiderScheduleExceptions(),
-        branchScopeId
-          ? supabase.from('rider_device_status').select('*').eq('branch_id', branchScopeId).order('last_seen_at', { ascending: false })
-          : supabase.from('rider_device_status').select('*').order('last_seen_at', { ascending: false })
-      ])
-      setStats(s)
-      setLastUpdated(new Date())
-      setDeviceRows(((devices as any).data || []) as RiderDeviceStatusRow[])
-      setPendingExceptions(exceptions.filter((e: any) => e.status === 'pending' && (!branchScopeId || e.branch_id === branchScopeId)).length)
-    } catch (error) {
-      toast.error('حصلت مشكلة في تحميل لوحة الإدارة')
-    } finally {
-      setLoading(false)
-    }
+      if (branchId && branchName) customerRows = customerRows.filter(c => displayBranchName(c.branch_name) === displayBranchName(branchName))
+      setStats(admin); setCustomers(customerRows); setLastUpdated(new Date())
+    } catch (e: any) { toast.error(e?.message || 'تعذر تحميل مركز القيادة') } finally { setLoading(false) }
   }
+  useEffect(() => { void load() }, [])
+  useEffect(() => { const ch = supabase.channel(`command-center-${lockedBranchId || 'all'}`).on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_orders', ...(lockedBranchId ? { filter: `branch_id=eq.${lockedBranchId}` } : {}) }, () => void load()).subscribe(); return () => { void supabase.removeChannel(ch) } }, [lockedBranchId])
 
-  useEffect(() => { void loadStats() }, [refreshKey])
+  const riders = (stats?.riders || []) as any[], allOrders = ((stats as any)?.cycleOrders || []) as any[], allTrips = ((stats as any)?.cycleTrips || []) as any[]
+  const riderBranch = (r: any) => displayBranchName(r?.branch_name || r?.branch || r?.branch_id)
+  const branchMatch = (row: any) => { if (branch === 'all') return true; const r = riders.find(x => x.id === row.rider_id); return row.branch_id === branch || displayBranchName(row.branch_name || row.branch || riderBranch(r)) === displayBranchName(branch) }
+  const textMatch = (row: any) => !search.trim() || [row.customer_name, row.customer_name_snapshot, row.customer_code, row.invoice_number, row.invoice_no, row.rider_name, row.name, row.phone].some(v => wildcardMatchText(String(v || ''), search))
+  const orders = allOrders.filter(o => branchMatch(o) && textMatch(o)); const trips = allTrips.filter(t => branchMatch(t) && textMatch(t))
+  const selectedBranchName = lockedBranchId && branch === lockedBranchId ? lockedBranchName : branch
+  const filteredCustomers = customers.filter(c => (branch === 'all' || displayBranchName(c.branch_name) === displayBranchName(selectedBranchName)) && textMatch(c))
+  const activeRiders = riders.filter(r => (branch === 'all' || r.branch_id === branch || riderBranch(r) === displayBranchName(branch)) && textMatch(r))
 
-  useEffect(() => {
-    const channel = supabase
-      .channel(`admin-dashboard-orders-${lockedBranchId || 'all'}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'delivery_orders', ...(lockedBranchId ? { filter: `branch_id=eq.${lockedBranchId}` } : {}) },
-        () => setRefreshKey(k => k + 1)
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'internal_trips', ...(lockedBranchId ? { filter: `branch_id=eq.${lockedBranchId}` } : {}) },
-        () => setRefreshKey(k => k + 1)
-      )
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [lockedBranchId])
+  const deliveredOrders = orders.filter(delivered), failedOrders = orders.filter(failed), duplicateOrders = orders.filter(duplicate), reviewOrders = orders.filter(review)
+  const deliveryRate = orders.length ? deliveredOrders.length / orders.length * 100 : 0, riskRate = orders.length ? (failedOrders.length + duplicateOrders.length + reviewOrders.length) / orders.length * 100 : 0
+  const customerSales = filteredCustomers.reduce((s, c) => s + n(c.total_sales), 0); const highRiskCustomers = filteredCustomers.filter(c => c.risk_level === 'high' || ['stopped', 'at_risk'].includes(String(c.customer_segment)))
+  const today = new Date().toISOString().slice(0, 10); const todayOrders = orders.filter(o => orderDate(o) === today)
 
-  async function sendBatteryNotification(row: RiderDeviceStatusRow) {
-    try {
-      const message = row.battery_supported
-        ? `تنبيه من الإدارة: بطارية جهازك الآن ${row.battery_percent ?? 'غير معروف'}%${row.is_charging ? ' والجهاز على الشاحن' : ' والجهاز ليس على الشاحن'}. برجاء الحفاظ على شحن الجهاز أثناء الشيفت.`
-        : 'تنبيه من الإدارة: برجاء التأكد من شحن الهاتف وفتح التطبيق أثناء الشيفت.'
+  const dateChart = useMemo(() => { const start = new Date(`${period.start}T00:00:00`), end = new Date(`${period.end}T00:00:00`), dates: string[] = []; for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) dates.push(d.toISOString().slice(0, 10)); const step = Math.max(1, Math.ceil(dates.length / 9)); return dates.filter((_, i) => i % step === 0 || i === dates.length - 1).map(date => ({ label: date.slice(5), orders: orders.filter(o => orderDate(o) === date).length, delivered: orders.filter(o => orderDate(o) === date && delivered(o)).length })) }, [orders, period])
+  const riderAnalytics = activeRiders.map(r => { const ro = orders.filter(o => o.rider_id === r.id), rt = trips.filter(t => t.rider_id === r.id), done = ro.filter(delivered).length, problems = ro.filter(o => failed(o) || duplicate(o) || review(o)).length; return { id: r.id, name: r.name || r.username || 'دليفري', branch: riderBranch(r), orders: ro.length, trips: rt.length, delivered: done, problems, rate: ro.length ? done / ro.length * 100 : 0, score: Math.max(0, Math.round((ro.length ? done / ro.length * 70 : 0) + (ro.length ? (1 - problems / ro.length) * 30 : 0))) } }).sort((a, b) => b.score - a.score || b.orders - a.orders)
+  const branchAnalytics = useMemo(() => { const labels = Array.from(new Set([...CANONICAL_BRANCHES, ...riders.map(riderBranch).filter(Boolean)])); return labels.map(label => { const bo = allOrders.filter(o => displayBranchName(o.branch_name || o.branch || riderBranch(riders.find(r => r.id === o.rider_id))) === label), bc = customers.filter(c => displayBranchName(c.branch_name) === label), br = riders.filter(r => riderBranch(r) === label); const done = bo.filter(delivered).length, problems = bo.filter(o => failed(o) || duplicate(o) || review(o)).length; return { id: label, label, orders: bo.length, riders: br.length, customers: bc.length, sales: bc.reduce((s, c) => s + n(c.total_sales), 0), delivered: done, problems, rate: bo.length ? done / bo.length * 100 : 0 } }).filter(x => x.orders || x.riders || x.customers).sort((a, b) => b.orders - a.orders) }, [allOrders, customers, riders])
 
-      const { error } = await supabase.rpc('create_rider_notification', {
-        p_rider_id: row.rider_id,
-        p_title: 'تنبيه مهم بخصوص شحن الهاتف',
-        p_message: message,
-        p_notification_type: 'battery_warning',
-        p_severity: row.warning_level === 'critical' ? 'danger' : 'warning',
-        p_reference_table: 'rider_device_status',
-        p_reference_id: row.id || null,
-        p_metadata: {
-          battery_percent: row.battery_percent,
-          is_charging: row.is_charging,
-          online: row.online,
-          source: 'admin_dashboard'
-        }
-      })
-      if (error) throw error
-      toast.success(`تم إرسال التنبيه إلى ${row.rider_name || 'الدليفري'}`)
-    } catch (e: any) {
-      toast.error(e?.message || 'فشل إرسال التنبيه')
-    }
-  }
+  const branchOptions = lockedBranchId ? [{ value: lockedBranchId, label: lockedBranchName || lockedBranchId }] : [{ value: 'all', label: 'كل الفروع' }, ...Array.from(new Set([...CANONICAL_BRANCHES, ...branchAnalytics.map(b => b.label)])).map(x => ({ value: x, label: x }))]
+  const tabs: { key: ViewKey; label: string; icon: ReactNode }[] = [{ key: 'overview', label: 'نظرة عامة', icon: <LayoutDashboard size={18}/> }, { key: 'riders', label: 'تحليل الدليفري', icon: <Bike size={18}/> }, { key: 'customers', label: 'تحليل العملاء', icon: <Users size={18}/> }, { key: 'branches', label: 'تحليل الفروع', icon: <Building2 size={18}/> }]
 
-  async function handleLogout() {
-    await logout()
-    navigate('/login')
-  }
+  async function signOut() { await logout(); navigate('/login') }
+  function openOrders(title: string, rows: any[]) { setDrawer({ title, subtitle: `${rows.length} أوردر من البيانات الفعلية`, rows, kind: 'orders' }) }
 
-  const riders = (stats?.riders ?? []).filter(Boolean) as Rider[]
-  const ordersToday = (stats?.orders ?? []).filter((o: any) => o && !isDeleted(o)) as DeliveryOrder[]
-  const tripsToday = (stats?.trips ?? []).filter(Boolean) as InternalTrip[]
-  const cycleOrders = ((stats as any)?.cycleOrders ?? []).filter((o: any) => o && !isDeleted(o)) as DeliveryOrder[]
-  const cycleTrips = ((stats as any)?.cycleTrips ?? []).filter(Boolean) as InternalTrip[]
-  const attendance = (stats?.attendance ?? []).filter(Boolean) as any[]
-  const branchOptions = useMemo(() => {
-    // التطبيق الرسمي يعمل على فرعين فقط: فرع الشامي وفرع شكري
-    if (lockedBranchId) return [lockedBranchName || lockedBranchId]
-    return CANONICAL_BRANCHES
-  }, [lockedBranchId, lockedBranchName])
+  return <div dir="rtl" className="min-h-screen bg-[#f4f8f8] text-[#102a32]">
+    <div className="flex min-h-screen">
+      <aside className={`${mobileNav ? 'fixed inset-y-0 right-0 z-50 flex shadow-2xl' : 'hidden'} w-[280px] shrink-0 flex-col border-l border-slate-100 bg-[#0b2d33] p-5 text-white lg:sticky lg:top-0 lg:flex lg:h-screen`}>
+        <div className="flex items-center gap-3 border-b border-white/10 pb-5"><img src="/logo.png" alt="دواء" className="h-12 w-12 rounded-2xl bg-white object-contain p-1"/><div><p className="font-black">مركز قيادة دواء</p><p className="text-[11px] font-bold text-emerald-200/70">Delivery Intelligence</p></div><button onClick={() => setMobileNav(false)} className="mr-auto lg:hidden"><X/></button></div>
+        <nav className="mt-6 space-y-2">{tabs.map(t => <button key={t.key} onClick={() => { setView(t.key); setMobileNav(false) }} className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-black transition ${view === t.key ? 'bg-emerald-400 text-[#08272c] shadow-lg shadow-emerald-950/30' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}>{t.icon}{t.label}</button>)}</nav>
+        <div className="mt-7 border-t border-white/10 pt-5"><p className="mb-3 px-3 text-[10px] font-black text-slate-500">الأدوات التشغيلية</p>{[{ l: 'المطابقة والمراجعة', p: '/admin/reconciliation', i: <ShieldCheck size={17}/> }, { l: 'الأوردرات والمشاوير', p: '/admin/trips', i: <Route size={17}/> }, { l: 'الحضور والجداول', p: '/admin/rider-schedules', i: <Clock3 size={17}/> }, { l: 'الحوافز والخصومات', p: '/admin/rider-actions', i: <Gift size={17}/> }].map(x => <button key={x.p + x.l} onClick={() => navigate(x.p)} className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-400 hover:bg-white/5 hover:text-white">{x.i}{x.l}</button>)}</div>
+        <div className="mt-auto rounded-2xl bg-white/5 p-4"><p className="text-xs font-black text-white">الدورة التشغيلية</p><p className="mt-1 text-[11px] font-bold text-slate-400">{period.start} ← {period.end}</p><button onClick={signOut} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white/10 py-2 text-xs font-black hover:bg-rose-500"><LogOut size={15}/> تسجيل الخروج</button></div>
+      </aside>
+      {mobileNav && <button aria-label="إغلاق القائمة" onClick={() => setMobileNav(false)} className="fixed inset-0 z-40 bg-slate-950/40 lg:hidden"/>}
 
-  function riderBranch(rider?: Rider) {
-    return displayBranchName((rider as any)?.branch_name || (rider as any)?.branch || rider?.branch_id)
-  }
+      <main className="min-w-0 flex-1 p-3 sm:p-5 xl:p-7">
+        <header className="mb-5 rounded-[1.8rem] border border-white bg-white/90 p-4 shadow-sm backdrop-blur-xl sm:p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div className="flex items-center gap-3"><button onClick={() => setMobileNav(true)} className="rounded-xl border p-2.5 lg:hidden"><Menu size={20}/></button><div><div className="flex items-center gap-2"><span className="flex h-7 items-center gap-1 rounded-full bg-emerald-50 px-3 text-[10px] font-black text-emerald-700"><Activity size={12}/> مباشر</span><p className="text-[11px] font-black text-slate-400">آخر تحديث {lastUpdated?.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) || '—'}</p></div><h1 className="mt-1 text-xl font-black sm:text-2xl">صباح الخير، دي صورة التشغيل الحقيقية</h1></div></div><div className="flex gap-2"><button onClick={() => void load()} disabled={loading} className="flex items-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-black text-slate-600 hover:bg-slate-50"><RefreshCw size={16} className={loading ? 'animate-spin' : ''}/> تحديث</button><button onClick={() => navigate('/admin/reconciliation')} className="flex items-center gap-2 rounded-xl bg-[#0b2d33] px-4 py-2.5 text-xs font-black text-white"><BarChart3 size={16}/> التقرير الكامل</button></div></div>
+          <div className="mt-4 grid gap-2 md:grid-cols-[1fr_220px]"><div className="relative"><Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" size={17}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="ابحث عن عميل، دليفري، فاتورة أو كود..." className="h-12 w-full rounded-xl border border-slate-100 bg-slate-50 pr-11 pl-4 text-xs font-bold outline-none focus:border-emerald-300 focus:bg-white"/></div><select value={branch} onChange={e => setBranch(e.target.value)} disabled={!!lockedBranchId} className="h-12 rounded-xl border border-slate-100 bg-slate-50 px-4 text-xs font-black outline-none">{branchOptions.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}</select></div>
+        </header>
 
-  function filterByBranch<T extends any>(rows: T[], dateGetter?: (row: T) => string) {
-    return rows.filter((row: any) => {
-      const rider = riders.find(r => r.id === row.rider_id)
-      const rowBranch = displayBranchName(row.branch_name || row.branch || riderBranch(rider))
-      const branchOk = lockedBranchId
-        ? row.branch_id === lockedBranchId || rowBranch === lockedBranchName
-        : branch === 'all' || rowBranch === branch || row.branch_id === branch
-      const searchOk = !search.trim() || [row.customer_name, row.customer_name_snapshot, row.invoice_no, row.invoice_number, row.order_no, row.rider_name, row.driver_name, rider?.name, rider?.username].some(v => wildcardMatchText(String(v || ''), search))
-      const dateOk = dateGetter ? Boolean(dateGetter(row)) : true
-      return branchOk && searchOk && dateOk
-    })
-  }
+        {view === 'overview' && <>
+          <SectionTitle eyebrow="الملخص التنفيذي" title="الأرقام التي تحتاجها لاتخاذ قرار الآن" action={<span className={`rounded-full px-3 py-1 text-[10px] font-black ${riskRate > 20 ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>مؤشر المخاطر {pct(riskRate)}</span>}/>
+          <section className="grid grid-cols-2 gap-3 xl:grid-cols-4"><StatCard label="أوردرات اليوم" value={todayOrders.length} hint={`${orders.length} خلال الدورة`} icon={<PackageCheck size={21}/>} onClick={() => openOrders('أوردرات اليوم', todayOrders)}/><StatCard label="معدل التسليم" value={pct(deliveryRate)} hint={`${deliveredOrders.length} أوردر تم تسليمه`} icon={<CheckCircle2 size={21}/>} tone="sky" onClick={() => openOrders('الأوردرات المسلمة', deliveredOrders)}/><StatCard label="تحتاج تدخل" value={failedOrders.length + duplicateOrders.length + reviewOrders.length} hint="فشل + تكرار + مراجعة" icon={<AlertTriangle size={21}/>} tone="rose" onClick={() => openOrders('الأوردرات التي تحتاج تدخل', orders.filter(o => failed(o) || duplicate(o) || review(o)))}/><StatCard label="قيمة قاعدة العملاء" value={money(customerSales)} hint={`${filteredCustomers.length} عميل مرتبط`} icon={<Wallet size={21}/>} tone="violet" onClick={() => setView('customers')}/></section>
+          <section className="mt-4 grid gap-4 xl:grid-cols-3"><AreaChart data={dateChart}/><Donut deliveredCount={deliveredOrders.length} reviewCount={reviewOrders.length} failedCount={failedOrders.length} other={Math.max(0, orders.length - deliveredOrders.length - reviewOrders.length - failedOrders.length)}/></section>
+          <section className="mt-4 grid gap-4 xl:grid-cols-3"><ProgressList title="أفضل الدليفري" subtitle="ترتيب مركب من التسليم وجودة الأوردر" rows={riderAnalytics.map(r => ({ id: r.id, label: r.name, sub: `${r.branch} · تقييم ${r.score}/100`, value: r.orders, rate: r.rate }))} onRow={id => navigate(`/admin/riders/${id}/performance`)}/><ProgressList title="قوة الفروع" subtitle="حجم التشغيل ومعدل التسليم" rows={branchAnalytics.map(b => ({ id: b.id, label: b.label, sub: `${b.riders} دليفري · ${b.customers} عميل`, value: b.orders, rate: b.rate }))} onRow={id => { setBranch(id); setView('branches') }}/><ProgressList title="عملاء يحتاجون متابعة" subtitle="خطر توقف أو مشاكل في التوصيل" rows={highRiskCustomers.slice(0, 6).map(c => ({ id: c.customer_id, label: c.customer_name || 'عميل', sub: `${displayBranchName(c.branch_name)} · ${c.days_since_last_invoice ?? '—'} يوم`, value: n(c.total_sales), tone: 'text-rose-600' }))} onRow={id => setDrawer({ title: 'تحليل العميل', subtitle: 'السجل التجاري والتشغيلي', rows: filteredCustomers.filter(c => c.customer_id === id), kind: 'customers' })}/></section>
+        </>}
 
-  const fOrdersToday = filterByBranch(ordersToday, getOrderDate)
-  const fTripsToday = filterByBranch(tripsToday, getTripDate)
-  const fCycleOrders = filterByBranch(cycleOrders, getOrderDate)
-  const fCycleTrips = filterByBranch(cycleTrips, getTripDate)
-
-  const delivered = fCycleOrders.filter(isDelivered).length
-  const failed = fCycleOrders.filter(isFailed).length
-  const duplicate = fCycleOrders.filter((o: any) => o.is_duplicate_invoice || o.duplicate_warning).length
-  const review = fCycleOrders.filter(isReview).length
-  const onePointFive = fCycleOrders.filter(isMultiplier).length
-  const deleted = fCycleOrders.filter(isDeleted).length
-  const failedToday = fOrdersToday.filter(isFailed).length
-  const multiplierToday = fOrdersToday.filter(isMultiplier).length
-  const duplicateToday = fOrdersToday.filter((o: any) => o.is_duplicate_invoice || o.duplicate_warning).length
-  const lateRiders = attendance.filter(a => Number(a.late_minutes || 0) > 0).length
-
-  const riderRows = riders.map(r => {
-    const orders = fCycleOrders.filter(o => o.rider_id === r.id)
-    const trips = fCycleTrips.filter(t => t.rider_id === r.id)
-    return { id: r.id, name: r.name, branch: riderBranch(r), orders: orders.length, trips: trips.length, failed: orders.filter(isFailed).length, multiplier: orders.filter(isMultiplier).length }
-  }).sort((a, b) => b.orders - a.orders)
-
-  const branchRows = useMemo(() => {
-    const map = new Map<string, { label: string; value: number }>()
-    fCycleOrders.forEach((o: any) => {
-      const rider = riders.find(r => r.id === o.rider_id)
-      const label = displayBranchName(o.branch_name || o.branch || riderBranch(rider))
-      map.set(label, { label, value: (map.get(label)?.value || 0) + 1 })
-    })
-    return [...map.values()].sort((a, b) => b.value - a.value).slice(0, 6)
-  }, [fCycleOrders, riders])
-
-  const hourlyRows = useMemo(() => {
-    const hours = [8, 10, 12, 14, 16, 18, 20, 22]
-    return hours.map(h => ({ label: `${String(h).padStart(2, '0')}:00`, value: fCycleOrders.filter((o: any) => {
-      const d = new Date(o.registered_at || o.created_at || o.delivery_date)
-      return !Number.isNaN(d.getTime()) && d.getHours() >= h && d.getHours() < h + 2
-    }).length }))
-  }, [fCycleOrders])
-
-  const lineRows = useMemo(() => {
-    const dates = daysBetween(period.start, period.end)
-    const sample = dates.filter((_, i) => i % Math.max(1, Math.floor(dates.length / 7)) === 0).slice(-8)
-    return sample.map(d => ({ label: d.slice(5), value: fCycleOrders.filter(o => getOrderDate(o) === d).length }))
-  }, [fCycleOrders, period])
-
-  const failureRows = [
-    { label: 'فاتورة مكررة', value: duplicate },
-    { label: 'عنوان غير صحيح', value: fCycleOrders.filter((o: any) => String(o.failed_reason || o.review_reason || '').includes('عنوان')).length },
-    { label: 'فشل تسليم', value: failed },
-    { label: 'بدون إثبات', value: fCycleTrips.filter((t: any) => !t.has_invoice_reference).length },
-    { label: 'محذوفة', value: deleted }
-  ]
-
-
-  function openOrderDrilldown(title: string, rows: DeliveryOrder[]) {
-    setDrilldown({ title, type: 'orders', rows })
-  }
-
-  function openTripDrilldown(title: string, rows: InternalTrip[]) {
-    setDrilldown({ title, type: 'trips', rows })
-  }
-
-  function openAlertDrilldown(title: string) {
-    const rows = [
-      ...fCycleOrders.filter((o: any) => isFailed(o) || o.is_duplicate_invoice || o.duplicate_warning || isMultiplier(o) || isReview(o)).map((o: any) => ({ kind: 'order', title: o.invoice_no || o.invoice_number || o.order_no || 'أوردر بدون رقم', subtitle: o.customer_name || o.customer_name_snapshot || 'عميل غير محدد', tone: isFailed(o) ? 'فشل' : o.is_duplicate_invoice || o.duplicate_warning ? 'تكرار' : isMultiplier(o) ? '×1.5' : 'مراجعة' })),
-      ...attendance.filter(a => Number(a.late_minutes || 0) > 0).map((a: any) => ({ kind: 'attendance', title: a.rider_name || 'حضور', subtitle: `${a.work_date || ''} — تأخير ${a.late_minutes || 0} دقيقة`, tone: 'حضور' }))
-    ]
-    setDrilldown({ title, type: 'alerts', rows })
-  }
-
-  const navItems: NavItem[] = [
-    { label: 'الرئيسية', icon: <Home size={18} />, path: '/admin', active: true },
-    { label: 'غرفة التحكم', icon: <BarChart3 size={18} />, path: '/admin/executive' },
-    { label: 'إدارة الدليفري', icon: <Bike size={18} />, path: '/admin/riders' },
-    { label: 'حسابات الدليفري', icon: <ShieldCheck size={18} />, path: '/admin/rider-accounts' },
-    { label: 'لوحة مدير الفرع', icon: <Store size={18} />, path: '/admin/branch' },
-    { label: 'الأوردرات', icon: <ClipboardList size={18} />, path: '/admin/reconciliation', badge: review },
-    { label: 'المشاوير', icon: <Route size={18} />, path: '/admin/trips' },
-    { label: 'المطابقة', icon: <ShieldCheck size={18} />, path: '/admin/reconciliation' },
-    { label: 'رفع العملاء', icon: <UploadCloud size={18} />, path: '/admin/customer-import' },
-    { label: 'تحليل العملاء', icon: <TrendingUp size={18} />, path: '/admin/customer-analytics' },
-    { label: 'الحضور', icon: <Users size={18} />, path: '/admin/rider-schedules' },
-    { label: 'الخصومات والمكافآت', icon: <Gift size={18} />, path: '/admin/rider-actions', badge: pendingExceptions },
-    { label: 'التنبيهات', icon: <Bell size={18} />, path: '/admin/rider-actions', badge: failed + duplicate + review },
-    { label: 'السياسات', icon: <FileCheck2 size={18} />, path: '/admin/rider-actions' },
-    { label: 'التقارير', icon: <BarChart3 size={18} />, path: '/admin/reconciliation' }
-  ]
-
-  return (
-    <div dir="rtl" className="min-h-screen bg-[#f5f8f9] text-[#061827]">
-      <div className="flex min-h-screen">
-        <SideBar items={navItems} onLogout={handleLogout} />
-        <main className="min-w-0 flex-1 p-4 lg:p-6">
-          <header className="mb-5 flex flex-col gap-3 rounded-[2rem] border border-white bg-white/90 p-4 shadow-sm backdrop-blur lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-sm font-black text-emerald-600">لوحة إدارة الدليفري</p>
-              <h1 className="mt-1 text-2xl font-black lg:text-3xl">التحكم التشغيلي والمراجعة الذكية</h1>
-              <p className="mt-1 text-xs font-bold text-slate-400">الدورة الحالية: {cycleLabel(period)} • آخر تحديث مباشر</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button onClick={() => navigate('/admin/reconciliation')} className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-emerald-700">
-                <Download size={18} /> تقرير PDF
-              </button>
-              <button onClick={() => setRefreshKey(k => k + 1)} className="rounded-2xl border bg-white p-3 text-slate-600 hover:bg-slate-50" disabled={loading}><RefreshCw size={18} className={loading ? 'animate-spin' : ''} /></button>
-              <button onClick={handleLogout} className="rounded-2xl border bg-white p-3 text-slate-600 hover:bg-slate-50"><LogOut size={18} /></button>
-            </div>
-          </header>
-
-          <section className="mb-5 grid gap-3 lg:grid-cols-[1fr_auto_auto]">
-            <div className="relative">
-              <Search size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="ابحث عن أوردر، فاتورة، مندوب، عميل... استخدم * مثل ا*س*لا*" className="h-14 w-full rounded-2xl border border-slate-100 bg-white pr-12 pl-4 text-sm font-bold outline-none transition focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50" />
-            </div>
-            <select value={branch} onChange={e => setBranch(e.target.value)} disabled={!!lockedBranchId} className="h-14 rounded-2xl border border-slate-100 bg-white px-4 text-sm font-black outline-none focus:border-emerald-300 disabled:bg-slate-50">
-              {lockedBranchId && <option value={lockedBranchId}>{lockedBranchName || lockedBranchId}</option>}
-              <option value="all">كل الفروع</option>
-              {branchOptions.map(b => <option key={b} value={b}>{b}</option>)}
-            </select>
-            <button onClick={() => navigate('/admin/riders')} className="h-14 rounded-2xl border border-slate-100 bg-white px-5 text-sm font-black text-slate-600 hover:bg-slate-50"><Store size={16} className="ml-2 inline" />إدارة الدليفري</button>
-          </section>
-
-          <RiderDeviceStatusTable
-            rows={deviceRows}
-            loading={loading}
-            onRefresh={() => setRefreshKey(k => k + 1)}
-            title="مراقبة شحن بطاريات كل الدليفري"
-            onNotify={sendBatteryNotification}
-          />
-
-          <section className="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
-            <MetricCard title="إجمالي أوردرات اليوم" value={fOrdersToday.length} subtitle="اضغط للتفاصيل" icon={<Package size={22} />} onClick={() => openOrderDrilldown('إجمالي أوردرات اليوم', fOrdersToday)} />
-            <MetricCard title="إجمالي مشاوير اليوم" value={fTripsToday.length} subtitle="كل المشاوير" icon={<Bike size={22} />} tone="blue" onClick={() => openTripDrilldown('إجمالي مشاوير اليوم', fTripsToday)} />
-            <MetricCard title="إجمالي أوردرات الدورة" value={fCycleOrders.length} subtitle="من 26 إلى 25" icon={<ClipboardCheck size={22} />} tone="green" onClick={() => openOrderDrilldown('إجمالي أوردرات الدورة', fCycleOrders)} />
-            <MetricCard title="إجمالي مشاوير الدورة" value={fCycleTrips.length} subtitle="تشغيل داخلي" icon={<Route size={22} />} tone="blue" onClick={() => openTripDrilldown('إجمالي مشاوير الدورة', fCycleTrips)} />
-            <MetricCard title="أوردرات ×1.5 تحت المراجعة" value={onePointFive} subtitle="لا تحتسب إلا بعد الموافقة" icon={<TrendingUp size={22} />} tone="orange" onClick={() => openOrderDrilldown('أوردرات ×1.5 تحت المراجعة', fCycleOrders.filter(isMultiplier))} />
-            <MetricCard title="فواتير مكررة" value={duplicate} subtitle="تحتاج تدقيق" icon={<FileText size={22} />} tone="red" onClick={() => openOrderDrilldown('الفواتير المكررة', fCycleOrders.filter((o:any)=>o.is_duplicate_invoice || o.duplicate_warning))} />
-            <MetricCard title="أوردرات فاشلة" value={failed} subtitle="لا تحتسب" icon={<XCircle size={22} />} tone="red" onClick={() => openOrderDrilldown('الأوردرات الفاشلة لا تحتسب', fCycleOrders.filter(isFailed))} />
-            <MetricCard title="تنبيهات حرجة" value={failedToday + duplicateToday + multiplierToday + lateRiders} subtitle="تحتاج إجراء" icon={<AlertTriangle size={22} />} tone="red" onClick={() => openAlertDrilldown('التنبيهات الحرجة')} />
-          </section>
-
-          <section className="mb-5 grid gap-4 xl:grid-cols-4">
-            <LineChartCard title="تطور الأوردرات خلال الدورة" values={lineRows} />
-            <MiniBarChart title="الأوردرات حسب الفرع" rows={branchRows} />
-            <MiniBarChart title="أوقات الذروة" rows={hourlyRows} tone="blue" />
-            <DonutStatus delivered={delivered} review={review} failed={failed} duplicate={duplicate} />
-          </section>
-
-          <section className="mb-5 grid gap-4 xl:grid-cols-3">
-            <ReviewTable orders={fCycleOrders} riders={riders} />
-            <div className="grid gap-4">
-              <AlertList duplicate={duplicate} failed={failed} multiplier={onePointFive} late={lateRiders} pendingActions={pendingExceptions} />
-              <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
-                <h3 className="mb-4 text-base font-black text-[#061827]">تقرير نهاية الدورة PDF</h3>
-                <div className="grid grid-cols-2 gap-2 text-xs font-black text-slate-600">
-                  {['أيام الحضور', 'ساعات الحضور', 'الخصومات', 'المكافآت', 'إجمالي الأوردرات', 'أوردرات ×1', 'أوردرات ×1.5', 'المشاوير', 'الفاشلة والخاطئة', 'المطابقة مع بي كونكت'].map(x => <div key={x} className="flex items-center gap-2 rounded-xl bg-slate-50 p-2"><CheckCircle2 size={14} className="text-emerald-600" />{x}</div>)}
-                </div>
-                <button onClick={() => navigate('/admin/reconciliation')} className="mt-4 w-full rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white hover:bg-emerald-700">إنشاء التقرير PDF</button>
-              </div>
-            </div>
-          </section>
-
-          <section className="grid gap-4 xl:grid-cols-4">
-            <MiniBarChart title="أكثر أسباب الفشل" rows={failureRows} tone="red" />
-            <RankingList riders={riderRows} />
-            <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
-              <h3 className="mb-4 text-base font-black text-[#061827]">ملخص الخصومات والمكافآت</h3>
-              <div className="space-y-3 text-sm font-black">
-                <div className="flex justify-between rounded-2xl bg-rose-50 p-3 text-rose-700"><span>إجمالي الخصومات</span><span>{formatMoney(0)}</span></div>
-                <div className="flex justify-between rounded-2xl bg-emerald-50 p-3 text-emerald-700"><span>إجمالي المكافآت</span><span>{formatMoney(0)}</span></div>
-                <div className="flex justify-between rounded-2xl bg-slate-50 p-3 text-slate-700"><span>حوافز البداية</span><span>{formatMoney(riders.reduce((s, r) => s + Number((r as any).monthly_incentive_base || 0), 0))}</span></div>
-              </div>
-              <button onClick={() => navigate('/admin/rider-actions')} className="mt-4 w-full rounded-2xl border px-4 py-3 text-sm font-black text-slate-600 hover:bg-slate-50">إدارة الخصومات والمكافآت</button>
-            </div>
-            <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
-              <h3 className="mb-4 text-base font-black text-[#061827]">جاهزية التشغيل</h3>
-              <div className="space-y-3 text-sm font-black">
-                <ReadyRow label="النظام" state="سليم" tone="green" />
-                <ReadyRow label="المندوبين النشطين" state={`${riders.length}`} tone="green" />
-                <ReadyRow label="الحضور" state={lateRiders ? 'تحذير' : 'جيد'} tone={lateRiders ? 'orange' : 'green'} />
-                <ReadyRow label="المراجعة" state={review ? 'تحتاج متابعة' : 'جيدة'} tone={review ? 'orange' : 'green'} />
-                <ReadyRow label="التنبيهات" state={failed + duplicate ? 'حرج' : 'جيد'} tone={failed + duplicate ? 'red' : 'green'} />
-              </div>
-            </div>
-          </section>
-
-          <section className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <QuickAction label="غرفة التحكم التنفيذية" value="مخاطر وحوافز" icon={<BarChart3 size={18} />} path="/admin/executive" />
-            <QuickAction label="اعتماد طلبات ×1.5" value={`${onePointFive} طلب`} icon={<TrendingUp size={18} />} path="/admin/reconciliation" />
-            <QuickAction label="تحويل أوردر لمشوار" value="من المراجعة" icon={<Route size={18} />} path="/admin/reconciliation" />
-            <QuickAction label="السياسات والتنبيهات" value="بنود الدليفري" icon={<Bell size={18} />} path="/admin/rider-actions" />
-            <QuickAction label="تجربة تطبيق الموبايل" value="PWA" icon={<Home size={18} />} path="/rider" />
-          </section>
-
-          {drilldown && (
-            <DrilldownModal
-              data={drilldown}
-              riders={riders}
-              onClose={() => setDrilldown(null)}
-              onOpenFull={() => {
-                const q = drilldown.type === 'trips' ? '/admin/trips' : drilldown.title.includes('×1.5') ? '/admin/reconciliation?filter=multiplier' : drilldown.title.includes('مكررة') ? '/admin/reconciliation?filter=duplicate' : drilldown.title.includes('فاشلة') ? '/admin/reconciliation?filter=failed' : '/admin/reconciliation'
-                navigate(q)
-              }}
-            />
-          )}
-        </main>
-      </div>
+        {view === 'riders' && <RidersView rows={riderAnalytics} onOpen={id => navigate(`/admin/riders/${id}/performance`)}/>}
+        {view === 'customers' && <CustomersView rows={filteredCustomers} onOpen={row => setDrawer({ title: row.customer_name || 'تحليل العميل', subtitle: 'قراءة كاملة للقيمة والنشاط والمخاطر', rows: [row], kind: 'customers' })} onFull={() => navigate('/admin/customer-analytics')}/>}
+        {view === 'branches' && <BranchesView rows={branchAnalytics} onOpen={row => setDrawer({ title: row.label, subtitle: 'تحليل أداء الفرع', rows: [row], kind: 'branches' })}/>}
+      </main>
     </div>
-  )
+    {drawer && <DetailDrawer data={drawer} onClose={() => setDrawer(null)} onNavigate={(path) => navigate(path)}/>}
+  </div>
 }
 
-
-function DrilldownModal({ data, riders, onClose, onOpenFull }: { data: Exclude<Drilldown, null>; riders: Rider[]; onClose: () => void; onOpenFull: () => void }) {
-  const rows = data.rows.slice(0, 80)
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/35 p-3 backdrop-blur-sm lg:items-center" role="dialog" aria-modal="true">
-      <div className="max-h-[88vh] w-full max-w-5xl overflow-hidden rounded-[2rem] bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-100 p-5">
-          <div>
-            <p className="text-xs font-black text-emerald-600">تفاصيل فعلية من قاعدة البيانات</p>
-            <h2 className="text-xl font-black text-[#061827]">{data.title}</h2>
-            <p className="text-xs font-bold text-slate-400">عدد العناصر: {data.rows.length}</p>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={onOpenFull} className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-black text-white"><Eye size={16} className="ml-1 inline" />فتح الصفحة الكاملة</button>
-            <button onClick={onClose} className="rounded-2xl border px-4 py-2 text-sm font-black text-slate-600">إغلاق</button>
-          </div>
-        </div>
-        <div className="max-h-[65vh] overflow-auto p-5">
-          {data.type === 'orders' && (
-            <div className="grid gap-3">
-              {rows.length ? rows.map((o: any) => {
-                const rider = riders.find(r => r.id === o.rider_id)
-                return (
-                  <div key={o.id} className="rounded-3xl border border-slate-100 bg-slate-50 p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-black text-slate-400">فاتورة / أوردر</p>
-                        <p className="text-lg font-black text-[#061827]">{o.invoice_no || o.invoice_number || o.order_no || 'بدون رقم'}</p>
-                      </div>
-                      <StatusBadges order={o} />
-                    </div>
-                    <div className="mt-3 grid gap-2 text-sm font-bold text-slate-600 md:grid-cols-4">
-                      <p>العميل: <b>{o.customer_name || o.customer_name_snapshot || '—'}</b></p>
-                      <p>الكود: <b>{o.customer_code || o.customer_code_snapshot || '—'}</b></p>
-                      <p>المندوب: <b>{o.rider_name || rider?.name || o.driver_name || 'غير مربوط'}</b></p>
-                      <p>الحالة: <b>{o.final_count_status || o.review_status || o.status || '—'}</b></p>
-                    </div>
-                  </div>
-                )
-              }) : <EmptyLine text="لا توجد بيانات في هذا القسم" />}
-            </div>
-          )}
-          {data.type === 'trips' && (
-            <div className="grid gap-3">
-              {rows.length ? rows.map((t: any) => (
-                <div key={t.id} className="rounded-3xl border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-lg font-black text-[#061827]">{t.from_label || t.from_branch_name || 'من'} ← {t.to_label || t.to_branch_name || 'إلى'}</p>
-                  <div className="mt-2 grid gap-2 text-sm font-bold text-slate-600 md:grid-cols-4"><p>النوع: <b>{TRIP_TYPE_LABELS[(t.trip_type || 'other') as keyof typeof TRIP_TYPE_LABELS] || t.trip_type}</b></p><p>الحالة: <b>{TRIP_STATUS_LABELS[(t.status || 'pending_approval') as keyof typeof TRIP_STATUS_LABELS] || t.status}</b></p><p>إثبات: <b>{t.invoice_ref || t.proof_reference || '—'}</b></p><p>التاريخ: <b>{t.trip_date || String(t.created_at || '').slice(0,10)}</b></p></div>
-                </div>
-              )) : <EmptyLine text="لا توجد مشاوير" />}
-            </div>
-          )}
-          {data.type === 'alerts' && (
-            <div className="grid gap-3">
-              {rows.length ? rows.map((a: any, idx: number) => <div key={idx} className="flex items-center justify-between rounded-3xl border border-slate-100 bg-slate-50 p-4"><div><p className="font-black text-[#061827]">{a.title}</p><p className="text-sm font-bold text-slate-400">{a.subtitle}</p></div><span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-black text-rose-700">{a.tone}</span></div>) : <EmptyLine text="لا توجد تنبيهات حرجة" />}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
+function RidersView({ rows, onOpen }: { rows: any[]; onOpen: (id: string) => void }) {
+  const avg = rows.length ? rows.reduce((s, r) => s + r.score, 0) / rows.length : 0; const risks = rows.filter(r => r.problems > 0)
+  return <><SectionTitle eyebrow="تحليل الدليفري" title="أداء كل فرد بشكل عادل وواضح"/><section className="grid grid-cols-2 gap-3 lg:grid-cols-4"><StatCard label="الدليفري النشط" value={rows.length} hint="ضمن نطاق الفرع الحالي" icon={<Bike/>}/><StatCard label="متوسط التقييم" value={pct(avg)} hint="تسليم + جودة" icon={<Star/>} tone="violet"/><StatCard label="أداء ممتاز" value={rows.filter(r => r.score >= 85).length} hint="تقييم 85 فأكثر" icon={<TrendingUp/>} tone="sky"/><StatCard label="يحتاج متابعة" value={risks.length} hint="لديه مشكلة واحدة على الأقل" icon={<TrendingDown/>} tone="rose"/></section><div className="mt-4 overflow-hidden rounded-[1.8rem] border border-slate-100 bg-white shadow-sm"><div className="border-b p-5"><h3 className="font-black">بطاقة أداء الفريق</h3><p className="mt-1 text-xs font-bold text-slate-400">اضغط على أي دليفري لفتح تقريره التفصيلي والحوافز</p></div><div className="overflow-x-auto"><table className="w-full min-w-[850px] text-sm"><thead className="bg-slate-50 text-[11px] font-black text-slate-500"><tr><th className="p-4">الدليفري</th><th>الفرع</th><th>الأوردرات</th><th>التسليم</th><th>المشاوير</th><th>المشاكل</th><th>التقييم</th><th></th></tr></thead><tbody>{rows.map((r, i) => <tr key={r.id} className="border-t border-slate-50 hover:bg-emerald-50/30"><td className="p-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#0b2d33] font-black text-white">{i + 1}</span><b>{r.name}</b></div></td><td className="font-bold text-slate-500">{r.branch}</td><td className="font-black">{r.orders}</td><td className="text-emerald-700 font-black">{r.delivered} · {pct(r.rate)}</td><td>{r.trips}</td><td className={r.problems ? 'font-black text-rose-600' : 'text-slate-400'}>{r.problems}</td><td><span className={`rounded-full px-3 py-1 text-xs font-black ${r.score >= 85 ? 'bg-emerald-50 text-emerald-700' : r.score >= 65 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}>{r.score}/100</span></td><td><button onClick={() => onOpen(r.id)} className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-black">فتح التحليل</button></td></tr>)}</tbody></table></div></div></>
 }
 
-function ReadyRow({ label, state, tone }: { label: string; state: string; tone: 'green' | 'orange' | 'red' }) {
-  const cls = tone === 'green' ? 'bg-emerald-50 text-emerald-700' : tone === 'orange' ? 'bg-orange-50 text-orange-700' : 'bg-rose-50 text-rose-700'
-  return <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-3"><span>{label}</span><span className={`rounded-full px-3 py-1 text-xs ${cls}`}>{state}</span></div>
+function CustomersView({ rows, onOpen, onFull }: { rows: CustomerRow[]; onOpen: (row: CustomerRow) => void; onFull: () => void }) {
+  const vip = rows.filter(r => r.customer_segment === 'vip'), danger = rows.filter(r => r.risk_level === 'high'), issues = rows.filter(r => n(r.delivery_problem_count) > 0), sales = rows.reduce((s, r) => s + n(r.total_sales), 0)
+  return <><SectionTitle eyebrow="تحليل العملاء" title="القيمة، النشاط، ومَن نخشى أن نفقده" action={<button onClick={onFull} className="flex items-center gap-2 rounded-xl bg-[#0b2d33] px-4 py-2 text-xs font-black text-white">الصفحة المتقدمة <ArrowLeft size={14}/></button>}/><section className="grid grid-cols-2 gap-3 lg:grid-cols-4"><StatCard label="إجمالي العملاء" value={rows.length} hint={money(sales)} icon={<Users/>}/><StatCard label="عملاء VIP" value={vip.length} hint="أعلى قيمة شرائية" icon={<Star/>} tone="violet"/><StatCard label="معرضون للتوقف" value={danger.length} hint="أولوية للاسترجاع" icon={<TrendingDown/>} tone="rose"/><StatCard label="مشاكل توصيل" value={issues.length} hint="تؤثر على رضا العميل" icon={<FileWarning/>} tone="amber"/></section><div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{rows.slice(0, 18).map(r => <button key={r.customer_id} onClick={() => onOpen(r)} className="rounded-[1.5rem] border border-slate-100 bg-white p-4 text-right shadow-sm transition hover:-translate-y-1 hover:shadow-lg"><div className="flex justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-black">{r.customer_name || 'عميل غير مسمى'}</h3><p className="mt-1 text-[11px] font-bold text-slate-400">{r.customer_code || 'بدون كود'} · {displayBranchName(r.branch_name)}</p></div><span className={`h-fit rounded-full px-2.5 py-1 text-[10px] font-black ${r.risk_level === 'high' ? 'bg-rose-50 text-rose-700' : r.customer_segment === 'vip' ? 'bg-violet-50 text-violet-700' : 'bg-emerald-50 text-emerald-700'}`}>{r.customer_segment || 'نشط'}</span></div><div className="mt-4 grid grid-cols-3 gap-2 border-t pt-3 text-center"><Mini label="المبيعات" value={money(n(r.total_sales))}/><Mini label="الفواتير" value={n(r.invoices_count)}/><Mini label="مشاكل" value={n(r.delivery_problem_count)}/></div></button>)}</div></>
 }
 
-function QuickAction({ label, value, icon, path }: { label: string; value: string; icon: React.ReactNode; path: string }) {
-  return <button onClick={() => (window.location.href = path)} className="flex items-center gap-3 rounded-3xl border border-slate-100 bg-white p-4 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">{icon}</span><span className="flex-1"><span className="block font-black text-[#061827]">{label}</span><span className="text-xs font-bold text-slate-400">{value}</span></span></button>
+function BranchesView({ rows, onOpen }: { rows: any[]; onOpen: (row: any) => void }) { return <><SectionTitle eyebrow="تحليل الفروع" title="مقارنة عادلة بين حجم التشغيل وجودته"/><div className="grid gap-4 xl:grid-cols-2">{rows.map(r => <button key={r.id} onClick={() => onOpen(r)} className="overflow-hidden rounded-[1.8rem] border border-slate-100 bg-white text-right shadow-sm transition hover:-translate-y-1 hover:shadow-xl"><div className="bg-gradient-to-l from-[#0b2d33] to-[#14515a] p-5 text-white"><div className="flex justify-between"><div><p className="text-xs font-bold text-emerald-200">تقرير الفرع</p><h3 className="mt-1 text-2xl font-black">{r.label}</h3></div><Building2 size={34} className="text-emerald-300"/></div></div><div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-4"><Mini label="الأوردرات" value={r.orders}/><Mini label="معدل التسليم" value={pct(r.rate)}/><Mini label="الدليفري" value={r.riders}/><Mini label="العملاء" value={r.customers}/></div><div className="mx-5 mb-5 flex items-center justify-between rounded-2xl bg-slate-50 p-4"><div><p className="text-[10px] font-black text-slate-400">قيمة قاعدة العملاء</p><b>{money(r.sales)}</b></div><div className="text-left"><p className="text-[10px] font-black text-slate-400">حالات تحتاج تدخل</p><b className={r.problems ? 'text-rose-600' : 'text-emerald-600'}>{r.problems}</b></div></div></button>)}</div></> }
+function Mini({ label, value }: { label: string; value: string | number }) { return <div><p className="text-[10px] font-black text-slate-400">{label}</p><p className="mt-1 text-sm font-black text-[#102a32]">{value}</p></div> }
+
+function DetailDrawer({ data, onClose, onNavigate }: { data: Exclude<DrawerData, null>; onClose: () => void; onNavigate: (path: string) => void }) {
+  return <div className="fixed inset-0 z-[70] bg-slate-950/45 backdrop-blur-sm" onMouseDown={onClose}><aside dir="rtl" onMouseDown={e => e.stopPropagation()} className="absolute inset-y-0 left-0 w-full max-w-2xl overflow-y-auto bg-[#f7fafa] p-5 shadow-2xl sm:p-7"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-black text-emerald-600">تفاصيل وتحليل</p><h2 className="mt-1 text-2xl font-black">{data.title}</h2><p className="mt-1 text-xs font-bold text-slate-400">{data.subtitle}</p></div><button onClick={onClose} className="rounded-xl border bg-white p-2"><X/></button></div>
+    {data.kind === 'orders' && <div className="mt-6 space-y-3">{data.rows.slice(0, 60).map((o: any) => <div key={o.id} className="rounded-2xl border bg-white p-4 shadow-sm"><div className="flex justify-between gap-3"><div><p className="text-[10px] font-black text-slate-400">فاتورة</p><b>{o.invoice_number || o.invoice_no || o.order_no || 'بدون رقم'}</b></div><div className="flex flex-wrap gap-1">{delivered(o) && <Tag text="تم التسليم" tone="green"/>}{failed(o) && <Tag text="فاشل" tone="red"/>}{duplicate(o) && <Tag text="مكرر" tone="amber"/>}{review(o) && <Tag text="مراجعة" tone="amber"/>}</div></div><div className="mt-3 grid grid-cols-2 gap-2 border-t pt-3 text-xs font-bold text-slate-500"><span>العميل: <b className="text-slate-700">{o.customer_name || o.customer_name_snapshot || '—'}</b></span><span>الدليفري: <b className="text-slate-700">{o.rider_name || '—'}</b></span><span>التاريخ: <b className="text-slate-700">{orderDate(o) || '—'}</b></span><span>القيمة: <b className="text-slate-700">{money(n(o.invoice_amount || o.invoice_value))}</b></span></div></div>)}<button onClick={() => onNavigate('/admin/reconciliation')} className="w-full rounded-2xl bg-[#0b2d33] py-3 text-sm font-black text-white">فتح المطابقة والمراجعة</button></div>}
+    {data.kind === 'customers' && data.rows.map((c: CustomerRow) => <div key={c.customer_id} className="mt-6 space-y-4"><div className="rounded-[1.8rem] bg-gradient-to-l from-[#0b2d33] to-[#17616a] p-6 text-white"><p className="text-xs font-bold text-emerald-200">القيمة الإجمالية</p><p className="mt-2 text-4xl font-black">{money(n(c.total_sales))}</p><p className="mt-2 text-xs font-bold text-slate-300">{c.customer_code || 'بدون كود'} · {c.phone || 'بدون هاتف'} · {displayBranchName(c.branch_name)}</p></div><div className="grid grid-cols-2 gap-3"><StatCard label="الفواتير" value={n(c.invoices_count)} hint={`متوسط ${money(n(c.average_invoice))}`} icon={<CircleDollarSign/>}/><StatCard label="أوردرات التوصيل" value={n(c.total_orders)} hint={`${n(c.matched_orders)} مطابق`} icon={<PackageCheck/>} tone="sky"/><StatCard label="من آخر شراء" value={`${c.days_since_last_invoice ?? '—'} يوم`} hint="مؤشر النشاط" icon={<Clock3/>} tone="amber"/><StatCard label="مشاكل التوصيل" value={n(c.delivery_problem_count)} hint={`مخاطر: ${c.risk_level || 'منخفضة'}`} icon={<AlertTriangle/>} tone="rose"/></div><div className="rounded-2xl border bg-white p-5"><h3 className="font-black">القرار المقترح</h3><p className="mt-2 text-sm font-bold leading-7 text-slate-500">{c.risk_level === 'high' ? 'عميل ذو أولوية عالية للاسترجاع. راجع آخر مشكلة توصيل وتواصل معه بعرض مناسب.' : c.customer_segment === 'vip' ? 'عميل عالي القيمة. حافظ على مستوى الخدمة وراقب أي مشكلة توصيل فور ظهورها.' : 'العميل في وضع مستقر. استمر في المتابعة الدورية وراقب معدل تكرار الشراء.'}</p></div></div>)}
+    {data.kind === 'branches' && data.rows.map((b: any) => <div key={b.id} className="mt-6"><div className="grid grid-cols-2 gap-3"><StatCard label="الأوردرات" value={b.orders} hint={`${b.delivered} تم تسليمه`} icon={<PackageCheck/>}/><StatCard label="معدل التسليم" value={pct(b.rate)} hint={`${b.problems} تحتاج تدخل`} icon={<TrendingUp/>} tone="sky"/><StatCard label="فريق الدليفري" value={b.riders} hint="دليفري نشط" icon={<Bike/>} tone="violet"/><StatCard label="قاعدة العملاء" value={b.customers} hint={money(b.sales)} icon={<Users/>} tone="amber"/></div><button onClick={() => { onClose(); onNavigate('/admin/executive') }} className="mt-5 w-full rounded-2xl bg-[#0b2d33] py-3 text-sm font-black text-white">فتح غرفة التحكم المتقدمة</button></div>)}
+  </aside></div>
 }
+function Tag({ text, tone }: { text: string; tone: 'green' | 'red' | 'amber' }) { const cls = tone === 'green' ? 'bg-emerald-50 text-emerald-700' : tone === 'red' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'; return <span className={`rounded-full px-2 py-1 text-[10px] font-black ${cls}`}>{text}</span> }

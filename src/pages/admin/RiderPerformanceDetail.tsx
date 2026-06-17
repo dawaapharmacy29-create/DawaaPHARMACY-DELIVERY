@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Calculator, CalendarDays, Download, FileText, Gift, MinusCircle, PlusCircle, RefreshCw, Save, Wallet } from 'lucide-react'
+import { ArrowLeft, Calculator, CalendarDays, Download, FileText, Gift, Save, Wallet } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { formatMoney, getOperationalPeriod } from '../../lib/helpers'
@@ -120,10 +120,8 @@ export default function RiderPerformanceDetail() {
     try {
       const { data: r } = await supabase.from('riders').select('*').eq('id', riderId).maybeSingle()
       setRider(r)
-      let branchRow: any = null
       if ((r as any)?.branch_id) {
         const { data: b } = await supabase.from('delivery_branches').select('*').eq('id', (r as any).branch_id).maybeSingle()
-        branchRow = b
         setBranch(b)
       }
 
