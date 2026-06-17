@@ -82,8 +82,11 @@ export interface Attendance {
   rider_id: string
   branch_id: string
   work_date: string
+  shift_date?: string | null
   check_in_at: string | null
   check_out_at: string | null
+  check_in_time?: string | null
+  check_out_time?: string | null
   planned_shift_start: string | null
   planned_shift_end: string | null
   late_minutes: number
@@ -101,6 +104,8 @@ export interface DeliveryOrder {
   branch_id: string
   customer_id: string | null
   delivery_date: string
+  work_date?: string | null
+  attendance_id?: string | null
   invoice_number: string
   invoice_amount: number | null
   customer_code_snapshot: string

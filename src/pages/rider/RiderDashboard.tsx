@@ -443,6 +443,10 @@ export default function RiderDashboard() {
   ).length;
 
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeWorkDate = (attendance as any)?.work_date || (attendance as any)?.shift_date || todayIso();
+  const activeAttendanceId = (attendance as any)?.id || null;
+  const isShiftOpen = Boolean((attendance as any)?.check_in_at && !(attendance as any)?.check_out_at);
+
 
   function openOrders(mode: OrderViewMode, title: string) {
     setOrderViewMode(mode);
@@ -489,7 +493,7 @@ export default function RiderDashboard() {
       label: i === 6 ? "اليوم" : i === 5 ? "أمس" : `منذ ${6 - i} أيام`,
       value: safeCycleOrders.filter(
         (o: any) =>
-          (o.delivery_date ||
+          ((o as any).work_date || o.delivery_date ||
             String(o.registered_at || o.created_at || "").slice(0, 10)) === iso,
       ).length,
     };
@@ -604,38 +608,38 @@ export default function RiderDashboard() {
           // Load today's attendance plus any open attendance record. This prevents the UI from
           // showing "not checked in" if the DB function used a slightly different work_date.
           supabase
-            .from("attendance")
+            .from("delivery_attendance")
             .select("*")
             .eq("rider_id", riderId)
-            .or(`work_date.eq.${today},check_out_at.is.null`)
+            .or(`shift_date.eq.${today},check_out_time.is.null`)
             .order("created_at", { ascending: false })
             .limit(5),
           supabase
             .from("delivery_orders")
             .select("*")
             .eq("rider_id", riderId)
-            .eq("delivery_date", today)
+            .eq("work_date", today)
             .order("registered_at", { ascending: false }),
           supabase
             .from("internal_trips")
             .select("*")
             .eq("rider_id", riderId)
-            .eq("trip_date", today)
+            .eq("work_date", today)
             .order("registered_at", { ascending: false }),
           supabase
             .from("delivery_orders")
             .select("*")
             .eq("rider_id", riderId)
-            .gte("delivery_date", period.start)
-            .lte("delivery_date", period.end)
-            .order("delivery_date", { ascending: false }),
+            .gte("work_date", period.start)
+            .lte("work_date", period.end)
+            .order("work_date", { ascending: false }),
           supabase
             .from("internal_trips")
             .select("*")
             .eq("rider_id", riderId)
-            .gte("trip_date", period.start)
-            .lte("trip_date", period.end)
-            .order("trip_date", { ascending: false }),
+            .gte("work_date", period.start)
+            .lte("work_date", period.end)
+            .order("work_date", { ascending: false }),
           supabase
             .from("rider_shift_actions")
             .select("*")
@@ -660,10 +664,16 @@ export default function RiderDashboard() {
 
         if (attRes.status === "fulfilled" && !attRes.value.error) {
           const rows = (attRes.value.data ?? []) as Attendance[];
+          const normalizedRows = rows.map((r: any) => ({
+            ...r,
+            work_date: r.work_date || r.shift_date,
+            check_in_at: r.check_in_at || r.check_in_time,
+            check_out_at: r.check_out_at || r.check_out_time,
+          })) as Attendance[];
           const best =
-            rows.find((r) => r.work_date === today) ||
-            rows.find((r) => r.check_in_at && !r.check_out_at) ||
-            rows[0] ||
+            normalizedRows.find((r: any) => r.check_in_at && !r.check_out_at) ||
+            normalizedRows.find((r: any) => r.work_date === today) ||
+            normalizedRows[0] ||
             null;
           setAttendance(best);
         }
@@ -993,7 +1003,7 @@ export default function RiderDashboard() {
     const ext = receiptFile.name.split(".").pop()?.toLowerCase() || "jpg";
     const safeInvoice =
       currentInvoiceNumber.replace(/[^a-zA-Z0-9_.-]/g, "_") || "no_invoice";
-    const path = `orders/${rider.id}/${todayIso()}/${Date.now()}-${safeInvoice}.${ext}`;
+    const path = `orders/${rider.id}/${activeWorkDate}/${Date.now()}-${safeInvoice}.${ext}`;
 
     const { error } = await supabase.storage
       .from("delivery-receipts")
@@ -1200,6 +1210,8 @@ export default function RiderDashboard() {
         branch_name: branch?.name ?? rider.branch_name ?? null,
         customer_id: selectedCustomer?.id ?? null,
         delivery_date: todayIso(),
+        work_date: activeWorkDate,
+        attendance_id: activeAttendanceId,
         invoice_number: invoiceNumber.trim(),
         invoice_no: invoiceNumber.trim(),
         invoice_amount: invoiceAmount ? Number(invoiceAmount) : 0,
@@ -1272,7 +1284,7 @@ export default function RiderDashboard() {
         order_earning: 0,
         multiplier_reason: multiplier > 1 ? multiplierReason.trim() : null,
         bconnect_match_status: "pending",
-        is_countable: false,
+        is_countable: true,
         final_count_status: "pending_reconciliation",
         count_exclusion_reason: null,
       };
@@ -1311,6 +1323,8 @@ export default function RiderDashboard() {
       data = {
         ...payload,
         id: result.order_id,
+        work_date: result.work_date || activeWorkDate,
+        attendance_id: result.attendance_id || activeAttendanceId,
         is_duplicate_invoice: !!result.is_duplicate,
         needs_review: !!result.needs_review || payload.needs_review,
         review_reason: result.review_reason || payload.review_reason,
@@ -1401,6 +1415,8 @@ export default function RiderDashboard() {
         branch_id: rider.branch_id,
         branch_name: branch?.name ?? rider.branch_name ?? null,
         trip_date: todayIso(),
+        work_date: activeWorkDate,
+        attendance_id: activeAttendanceId,
         trip_type: tripType,
         from_label: finalFromLabel,
         to_label: finalToLabel,
@@ -1624,16 +1640,16 @@ export default function RiderDashboard() {
   }
 
   const attText = !attendance?.check_in_at
-    ? "لم يتم تسجيل الحضور بعد"
+    ? "لم يتم بدء الشيفت بعد"
     : !attendance.check_out_at
-      ? `حضور: ${formatTime(attendance.check_in_at)}`
-      : `حضور: ${formatTime(attendance.check_in_at)} — انصراف: ${formatTime(attendance.check_out_at)}`;
+      ? `شيفت ${activeWorkDate}: حضور ${formatTime(attendance.check_in_at)}`
+      : `شيفت ${activeWorkDate}: حضور ${formatTime(attendance.check_in_at)} — انصراف ${formatTime(attendance.check_out_at)}`;
 
   const attBtnText = !attendance?.check_in_at
-    ? "تسجيل حضور"
+    ? "بدء الشيفت"
     : !attendance.check_out_at
-      ? "تسجيل انصراف"
-      : "تم تسجيل اليوم";
+      ? "إنهاء الشيفت"
+      : "تم إنهاء الشيفت";
 
   const approvedDeductions = riderActions.filter(
     (a) =>
@@ -1692,7 +1708,7 @@ export default function RiderDashboard() {
       const iso = d.toISOString().slice(0, 10);
       const ordersCount = safeCycleOrders.filter(
         (o: any) =>
-          (o.delivery_date ||
+          ((o as any).work_date || o.delivery_date ||
             String(o.registered_at || o.created_at || "").slice(0, 10)) === iso,
       ).length;
       const tripsCount = safeCycleTrips.filter(
@@ -1841,8 +1857,8 @@ export default function RiderDashboard() {
           <section className="grid grid-cols-1 gap-4 md:grid-cols-[0.82fr_1fr_1fr]">
             <div className="grid grid-cols-1 gap-4">
               <ActionMini
-                title="تسجيل حضور"
-                subtitle="تسجيل الحضور لبدء العمل"
+                title={attendance?.check_in_at && !attendance?.check_out_at ? "إنهاء الشيفت" : "بدء الشيفت"}
+                subtitle="كل الأوردرات أثناء الشيفت تتحسب على يوم بداية الشيفت حتى بعد 12 بالليل"
                 icon="👆"
                 onClick={handleCheckInOut}
               />
@@ -1857,15 +1873,25 @@ export default function RiderDashboard() {
             </div>
             <ActionHero
               title="تسجيل أوردر"
-              subtitle="تسجيل طلب جديد"
+              subtitle={isShiftOpen ? `يتحسب على يوم شغل ${activeWorkDate}` : "ابدأ الشيفت أولًا عشان الأوردر يتحسب صح"}
               icon="🛍️"
-              onClick={() => setActiveModal("order")}
+              onClick={() => {
+                if (!isShiftOpen) {
+                  toast.error("لازم تبدأ الشيفت الأول قبل تسجيل الأوردر");
+                  return;
+                }
+                setActiveModal("order");
+              }}
             />
             <ActionHero
               title="تسجيل مشوار"
-              subtitle="بدء مشوار جديد"
+              subtitle={isShiftOpen ? `يتحسب على يوم شغل ${activeWorkDate}` : "ابدأ الشيفت أولًا عشان المشوار يتحسب صح"}
               icon="🛵"
               onClick={() => {
+                if (!isShiftOpen) {
+                  toast.error("لازم تبدأ الشيفت الأول قبل تسجيل المشوار");
+                  return;
+                }
                 applyTripTypeDefaults("branch_to_branch");
                 setActiveModal("trip");
               }}

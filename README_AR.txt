@@ -27,3 +27,7 @@ git push origin main
 DevTools > Application > Service Workers > Unregister
 ثم Storage > Clear site data
 ثم Ctrl + F5
+
+---
+تحديث V5:
+تمت إضافة نظام الشيفت الحقيقي للدليفري. شغل SQL: supabase/55_shift_based_delivery_accounting.sql

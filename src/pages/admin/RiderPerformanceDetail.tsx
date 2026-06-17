@@ -128,9 +128,9 @@ export default function RiderPerformanceDetail() {
       }
 
       const [ordersRes, tripsRes, attendanceRes] = await Promise.allSettled([
-        supabase.from('delivery_orders').select('*').eq('rider_id', riderId).gte('delivery_date', period.start).lte('delivery_date', period.end).order('created_at', { ascending: false }),
-        supabase.from('internal_trips').select('*').eq('rider_id', riderId).gte('trip_date', period.start).lte('trip_date', period.end).order('created_at', { ascending: false }),
-        supabase.from('attendance').select('*').eq('rider_id', riderId).gte('work_date', period.start).lte('work_date', period.end).order('work_date', { ascending: false })
+        supabase.from('delivery_orders').select('*').eq('rider_id', riderId).gte('work_date', period.start).lte('work_date', period.end).order('work_date', { ascending: false }),
+        supabase.from('internal_trips').select('*').eq('rider_id', riderId).gte('work_date', period.start).lte('work_date', period.end).order('work_date', { ascending: false }),
+        supabase.from('delivery_attendance').select('*').eq('rider_id', riderId).gte('shift_date', period.start).lte('shift_date', period.end).order('shift_date', { ascending: false })
       ])
       setOrders(ordersRes.status === 'fulfilled' ? ((ordersRes.value as any).data || []) : [])
       setTrips(tripsRes.status === 'fulfilled' ? ((tripsRes.value as any).data || []) : [])
@@ -181,7 +181,7 @@ export default function RiderPerformanceDetail() {
     const countableMultiplier = multiplier.filter(o => !isUncounted(o)).length
     const countableFailed = profile.count_failed_orders ? failed.length : 0
     const approvedTrips = trips.filter((t: any) => ['approved','countable','تم الاعتماد'].includes(String(t.status || t.review_status || '').toLowerCase()))
-    const workedHours = attendance.reduce((s, a: any) => s + num(a.worked_hours || a.hours || (num(a.duration_minutes) / 60)), 0)
+    const workedHours = attendance.reduce((s, a: any) => s + num(a.worked_hours || a.hours || (num(a.total_minutes || a.duration_minutes) / 60)), 0)
 
     const orderPay = countableOneX * num(profile.order_1x_rate) + countableMultiplier * num(profile.order_1_5x_rate) + countableFailed * num(profile.failed_order_rate)
     const tripsPay = approvedTrips.length * num(profile.internal_trip_rate)
