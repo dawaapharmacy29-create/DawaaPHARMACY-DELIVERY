@@ -39,6 +39,7 @@ type ModalName =
   | "pay"
   | "fail_reason"
   | "duplicate"
+  | "edit_order"
   | "notifications"
   | "policies"
   | null;
@@ -68,6 +69,8 @@ type ReceiptUploadInfo = {
   fileSize: number;
   mimeType: string;
 };
+type ReceiptUploadState = "not_uploaded" | "uploading" | "uploaded" | "failed" | "pending_retry";
+type EditOrderDraft = { invoice_number: string; customer_name: string; customer_code: string; customer_phone: string; customer_address: string; invoice_amount: string; order_multiplier: number; multiplier_reason: string; notes: string; receipt_image_url?: string | null; receipt_image_path?: string | null; receipt_upload_status?: string };
 
 type ReceiptOcrExtract = {
   invoice_number?: string | null;
@@ -379,12 +382,19 @@ export default function RiderDashboard() {
   const [receiptOcrNote, setReceiptOcrNote] = useState("");
   const [receiptUploadInfo, setReceiptUploadInfo] =
     useState<ReceiptUploadInfo | null>(null);
+  const [receiptUploadState, setReceiptUploadState] = useState<ReceiptUploadState>("not_uploaded");
+  const [receiptUploadError, setReceiptUploadError] = useState("");
   const [receiptOcrData, setReceiptOcrData] =
     useState<ReceiptOcrExtract | null>(null);
   const [orderSaveError, setOrderSaveError] = useState("");
   const [, setReceiptExtracting] = useState(false);
   const receiptCameraInputRef = useRef<HTMLInputElement | null>(null);
   const receiptUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [editOrder, setEditOrder] = useState<DeliveryOrder | null>(null);
+  const [editDraft, setEditDraft] = useState<EditOrderDraft | null>(null);
+  const [editReason, setEditReason] = useState("");
+  const [editReceiptFile, setEditReceiptFile] = useState<File | null>(null);
+  const [editReceiptState, setEditReceiptState] = useState<ReceiptUploadState>("not_uploaded");
 
   // Trip form
   const [tripType, setTripType] =
@@ -446,6 +456,8 @@ export default function RiderDashboard() {
   const mult15 = safeOrders.filter(
     (o) => (o.order_multiplier ?? 1) >= 1.5,
   ).length;
+  const openOrderRows = safeOrders.filter((o: any) => !["delivered", "تم التسليم", "failed", "cancelled", "canceled"].includes(String(o.status || "").toLowerCase()));
+  const oldestOpenMinutes = openOrderRows.length ? Math.max(...openOrderRows.map((o: any) => Math.max(0, Math.floor((Date.now() - new Date(o.registered_at || o.created_at).getTime()) / 60000)))) : 0;
 
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeWorkDate = (attendance as any)?.work_date || (attendance as any)?.shift_date || todayIso();
@@ -742,6 +754,14 @@ export default function RiderDashboard() {
   }, [loadAll]);
 
   useEffect(() => {
+    if (!openOrderRows.length || oldestOpenMinutes < 45) return;
+    const showReminder = () => toast.warning(oldestOpenMinutes >= 90 ? `تنبيه قوي: يوجد أوردر مفتوح منذ ${oldestOpenMinutes} دقيقة، برجاء تأكيد التسليم أو توضيح السبب` : `تنبيه: يوجد أوردر مفتوح منذ أكثر من 45 دقيقة`);
+    showReminder();
+    const timer = window.setInterval(showReminder, 10 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [openOrderRows.length, oldestOpenMinutes]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     if (!("Notification" in window)) return;
     setBrowserNotificationsEnabled(Notification.permission === "granted");
@@ -986,6 +1006,8 @@ export default function RiderDashboard() {
     setReceiptPreviewUrl("");
     setReceiptOcrNote("");
     setReceiptUploadInfo(null);
+    setReceiptUploadState("not_uploaded");
+    setReceiptUploadError("");
     setReceiptOcrData(null);
     setOrderSaveError("");
     setReceiptExtracting(false);
@@ -1000,6 +1022,8 @@ export default function RiderDashboard() {
     setReceiptFile(file);
     setReceiptOcrNote("");
     setReceiptUploadInfo(null);
+    setReceiptUploadState(file ? "not_uploaded" : "not_uploaded");
+    setReceiptUploadError("");
     setReceiptOcrData(null);
     if (receiptPreviewUrl) URL.revokeObjectURL(receiptPreviewUrl);
     setReceiptPreviewUrl(file ? URL.createObjectURL(file) : "");
@@ -1011,6 +1035,9 @@ export default function RiderDashboard() {
     if (receiptUploadInfo) return receiptUploadInfo;
     if (!receiptFile || !rider) return null;
 
+    setReceiptUploadState("uploading");
+    setReceiptUploadError("");
+
     const ext = receiptFile.name.split(".").pop()?.toLowerCase() || "jpg";
     const safeInvoice =
       currentInvoiceNumber.replace(/[^a-zA-Z0-9_.-]/g, "_") || "no_invoice";
@@ -1020,7 +1047,11 @@ export default function RiderDashboard() {
       .from("delivery-receipts")
       .upload(path, receiptFile, { cacheControl: "3600", upsert: false });
 
-    if (error) throw new Error(`تعذر رفع صورة الريسيت: ${error.message}`);
+    if (error) {
+      setReceiptUploadState(navigator.onLine ? "failed" : "pending_retry");
+      setReceiptUploadError(error.message);
+      return null;
+    }
 
     const { data } = supabase.storage
       .from("delivery-receipts")
@@ -1033,6 +1064,7 @@ export default function RiderDashboard() {
       mimeType: receiptFile.type || "image/jpeg",
     };
     setReceiptUploadInfo(info);
+    setReceiptUploadState("uploaded");
     return info;
   }
 
@@ -1338,12 +1370,30 @@ export default function RiderDashboard() {
         is_duplicate_invoice: !!result.is_duplicate,
         needs_review: !!result.needs_review || payload.needs_review,
         review_reason: result.review_reason || payload.review_reason,
+        receipt_upload_status: receiptUpload ? "uploaded" : receiptFile ? (navigator.onLine ? "failed" : "pending_retry") : "not_uploaded",
+        receipt_uploaded_at: receiptUpload ? new Date().toISOString() : null,
+        receipt_upload_error: receiptUpload ? null : receiptFile ? (receiptUploadError || "تعذر رفع الريسيت") : null,
       };
+
+      if (receiptFile) {
+        void supabase.rpc("rider_update_order_before_delivery", {
+          p_token: token,
+          p_order_id: String(data.id),
+          p_patch: {
+            receipt_image_url: receiptUpload?.url || null,
+            receipt_image_path: receiptUpload?.path || null,
+            receipt_upload_status: receiptUpload ? "uploaded" : navigator.onLine ? "failed" : "pending_retry",
+            receipt_upload_error: receiptUpload ? "" : (receiptUploadError || "تعذر رفع الريسيت"),
+          },
+          p_edit_reason: "تحديث حالة رفع الريسيت بعد تسجيل الأوردر",
+        });
+      }
 
       setOrders((prev) => [data as DeliveryOrder, ...prev]);
       setCycleOrders((prev) => [data as DeliveryOrder, ...prev]);
       void loadAll(false);
       toast.success(result?.message || (isDup ? "تم تسجيل الأوردر ويحتاج إلى مراجعة" : "تم تسجيل الأوردر بنجاح"));
+      if (receiptFile && !receiptUpload) toast.warning("تم حفظ الأوردر، وفشل رفع الريسيت. يمكنك إعادة رفعه من زر تعديل الأوردر.");
       if (customerPhoneForSave) {
         const digits = customerPhoneForSave.replace(/\D/g, "");
         const normalizedPhone = digits.startsWith("2") ? digits : `2${digits}`;
@@ -1538,37 +1588,17 @@ export default function RiderDashboard() {
 
   async function handleDelivered(orderId: string) {
     try {
-      const { data, error } = await supabase
-        .from("delivery_orders")
-        .update({
-          status: "delivered",
-          arrived_at: new Date().toISOString(),
-          delivered_at: new Date().toISOString(),
-          dispatch_status: "delivered",
-          delivery_duration_minutes: ((o) =>
-            o?.dispatched_at
-              ? Math.max(
-                  0,
-                  Math.round(
-                    (Date.now() - new Date(o.dispatched_at).getTime()) / 60000,
-                  ),
-                )
-              : null)(orders.find((o) => o.id === orderId) as any),
-          review_status: "pending",
-          final_count_status: "pending_reconciliation",
-          is_countable: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", orderId)
-        .select("*")
-        .single();
-      if (error) throw error;
-      setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? (data as DeliveryOrder) : o)),
-      );
-      toast.success("تم التسليم ✅");
-    } catch {
-      toast.error("فشل تحديث الأوردر");
+      const token = getStoredRiderToken();
+      if (!token) throw new Error("انتهت الجلسة");
+      const { data, error } = await supabase.rpc("rider_mark_order_delivered", { p_token: token, p_order_id: String(orderId) });
+      const result = getRpcResult<any>(data);
+      if (error || !result?.success) throw new Error(error?.message || result?.message || "تعذر تأكيد التسليم");
+      const updated = result.order as DeliveryOrder;
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)));
+      setCycleOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)));
+      toast.success(result.message || "تم تأكيد التسليم بنجاح");
+    } catch (e: any) {
+      toast.error(e?.message || "فشل تحديث الأوردر");
     }
   }
 
@@ -1579,35 +1609,51 @@ export default function RiderDashboard() {
       return;
     }
     try {
-      const { data, error } = await supabase
-        .from("delivery_orders")
-        .update({
-          status: "failed",
-          failed_reason: failReason,
-          failed_at: new Date().toISOString(),
-          review_status: "failed",
-          approval_status: "rejected",
-          bconnect_match_status: "pending",
-          final_count_status: "excluded_failed",
-          is_countable: false,
-          count_exclusion_reason: "failed_order",
-          order_earning: 0,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", failOrderId)
-        .select("*")
-        .single();
-      if (error) throw error;
-      setOrders((prev) =>
-        prev.map((o) => (o.id === failOrderId ? (data as DeliveryOrder) : o)),
-      );
-      toast.success("تم تسجيل الفشل");
+      const token = getStoredRiderToken();
+      if (!token) throw new Error("انتهت الجلسة");
+      const { data, error } = await supabase.rpc("rider_mark_order_failed", { p_token: token, p_order_id: String(failOrderId), p_reason: failReason.trim() });
+      const result = getRpcResult<any>(data);
+      if (error || !result?.success) throw new Error(error?.message || result?.message || "تعذر تسجيل الفشل");
+      const updated = result.order as DeliveryOrder;
+      setOrders((prev) => prev.map((o) => (o.id === failOrderId ? updated : o)));
+      setCycleOrders((prev) => prev.map((o) => (o.id === failOrderId ? updated : o)));
+      toast.success(result.message || "تم تسجيل فشل التوصيل للمراجعة");
       setActiveModal(null);
       setFailOrderId(null);
       setFailReason("");
-    } catch {
-      toast.error("فشل تحديث الأوردر");
+    } catch (e: any) {
+      toast.error(e?.message || "فشل تحديث الأوردر");
     }
+  }
+
+  function openEditOrder(order: DeliveryOrder) {
+    if (["delivered", "تم التسليم"].includes(String(order.status).toLowerCase())) return toast.error("لا يمكن تعديل أوردر تم تسليمه");
+    setEditOrder(order);
+    setEditDraft({ invoice_number: order.invoice_number || "", customer_name: order.customer_name_snapshot || "", customer_code: order.customer_code_snapshot || "", customer_phone: order.customer_phone_snapshot || "", customer_address: order.customer_address_snapshot || "", invoice_amount: String(order.invoice_amount || ""), order_multiplier: Number(order.order_multiplier || 1), multiplier_reason: order.multiplier_reason || "", notes: order.notes || "", receipt_image_url: (order as any).receipt_image_url, receipt_image_path: (order as any).receipt_image_path, receipt_upload_status: (order as any).receipt_upload_status || "not_uploaded" });
+    setEditReason(""); setEditReceiptFile(null); setEditReceiptState(((order as any).receipt_upload_status || "not_uploaded") as ReceiptUploadState); setActiveModal("edit_order");
+  }
+
+  async function uploadEditReceipt() {
+    if (!editOrder || !editDraft || !editReceiptFile || !rider) return;
+    setEditReceiptState("uploading");
+    const ext = editReceiptFile.name.split(".").pop() || "jpg";
+    const path = `orders/${rider.id}/${activeWorkDate}/${Date.now()}-edit.${ext}`;
+    const { error } = await supabase.storage.from("delivery-receipts").upload(path, editReceiptFile, { cacheControl: "3600", upsert: false });
+    if (error) { setEditReceiptState(navigator.onLine ? "failed" : "pending_retry"); return toast.error("فشل رفع الريسيت، حاول مرة أخرى"); }
+    const { data } = supabase.storage.from("delivery-receipts").getPublicUrl(path);
+    setEditDraft(v => v ? { ...v, receipt_image_url: data.publicUrl, receipt_image_path: path, receipt_upload_status: "uploaded" } : v);
+    setEditReceiptState("uploaded"); toast.success("تم رفع الريسيت بنجاح ✅");
+  }
+
+  async function handleSaveEditOrder() {
+    if (!editOrder || !editDraft || !editDraft.invoice_number.trim()) return toast.error("رقم الفاتورة مطلوب");
+    setSaving(true);
+    try {
+      const token = getStoredRiderToken(); if (!token) throw new Error("انتهت الجلسة");
+      const { data, error } = await supabase.rpc("rider_update_order_before_delivery", { p_token: token, p_order_id: String(editOrder.id), p_patch: { ...editDraft, invoice_amount: Number(editDraft.invoice_amount || 0), receipt_upload_status: editReceiptState }, p_edit_reason: editReason || "تعديل من تطبيق الدليفري" });
+      const result = getRpcResult<any>(data); if (error || !result?.success) throw new Error(error?.message || result?.message || "تعذر تعديل الأوردر");
+      const updated = result.order as DeliveryOrder; setOrders(v => v.map(o => o.id === editOrder.id ? updated : o)); setCycleOrders(v => v.map(o => o.id === editOrder.id ? updated : o)); toast.success("تم تعديل الأوردر بنجاح"); setActiveModal("orders"); setEditOrder(null); setEditDraft(null);
+    } catch (e: any) { toast.error(e?.message || "تعذر تعديل الأوردر"); } finally { setSaving(false); }
   }
 
   // ── LOADING / NO RIDER ────────────────────────────────────────────────────
@@ -1921,6 +1967,11 @@ export default function RiderDashboard() {
               }}
             />
           </section>
+          {openOrderRows.length > 0 && (
+            <section className={`rounded-[26px] border p-4 shadow-sm ${oldestOpenMinutes >= 90 ? "border-rose-200 bg-rose-50" : oldestOpenMinutes >= 45 ? "border-amber-200 bg-amber-50" : "border-sky-100 bg-white"}`}>
+              <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-black text-slate-500">أوردرات لم يتم التسليم</p><p className="mt-1 text-3xl font-black text-[#061827]">{openOrderRows.length}</p><p className={`mt-1 text-xs font-bold ${oldestOpenMinutes >= 90 ? "text-rose-700" : oldestOpenMinutes >= 45 ? "text-amber-700" : "text-slate-400"}`}>أقدم أوردر مفتوح منذ {oldestOpenMinutes} دقيقة</p></div><button onClick={() => openOrders("pending", "الأوردرات المفتوحة")} className="rounded-2xl bg-[#008E92] px-5 py-3 text-sm font-black text-white">عرض الأوردرات المفتوحة</button></div>
+            </section>
+          )}
           {missingShiftOrders > 0 && (
             <p className="rounded-2xl border border-sky-100 bg-sky-50 p-3 text-center text-xs font-black text-sky-700">
               يوجد {missingShiftOrders} أوردر قيد مراجعة إدارية بسبب عدم وضوح الشيفت — تم تسجيلهم ولن يضيعوا.
@@ -2004,7 +2055,7 @@ export default function RiderDashboard() {
 
           <section className="rounded-[28px] border border-slate-100 bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-black text-[#061827]">آخر الأوردرات</h2><button onClick={() => openOrders("all", "كل أوردرات الشيفت")} className="text-xs font-black text-[#008E92]">عرض الكل</button></div>
-            <div className="space-y-2">{safeOrders.slice(0, 5).map((o: any) => <div key={o.id} className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 p-3"><div className="min-w-0"><p className="truncate text-sm font-black">فاتورة {o.invoice_number || o.invoice_no}</p><p className="truncate text-[10px] font-bold text-slate-400">{o.customer_name_snapshot || o.customer_name || "عميل غير محدد"}</p></div><span className={`rounded-full px-2 py-1 text-[10px] font-black ${o.review_status === "missing_shift" ? "bg-sky-100 text-sky-700" : o.status === "delivered" ? "bg-emerald-100 text-emerald-700" : o.status === "failed" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{o.review_status === "missing_shift" ? "مراجعة بسيطة" : ORDER_STATUS_LABELS[o.status] || o.status}</span></div>)}{!safeOrders.length && <p className="py-5 text-center text-xs font-bold text-slate-400">لم تسجل أوردرات في الشيفت الحالي</p>}</div>
+            <div className="space-y-2">{safeOrders.slice(0, 5).map((o: any) => <div key={o.id} className="rounded-2xl bg-slate-50 p-3"><div className="flex items-center justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-black">فاتورة {o.invoice_number || o.invoice_no}</p><p className="truncate text-[10px] font-bold text-slate-400">{o.customer_name_snapshot || o.customer_name || "عميل غير محدد"}</p></div><span className={`rounded-full px-2 py-1 text-[10px] font-black ${o.review_status === "missing_shift" ? "bg-sky-100 text-sky-700" : o.status === "delivered" ? "bg-emerald-100 text-emerald-700" : o.status === "failed" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{o.review_status === "missing_shift" ? "مراجعة بسيطة" : ORDER_STATUS_LABELS[o.status] || o.status}</span></div><div className="mt-2 flex items-center justify-between"><span className={`text-[10px] font-black ${(o.receipt_upload_status === "uploaded" || o.receipt_image_url) ? "text-emerald-700" : o.receipt_upload_status === "failed" ? "text-rose-600" : "text-slate-400"}`}>{(o.receipt_upload_status === "uploaded" || o.receipt_image_url) ? "ريسيت مرفوع ✅" : o.receipt_upload_status === "failed" ? "فشل رفع الريسيت ⚠️" : "بدون ريسيت"}</span>{!["delivered", "تم التسليم"].includes(String(o.status).toLowerCase()) && <button onClick={() => openEditOrder(o)} className="rounded-lg bg-white px-3 py-1.5 text-[10px] font-black text-teal-700">تعديل</button>}</div></div>)}{!safeOrders.length && <p className="py-5 text-center text-xs font-bold text-slate-400">لم تسجل أوردرات في الشيفت الحالي</p>}</div>
           </section>
 
           {/* Cycle summary */}
@@ -2656,6 +2707,9 @@ export default function RiderDashboard() {
               الصورة اختيارية الآن، وتُحفظ داخل الأوردر فقط عند رفعها للمساعدة في مراجعة الفواتير
               المكررة، الفاشلة، وطلبات ×1.5.
             </p>
+            {receiptUploadState === "uploading" && <p className="mt-2 rounded-xl bg-sky-50 p-2 text-xs font-black text-sky-700">جاري رفع الريسيت...</p>}
+            {receiptUploadState === "uploaded" && <p className="mt-2 rounded-xl bg-white p-2 text-xs font-black text-emerald-700">تم رفع الريسيت بنجاح ✅</p>}
+            {(receiptUploadState === "failed" || receiptUploadState === "pending_retry") && <div className="mt-2 rounded-xl bg-rose-50 p-2 text-xs font-black text-rose-700"><p>{receiptUploadState === "pending_retry" ? "الصورة محفوظة مؤقتًا وسيتم إعادة المحاولة عند رجوع الإنترنت" : "فشل رفع الريسيت، حاول مرة أخرى ❌"}</p><button type="button" onClick={() => void uploadReceiptPhoto(invoiceNumber.trim() || "retry")} className="mt-2 rounded-lg bg-white px-3 py-1.5 text-rose-700">إعادة رفع الريسيت</button></div>}
           </div>
 
           {/* Multiplier */}
@@ -3119,6 +3173,7 @@ export default function RiderDashboard() {
                   {o.order_multiplier >= 1.5 ? " 🔥" : ""}
                 </p>
                 <OrderTimelineBadge order={o as any} />
+                <p className={`text-xs font-black ${((o as any).receipt_upload_status === "uploaded" || (o as any).receipt_image_url) ? "text-emerald-700" : (o as any).receipt_upload_status === "failed" ? "text-rose-600" : "text-slate-400"}`}>{((o as any).receipt_upload_status === "uploaded" || (o as any).receipt_image_url) ? "ريسيت مرفوع ✅" : (o as any).receipt_upload_status === "failed" ? "فشل رفع الريسيت ⚠️" : (o as any).receipt_upload_status === "pending_retry" ? "الريسيت ينتظر إعادة الرفع" : "بدون ريسيت"}</p>
                 <NavigateButton address={o.customer_address_snapshot} />
                 {o.status === "registered" && !(o as any).picked_up_at && (
                   <button
@@ -3140,8 +3195,8 @@ export default function RiderDashboard() {
                     مراجعة
                   </p>
                 )}
-                {o.status === "registered" && (
-                  <div className="flex gap-2">
+                {!["delivered", "تم التسليم", "failed", "cancelled", "canceled"].includes(String(o.status).toLowerCase()) && (
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       onClick={() => handleDelivered(o.id)}
                       disabled={saving}
@@ -3149,12 +3204,13 @@ export default function RiderDashboard() {
                     >
                       تم التسليم ✅
                     </button>
+                    <button onClick={() => openEditOrder(o)} className="rounded-xl bg-teal-50 py-2 text-sm font-black text-teal-700">تعديل الأوردر ✏️</button>
                     <button
                       onClick={() => {
                         setFailOrderId(o.id);
                         setActiveModal("fail_reason");
                       }}
-                      className="flex-1 rounded-xl bg-red-100 py-2 text-sm font-black text-red-600"
+                      className="col-span-2 rounded-xl bg-red-100 py-2 text-sm font-black text-red-600"
                     >
                       فشل ❌
                     </button>
@@ -3163,6 +3219,18 @@ export default function RiderDashboard() {
               </div>
             ))
           )}
+        </Sheet>
+
+        {/* EDIT ORDER BEFORE DELIVERY */}
+        <Sheet open={activeModal === "edit_order"} title="تعديل الأوردر قبل التسليم" onClose={() => { setActiveModal("orders"); setEditOrder(null); setEditDraft(null); }}>
+          {editDraft && <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3"><Field label="رقم الفاتورة *"><input value={editDraft.invoice_number} onChange={e => setEditDraft(v => v ? { ...v, invoice_number: e.target.value } : v)} className="dawaa-input text-right"/></Field><Field label="قيمة الفاتورة"><input type="number" value={editDraft.invoice_amount} onChange={e => setEditDraft(v => v ? { ...v, invoice_amount: e.target.value } : v)} className="dawaa-input text-right"/></Field><Field label="اسم العميل"><input value={editDraft.customer_name} onChange={e => setEditDraft(v => v ? { ...v, customer_name: e.target.value } : v)} className="dawaa-input text-right"/></Field><Field label="كود العميل"><input value={editDraft.customer_code} onChange={e => setEditDraft(v => v ? { ...v, customer_code: e.target.value } : v)} className="dawaa-input text-right"/></Field><Field label="الهاتف"><input value={editDraft.customer_phone} onChange={e => setEditDraft(v => v ? { ...v, customer_phone: e.target.value } : v)} className="dawaa-input text-right"/></Field><Field label="العنوان"><input value={editDraft.customer_address} onChange={e => setEditDraft(v => v ? { ...v, customer_address: e.target.value } : v)} className="dawaa-input text-right"/></Field></div>
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3"><label className="flex items-center gap-2 text-sm font-black text-blue-800"><input type="checkbox" checked={editDraft.order_multiplier >= 1.5} onChange={e => setEditDraft(v => v ? { ...v, order_multiplier: e.target.checked ? 1.5 : 1 } : v)}/> أوردر بعيد ×1.5</label>{editDraft.order_multiplier >= 1.5 && <input value={editDraft.multiplier_reason} onChange={e => setEditDraft(v => v ? { ...v, multiplier_reason: e.target.value } : v)} placeholder="سبب الأوردر البعيد" className="mt-2 w-full rounded-xl border p-2 text-right text-sm"/>}</div>
+            <Field label="ملاحظات"><textarea value={editDraft.notes} onChange={e => setEditDraft(v => v ? { ...v, notes: e.target.value } : v)} rows={2} className="dawaa-input resize-none text-right"/></Field>
+            <div className="rounded-2xl border bg-slate-50 p-3"><p className="mb-2 text-sm font-black">صورة الريسيت</p><input type="file" accept="image/*" capture="environment" onChange={e => { setEditReceiptFile(e.target.files?.[0] || null); setEditReceiptState("not_uploaded"); }} className="w-full text-xs"/>{editReceiptFile && <button type="button" onClick={() => void uploadEditReceipt()} disabled={editReceiptState === "uploading"} className="mt-3 w-full rounded-xl bg-[#008E92] py-2 text-xs font-black text-white">{editReceiptState === "uploading" ? "جاري رفع الريسيت..." : editReceiptState === "failed" || editReceiptState === "pending_retry" ? "إعادة رفع الريسيت" : "رفع الريسيت"}</button>}<p className={`mt-2 text-xs font-black ${editReceiptState === "uploaded" ? "text-emerald-700" : editReceiptState === "failed" ? "text-rose-600" : "text-slate-500"}`}>{editReceiptState === "uploaded" ? "تم رفع الريسيت بنجاح ✅" : editReceiptState === "failed" ? "فشل رفع الريسيت، حاول مرة أخرى ❌" : editReceiptState === "pending_retry" ? "محفوظ مؤقتًا وينتظر الإنترنت" : "رفع الريسيت اختياري"}</p></div>
+            <Field label="سبب التعديل (اختياري)"><input value={editReason} onChange={e => setEditReason(e.target.value)} placeholder="مثال: تصحيح رقم الفاتورة" className="dawaa-input text-right"/></Field>
+            <button onClick={() => void handleSaveEditOrder()} disabled={saving} className="w-full rounded-2xl bg-[#008E92] py-4 text-lg font-black text-white disabled:opacity-50">{saving ? "جاري حفظ التعديل..." : "حفظ التعديلات"}</button>
+          </div>}
         </Sheet>
 
         {/* FAIL REASON */}
@@ -3175,6 +3243,7 @@ export default function RiderDashboard() {
             setFailReason("");
           }}
         >
+          <div className="mb-3 grid grid-cols-2 gap-2">{["العميل لا يرد", "العنوان غير واضح", "العميل رفض الطلب", "تأجيل", "أخرى"].map(reason => <button key={reason} onClick={() => setFailReason(reason)} className={`rounded-xl border p-2 text-xs font-black ${failReason === reason ? "border-rose-400 bg-rose-50 text-rose-700" : "bg-white text-slate-600"}`}>{reason}</button>)}</div>
           <Field label="اكتب سبب الفشل *">
             <textarea
               value={failReason}
