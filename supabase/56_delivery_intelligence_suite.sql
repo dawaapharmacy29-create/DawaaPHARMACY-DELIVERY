@@ -11,10 +11,12 @@ alter table if exists public.delivery_orders
   add column if not exists cash_handover_id uuid;
 
 create table if not exists public.delivery_order_notifications (
-  id uuid primary key default gen_random_uuid(), order_id uuid references public.delivery_orders(id) on delete cascade,
+  id uuid primary key default gen_random_uuid(), order_id text,
   notification_type text not null, channel text not null default 'whatsapp', recipient_phone text,
   message_preview text, sent_at timestamptz default now(), status text default 'sent', created_at timestamptz default now()
 );
+alter table public.delivery_order_notifications drop constraint if exists delivery_order_notifications_order_id_fkey;
+alter table public.delivery_order_notifications alter column order_id type text using order_id::text;
 
 create table if not exists public.daily_cash_handovers (
   id uuid primary key default gen_random_uuid(), rider_id uuid not null references public.riders(id), branch_id uuid references public.branches(id),
@@ -31,27 +33,33 @@ do $$ begin
 end $$;
 
 create table if not exists public.fraud_signals (
-  id uuid primary key default gen_random_uuid(), order_id uuid references public.delivery_orders(id) on delete set null,
+  id uuid primary key default gen_random_uuid(), order_id text,
   rider_id uuid not null references public.riders(id), signal_type text not null, severity text not null default 'medium',
   description text not null, status text not null default 'open', reviewed_by text, reviewed_at timestamptz,
   resolution_notes text, auto_detected boolean not null default true, created_at timestamptz default now()
 );
+alter table public.fraud_signals drop constraint if exists fraud_signals_order_id_fkey;
+alter table public.fraud_signals alter column order_id type text using order_id::text;
 create unique index if not exists uq_fraud_signal_order_type on public.fraud_signals(order_id, signal_type) where order_id is not null;
 
 create table if not exists public.delivery_customer_ratings (
-  id uuid primary key default gen_random_uuid(), order_id uuid references public.delivery_orders(id) on delete set null,
+  id uuid primary key default gen_random_uuid(), order_id text,
   rider_id uuid references public.riders(id), customer_code text, customer_name text,
   rating int check (rating between 1 and 5), speed_rating int check (speed_rating between 1 and 5),
   behavior_rating int check (behavior_rating between 1 and 5), comment text, rating_token text unique,
   submitted_at timestamptz, created_at timestamptz default now()
 );
+alter table public.delivery_customer_ratings drop constraint if exists delivery_customer_ratings_order_id_fkey;
+alter table public.delivery_customer_ratings alter column order_id type text using order_id::text;
 
 create table if not exists public.smart_delivery_alerts (
   id uuid primary key default gen_random_uuid(), alert_type text not null, severity text not null default 'warning',
-  title text not null, description text, related_order_id uuid references public.delivery_orders(id) on delete cascade,
+  title text not null, description text, related_order_id text,
   related_rider_id uuid references public.riders(id) on delete set null, branch_id uuid references public.branches(id) on delete set null,
   status text not null default 'active', auto_resolved_at timestamptz, resolved_by text, resolved_at timestamptz, created_at timestamptz default now()
 );
+alter table public.smart_delivery_alerts drop constraint if exists smart_delivery_alerts_related_order_id_fkey;
+alter table public.smart_delivery_alerts alter column related_order_id type text using related_order_id::text;
 create index if not exists idx_smart_alerts_active on public.smart_delivery_alerts(status, created_at desc) where status = 'active';
 create index if not exists idx_cash_handovers_date on public.daily_cash_handovers(handover_date, branch_id);
 create index if not exists idx_fraud_signals_status on public.fraud_signals(status, severity, created_at desc);
@@ -82,8 +90,9 @@ drop policy if exists delivery_proofs_public_read on storage.objects;
 create policy delivery_proofs_public_read on storage.objects for select to public
 using (bucket_id = 'delivery-proofs');
 
+drop function if exists public.rider_log_customer_notification(text, uuid, text, text);
 create or replace function public.rider_log_customer_notification(
-  p_token text, p_order_id uuid, p_recipient_phone text, p_message_preview text
+  p_token text, p_order_id text, p_recipient_phone text, p_message_preview text
 ) returns jsonb language plpgsql security definer set search_path = public as $$
 declare v_session record; v_order record;
 begin
@@ -98,6 +107,6 @@ begin
   values (p_order_id, 'customer_dispatch_notification', 'whatsapp', p_recipient_phone, left(p_message_preview, 500), 'opened');
   return jsonb_build_object('success', true);
 end $$;
-grant execute on function public.rider_log_customer_notification(text, uuid, text, text) to anon, authenticated;
+grant execute on function public.rider_log_customer_notification(text, text, text, text) to anon, authenticated;
 
 notify pgrst, 'reload schema';

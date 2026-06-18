@@ -381,11 +381,10 @@ export default function RiderDashboard() {
     useState<ReceiptUploadInfo | null>(null);
   const [receiptOcrData, setReceiptOcrData] =
     useState<ReceiptOcrExtract | null>(null);
+  const [orderSaveError, setOrderSaveError] = useState("");
   const [, setReceiptExtracting] = useState(false);
   const receiptCameraInputRef = useRef<HTMLInputElement | null>(null);
   const receiptUploadInputRef = useRef<HTMLInputElement | null>(null);
-  const deliveryProofInputRef = useRef<HTMLInputElement | null>(null);
-  const [deliveryProofOrderId, setDeliveryProofOrderId] = useState<string | null>(null);
 
   // Trip form
   const [tripType, setTripType] =
@@ -434,6 +433,9 @@ export default function RiderDashboard() {
   const failedOrders = safeOrders.filter((o) => o.status === "failed").length;
   const pendingOrders = safeOrders.filter(
     (o) => o.status === "registered" || o.status === "needs_review",
+  ).length;
+  const missingShiftOrders = safeOrders.filter(
+    (o: any) => !o.attendance_id || o.review_status === "missing_shift" || o.review_reason === "missing_shift",
   ).length;
   const countableOrders = safeOrders.filter(
     (o) =>
@@ -918,7 +920,12 @@ export default function RiderDashboard() {
       const token = getStoredRiderToken();
       if (!token)
         throw new Error("انتهت الجلسة. سجل دخول مرة أخرى من تطبيق الدليفري.");
-      const gps = await requestRiderGps();
+      let gps: { lat: number | null; lng: number | null; accuracy: number | null } = { lat: null, lng: null, accuracy: null };
+      try {
+        gps = await requestRiderGps();
+      } catch {
+        toast.info("تعذر قراءة GPS الآن، سنكمل تسجيل الشيفت بدون تعطيلك");
+      }
       const { data: secureData, error: secureError } = await supabase.rpc(
         "rider_check_in_out",
         {
@@ -980,6 +987,7 @@ export default function RiderDashboard() {
     setReceiptOcrNote("");
     setReceiptUploadInfo(null);
     setReceiptOcrData(null);
+    setOrderSaveError("");
     setReceiptExtracting(false);
     setDupWarning(null);
     setDupReason("");
@@ -1121,16 +1129,9 @@ export default function RiderDashboard() {
       ""
     ).trim();
 
-    if (!nameForValidation && !codeForValidation && !phoneForValidation) {
-      toast.error("اختار العميل أو اكتب اسمه/كوده/رقمه يدويًا");
-      return;
-    }
-    if (!customerAddress.trim()) {
-      toast.error(
-        "اكتب عنوان تسليم الأوردر الحالي حتى لو مختلف عن عنوان العميل المسجل",
-      );
-      return;
-    }
+    void nameForValidation;
+    void codeForValidation;
+    void phoneForValidation;
     if (!invoiceNumber.trim()) {
       toast.error("اكتب رقم الفاتورة");
       return;
@@ -1156,6 +1157,7 @@ export default function RiderDashboard() {
 
     try {
       setSaving(true);
+      setOrderSaveError("");
 
       // Check duplicate (if not already confirmed)
       if (!isDup && navigator.onLine) {
@@ -1203,7 +1205,12 @@ export default function RiderDashboard() {
         throw new Error(
           "تسجيل الأوردرات الآن يحتاج إنترنت عشان يتسجل من خلال RPC آمن ولا يحتسب أي أوردر Offline إلا بعد مراجعة لاحقة",
         );
-      const gps = await requestRiderGps();
+      let gps: { lat: number | null; lng: number | null; accuracy: number | null } = { lat: null, lng: null, accuracy: null };
+      try {
+        gps = await requestRiderGps();
+      } catch {
+        toast.info("تعذر قراءة GPS الآن، سيتم تسجيل الأوردر ومراجعته إذا لزم الأمر");
+      }
       const receiptUpload = await uploadReceiptPhoto(invoiceNumber.trim());
 
       const payload = {
@@ -1336,9 +1343,7 @@ export default function RiderDashboard() {
       setOrders((prev) => [data as DeliveryOrder, ...prev]);
       setCycleOrders((prev) => [data as DeliveryOrder, ...prev]);
       void loadAll(false);
-      toast.success(
-        isDup ? "تم تسجيل الأوردر ويحتاج إلى مراجعة" : "تم تسجيل الأوردر بنجاح",
-      );
+      toast.success(result?.message || (isDup ? "تم تسجيل الأوردر ويحتاج إلى مراجعة" : "تم تسجيل الأوردر بنجاح"));
       if (customerPhoneForSave) {
         const digits = customerPhoneForSave.replace(/\D/g, "");
         const normalizedPhone = digits.startsWith("2") ? digits : `2${digits}`;
@@ -1354,6 +1359,7 @@ export default function RiderDashboard() {
       setActiveModal(null);
       resetOrderForm();
     } catch (e: any) {
+      setOrderSaveError(e?.message || "حدث خطأ شبكة. بياناتك ما زالت محفوظة ويمكن إعادة المحاولة.");
       toast.error("تعذر تسجيل الأوردر: " + (e?.message ?? ""));
     } finally {
       setSaving(false);
@@ -1445,9 +1451,11 @@ export default function RiderDashboard() {
           ? "pending_admin_review"
           : "not_required",
         proof_required: false,
+        needs_review: !isShiftOpen,
+        review_reason: !isShiftOpen ? "missing_shift" : null,
         review_status: relatedInvoice.trim()
           ? "pending_evidence_review"
-          : "pending",
+          : !isShiftOpen ? "missing_shift" : "pending",
         notes: `نوع المشوار: ${TRIP_TYPE_LABELS[tripType] ?? tripType}${tripRequesterName.trim() ? ` | طالب المشوار: ${tripRequesterName.trim()}` : ""}${tripReason.trim() ? ` | السبب: ${tripReason.trim()}` : ""}${relatedInvoice.trim() ? ` | فاتورة/إذن: ${relatedInvoice.trim()}` : ""}${tripProofNote.trim() ? ` | ملاحظة: ${tripProofNote.trim()}` : ""}`,
         status: "pending_approval",
         registered_at: new Date().toISOString(),
@@ -1528,7 +1536,7 @@ export default function RiderDashboard() {
     }
   }
 
-  async function handleDelivered(orderId: string, proofUrl: string) {
+  async function handleDelivered(orderId: string) {
     try {
       const { data, error } = await supabase
         .from("delivery_orders")
@@ -1549,8 +1557,6 @@ export default function RiderDashboard() {
           review_status: "pending",
           final_count_status: "pending_reconciliation",
           is_countable: false,
-          delivery_proof_photo_url: proofUrl,
-          delivery_proof_captured_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
         .eq("id", orderId)
@@ -1560,35 +1566,12 @@ export default function RiderDashboard() {
       setOrders((prev) =>
         prev.map((o) => (o.id === orderId ? (data as DeliveryOrder) : o)),
       );
-      toast.success("تم التسليم وحفظ صورة التأكيد ✅");
+      toast.success("تم التسليم ✅");
     } catch {
       toast.error("فشل تحديث الأوردر");
     }
   }
 
-  async function handleDeliveryProofChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]; const orderId = deliveryProofOrderId;
-    event.target.value = "";
-    if (!file || !orderId) return;
-    setSaving(true);
-    try {
-      const extension = file.name.split(".").pop() || "jpg";
-      const path = `delivery-proofs/${orderId}_${Date.now()}.${extension}`;
-      let bucket = "delivery-proofs";
-      let upload = await supabase.storage.from(bucket).upload(path, file, { contentType: file.type || "image/jpeg", upsert: false });
-      if (upload.error) {
-        bucket = "delivery-receipts";
-        upload = await supabase.storage.from(bucket).upload(path, file, { contentType: file.type || "image/jpeg", upsert: false });
-      }
-      if (upload.error) throw upload.error;
-      const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-      await handleDelivered(orderId, data.publicUrl);
-    } catch (e: any) {
-      toast.error(e?.message || "تعذر رفع صورة تأكيد التسليم");
-    } finally {
-      setSaving(false); setDeliveryProofOrderId(null);
-    }
-  }
 
   async function handleFailed() {
     if (!failOrderId || !failReason.trim()) {
@@ -1851,7 +1834,6 @@ export default function RiderDashboard() {
 
         <main className="relative z-10 mx-auto -mt-8 max-w-[980px] space-y-5 px-4 pb-24">
           <ConnectivitySyncBanner />
-          <input ref={deliveryProofInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleDeliveryProofChange} />
           <LiveEarningsBar
             deliveredCount={delivered}
             orderRate={Number(rider.order_rate || 0)}
@@ -1922,31 +1904,28 @@ export default function RiderDashboard() {
               />
             </div>
             <ActionHero
-              title="تسجيل أوردر"
-              subtitle={isShiftOpen ? `يتحسب على يوم شغل ${activeWorkDate}` : "ابدأ الشيفت أولًا عشان الأوردر يتحسب صح"}
+              title="تسجيل أوردر سريع"
+              subtitle={isShiftOpen ? `يتحسب على شيفت ${activeWorkDate}` : "يمكن التسجيل الآن وسيظهر للإدارة للمراجعة"}
               icon="🛍️"
               onClick={() => {
-                if (!isShiftOpen) {
-                  toast.error("لازم تبدأ الشيفت الأول قبل تسجيل الأوردر");
-                  return;
-                }
                 setActiveModal("order");
               }}
             />
             <ActionHero
               title="تسجيل مشوار"
-              subtitle={isShiftOpen ? `يتحسب على يوم شغل ${activeWorkDate}` : "ابدأ الشيفت أولًا عشان المشوار يتحسب صح"}
+              subtitle={isShiftOpen ? `يتحسب على شيفت ${activeWorkDate}` : "يمكن التسجيل وسيتم ربطه إداريًا"}
               icon="🛵"
               onClick={() => {
-                if (!isShiftOpen) {
-                  toast.error("لازم تبدأ الشيفت الأول قبل تسجيل المشوار");
-                  return;
-                }
                 applyTripTypeDefaults("branch_to_branch");
                 setActiveModal("trip");
               }}
             />
           </section>
+          {missingShiftOrders > 0 && (
+            <p className="rounded-2xl border border-sky-100 bg-sky-50 p-3 text-center text-xs font-black text-sky-700">
+              يوجد {missingShiftOrders} أوردر قيد مراجعة إدارية بسبب عدم وضوح الشيفت — تم تسجيلهم ولن يضيعوا.
+            </p>
+          )}
 
           {/* Daily summary */}
           <section className="rounded-[28px] border border-slate-100 bg-white p-4 shadow-sm">
@@ -2021,6 +2000,11 @@ export default function RiderDashboard() {
                 }
               />
             </div>
+          </section>
+
+          <section className="rounded-[28px] border border-slate-100 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-black text-[#061827]">آخر الأوردرات</h2><button onClick={() => openOrders("all", "كل أوردرات الشيفت")} className="text-xs font-black text-[#008E92]">عرض الكل</button></div>
+            <div className="space-y-2">{safeOrders.slice(0, 5).map((o: any) => <div key={o.id} className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 p-3"><div className="min-w-0"><p className="truncate text-sm font-black">فاتورة {o.invoice_number || o.invoice_no}</p><p className="truncate text-[10px] font-bold text-slate-400">{o.customer_name_snapshot || o.customer_name || "عميل غير محدد"}</p></div><span className={`rounded-full px-2 py-1 text-[10px] font-black ${o.review_status === "missing_shift" ? "bg-sky-100 text-sky-700" : o.status === "delivered" ? "bg-emerald-100 text-emerald-700" : o.status === "failed" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{o.review_status === "missing_shift" ? "مراجعة بسيطة" : ORDER_STATUS_LABELS[o.status] || o.status}</span></div>)}{!safeOrders.length && <p className="py-5 text-center text-xs font-bold text-slate-400">لم تسجل أوردرات في الشيفت الحالي</p>}</div>
           </section>
 
           {/* Cycle summary */}
@@ -2454,7 +2438,7 @@ export default function RiderDashboard() {
         >
           {/* Customer */}
           <label className="block text-sm font-black text-[#061827]">
-            العميل *
+            العميل أو كود العميل — اختياري
           </label>
           <div className="space-y-2">
             <div className="flex gap-2">
@@ -2539,7 +2523,7 @@ export default function RiderDashboard() {
           </div>
 
           <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-200 bg-white p-3">
-            <Field label="اسم العميل *">
+            <Field label="اسم العميل (اختياري)">
               <input
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
@@ -2563,7 +2547,7 @@ export default function RiderDashboard() {
                 placeholder="رقم التليفون"
               />
             </Field>
-            <Field label="عنوان تسليم الأوردر الحالي *">
+            <Field label="عنوان التسليم (اختياري)">
               <input
                 value={customerAddress}
                 onChange={(e) => setCustomerAddress(e.target.value)}
@@ -2718,8 +2702,9 @@ export default function RiderDashboard() {
             disabled={saving}
             className="w-full rounded-2xl bg-[#008E92] py-4 text-lg font-black text-white disabled:opacity-60"
           >
-            {saving ? "⏳" : "حفظ الأوردر ✅"}
+            {saving ? "جاري تسجيل الأوردر..." : orderSaveError ? "إعادة محاولة الحفظ" : "حفظ الأوردر ✅"}
           </button>
+          {orderSaveError && <p className="rounded-2xl bg-rose-50 p-3 text-center text-xs font-black text-rose-700">لم نفقد بياناتك: {orderSaveError}</p>}
         </Sheet>
 
         {/* DUPLICATE WARNING */}
@@ -3158,14 +3143,11 @@ export default function RiderDashboard() {
                 {o.status === "registered" && (
                   <div className="flex gap-2">
                     <button
-                      onClick={() => {
-                        setDeliveryProofOrderId(o.id);
-                        deliveryProofInputRef.current?.click();
-                      }}
+                      onClick={() => handleDelivered(o.id)}
                       disabled={saving}
                       className="flex-1 rounded-xl bg-emerald-500 py-2 text-sm font-black text-white"
                     >
-                      تصوير وتأكيد التسليم 📷
+                      تم التسليم ✅
                     </button>
                     <button
                       onClick={() => {
