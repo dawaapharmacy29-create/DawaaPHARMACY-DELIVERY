@@ -130,6 +130,13 @@ export interface DeliveryOrder {
   pickup_notes?: string | null
   delivery_duration_minutes?: number | null
   delivered_at: string | null
+  delivery_proof_photo_url?: string | null
+  delivery_proof_captured_at?: string | null
+  payment_type?: 'cash' | 'card' | 'prepaid' | string | null
+  cash_collected?: number | null
+  cash_collected_at?: string | null
+  cash_collected_by?: string | null
+  cash_handover_id?: string | null
   failed_reason: string | null
   notes: string | null
   source: string

@@ -28,6 +28,7 @@ import ConnectivitySyncBanner from "../../components/ConnectivitySyncBanner";
 import OrderTimelineBadge from "../../components/OrderTimelineBadge";
 import { enqueueOfflineMutation } from "../../lib/offlineQueue";
 import { useRealtimeSync } from "../../lib/useRealtimeSync";
+import { LiveEarningsBar, NavigateButton, SmartCustomerCard } from "../../components/rider/RiderIntelligence";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type ModalName =
@@ -383,6 +384,8 @@ export default function RiderDashboard() {
   const [, setReceiptExtracting] = useState(false);
   const receiptCameraInputRef = useRef<HTMLInputElement | null>(null);
   const receiptUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const deliveryProofInputRef = useRef<HTMLInputElement | null>(null);
+  const [deliveryProofOrderId, setDeliveryProofOrderId] = useState<string | null>(null);
 
   // Trip form
   const [tripType, setTripType] =
@@ -1336,6 +1339,18 @@ export default function RiderDashboard() {
       toast.success(
         isDup ? "تم تسجيل الأوردر ويحتاج إلى مراجعة" : "تم تسجيل الأوردر بنجاح",
       );
+      if (customerPhoneForSave) {
+        const digits = customerPhoneForSave.replace(/\D/g, "");
+        const normalizedPhone = digits.startsWith("2") ? digits : `2${digits}`;
+        const messageText = `أهلاً ${customerNameForSave}، طلبك من صيدلية دواء في الطريق إليك الآن. رقم الفاتورة: ${invoiceNumber.trim()}`;
+        window.open(`https://api.whatsapp.com/send?phone=${normalizedPhone}&text=${encodeURIComponent(messageText)}`, "_blank", "noopener,noreferrer");
+        void supabase.rpc("rider_log_customer_notification", {
+          p_token: token,
+          p_order_id: data.id,
+          p_recipient_phone: normalizedPhone,
+          p_message_preview: messageText,
+        });
+      }
       setActiveModal(null);
       resetOrderForm();
     } catch (e: any) {
@@ -1513,7 +1528,7 @@ export default function RiderDashboard() {
     }
   }
 
-  async function handleDelivered(orderId: string) {
+  async function handleDelivered(orderId: string, proofUrl: string) {
     try {
       const { data, error } = await supabase
         .from("delivery_orders")
@@ -1534,6 +1549,8 @@ export default function RiderDashboard() {
           review_status: "pending",
           final_count_status: "pending_reconciliation",
           is_countable: false,
+          delivery_proof_photo_url: proofUrl,
+          delivery_proof_captured_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
         .eq("id", orderId)
@@ -1543,9 +1560,33 @@ export default function RiderDashboard() {
       setOrders((prev) =>
         prev.map((o) => (o.id === orderId ? (data as DeliveryOrder) : o)),
       );
-      toast.success("تم التسليم ✅");
+      toast.success("تم التسليم وحفظ صورة التأكيد ✅");
     } catch {
       toast.error("فشل تحديث الأوردر");
+    }
+  }
+
+  async function handleDeliveryProofChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]; const orderId = deliveryProofOrderId;
+    event.target.value = "";
+    if (!file || !orderId) return;
+    setSaving(true);
+    try {
+      const extension = file.name.split(".").pop() || "jpg";
+      const path = `delivery-proofs/${orderId}_${Date.now()}.${extension}`;
+      let bucket = "delivery-proofs";
+      let upload = await supabase.storage.from(bucket).upload(path, file, { contentType: file.type || "image/jpeg", upsert: false });
+      if (upload.error) {
+        bucket = "delivery-receipts";
+        upload = await supabase.storage.from(bucket).upload(path, file, { contentType: file.type || "image/jpeg", upsert: false });
+      }
+      if (upload.error) throw upload.error;
+      const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+      await handleDelivered(orderId, data.publicUrl);
+    } catch (e: any) {
+      toast.error(e?.message || "تعذر رفع صورة تأكيد التسليم");
+    } finally {
+      setSaving(false); setDeliveryProofOrderId(null);
     }
   }
 
@@ -1810,6 +1851,15 @@ export default function RiderDashboard() {
 
         <main className="relative z-10 mx-auto -mt-8 max-w-[980px] space-y-5 px-4 pb-24">
           <ConnectivitySyncBanner />
+          <input ref={deliveryProofInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleDeliveryProofChange} />
+          <LiveEarningsBar
+            deliveredCount={delivered}
+            orderRate={Number(rider.order_rate || 0)}
+            approvedTrips={safeTrips.filter(t => ["approved", "completed"].includes(t.status)).length}
+            tripRate={Number(rider.trip_rate || 0)}
+            hoursWorked={Number((attendance as any)?.total_minutes || ((attendance as any)?.check_in_at ? (new Date((attendance as any)?.check_out_at || Date.now()).getTime() - new Date((attendance as any).check_in_at).getTime()) / 60000 : 0)) / 60}
+            hourlyRate={Number(rider.hourly_rate || 0)}
+          />
           <RiderDeviceMonitor
             riderId={rider?.id}
             riderName={rider?.name}
@@ -2522,6 +2572,7 @@ export default function RiderDashboard() {
               />
             </Field>
           </div>
+          <SmartCustomerCard customerCode={customerCode || selectedCustomer?.code || ""} />
 
           {/* Invoice number */}
           <Field label="رقم الفاتورة *">
@@ -3083,6 +3134,7 @@ export default function RiderDashboard() {
                   {o.order_multiplier >= 1.5 ? " 🔥" : ""}
                 </p>
                 <OrderTimelineBadge order={o as any} />
+                <NavigateButton address={o.customer_address_snapshot} />
                 {o.status === "registered" && !(o as any).picked_up_at && (
                   <button
                     onClick={() => handlePickedUp(o.id)}
@@ -3106,10 +3158,14 @@ export default function RiderDashboard() {
                 {o.status === "registered" && (
                   <div className="flex gap-2">
                     <button
-                      onClick={() => handleDelivered(o.id)}
+                      onClick={() => {
+                        setDeliveryProofOrderId(o.id);
+                        deliveryProofInputRef.current?.click();
+                      }}
+                      disabled={saving}
                       className="flex-1 rounded-xl bg-emerald-500 py-2 text-sm font-black text-white"
                     >
-                      تم التسليم ✅
+                      تصوير وتأكيد التسليم 📷
                     </button>
                     <button
                       onClick={() => {

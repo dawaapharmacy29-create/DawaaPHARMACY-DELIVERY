@@ -25,6 +25,12 @@ const BranchManagerDashboard = lazy(() => import('./pages/admin/BranchManagerDas
 const CustomerImport = lazy(() => import('./pages/admin/CustomerImport'))
 const CustomerAnalytics = lazy(() => import('./pages/admin/CustomerAnalytics'))
 const RiderPerformanceDetail = lazy(() => import('./pages/admin/RiderPerformanceDetail'))
+const OperationsBoard = lazy(() => import('./pages/admin/OperationsBoard'))
+const CashFlowDashboard = lazy(() => import('./pages/admin/CashFlowDashboard'))
+const FraudAlerts = lazy(() => import('./pages/admin/FraudAlerts'))
+const InvoiceNotebook = lazy(() => import('./pages/admin/InvoiceNotebook'))
+const RoutePlanner = lazy(() => import('./pages/admin/RoutePlanner'))
+const ReportsCenter = lazy(() => import('./pages/admin/ReportsCenter'))
 
 // ── Page loader skeleton ─────────────────────────────────────────────────────
 function PageLoader() {
@@ -70,6 +76,12 @@ function App() {
             <Route path="/admin/trips-without-invoice" element={<ProtectedRoute pageKey="trips_without_invoice"><TripsWithoutInvoice /></ProtectedRoute>} />
             <Route path="/admin/customer-import" element={<ProtectedRoute pageKey="customer_import"><CustomerImport /></ProtectedRoute>} />
             <Route path="/admin/customer-analytics" element={<ProtectedRoute pageKey="customer_analytics"><CustomerAnalytics /></ProtectedRoute>} />
+            <Route path="/admin/ops" element={<ProtectedRoute pageKey="dashboard"><OperationsBoard /></ProtectedRoute>} />
+            <Route path="/admin/cash" element={<ProtectedRoute pageKey="dashboard"><CashFlowDashboard /></ProtectedRoute>} />
+            <Route path="/admin/fraud-alerts" element={<ProtectedRoute pageKey="dashboard"><FraudAlerts /></ProtectedRoute>} />
+            <Route path="/admin/invoice-notebook" element={<ProtectedRoute pageKey="reconciliation"><InvoiceNotebook /></ProtectedRoute>} />
+            <Route path="/admin/route-plan" element={<ProtectedRoute pageKey="dashboard"><RoutePlanner /></ProtectedRoute>} />
+            <Route path="/admin/reports" element={<ProtectedRoute pageKey="dashboard"><ReportsCenter /></ProtectedRoute>} />
 
             {/* Fallback */}
             <Route path="/"  element={<Navigate to="/login" replace />} />
