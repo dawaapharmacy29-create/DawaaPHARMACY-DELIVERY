@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, AlertCircle, Lock, User } from 'lucide-react'
-import { setRiderSession } from '../lib/auth'
+import { setRiderSession, validateStoredRiderSession } from '../lib/auth'
 import { getOrCreateDeviceId, getDeviceLabel } from '../lib/deviceBinding'
 import { supabase } from '../lib/supabase'
 import { toast } from 'sonner'
@@ -21,6 +21,23 @@ export default function RiderLogin() {
   const [error, setError] = useState('')
   const [pendingRiderId, setPendingRiderId] = useState<string | null>(null)
   const [pendingRiderName, setPendingRiderName] = useState('')
+  const [checkingSession, setCheckingSession] = useState(true)
+
+  useEffect(() => {
+    let active = true
+    void validateStoredRiderSession().then(session => {
+      if (!active) return
+      if (session?.must_change_pin) {
+        setPendingRiderId(session.rider_id)
+        setPendingRiderName(session.rider_name || '')
+        setStep('change_pin')
+      } else if (session?.rider_id) {
+        navigate('/rider', { replace: true })
+      }
+      setCheckingSession(false)
+    })
+    return () => { active = false }
+  }, [navigate])
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -90,23 +107,12 @@ export default function RiderLogin() {
         setError(errorMsg)
         return
       }
+      if (!result.session_token) {
+        setError('السيرفر لم يُنشئ جلسة آمنة. طبّق Migration 59 ثم حاول مرة أخرى.')
+        return
+      }
 
       // ─── تسجيل دخول ناجح ───────────────────────────────────────────
-      // احفظ الجلسة الكاملة
-      localStorage.setItem('dawaa_rider_session', JSON.stringify({
-        account_id: result.account_id || '',
-        rider_id: result.rider_id,
-        username: result.username || cleanUname,
-        rider_name: result.rider_name,
-        branch_id: result.branch_id || '',
-        branch_name: result.branch_name || '',
-        role: result.role || 'rider',
-        must_change_pin: !!result.must_change_pin,
-        session_token: result.session_token || '',
-        logged_in_at: new Date().toISOString(),
-      }))
-
-      // backward compat
       setRiderSession({
         account_id: result.account_id,
         rider_id: result.rider_id,
@@ -116,7 +122,8 @@ export default function RiderLogin() {
         branch_name: result.branch_name,
         role: result.role || 'rider',
         must_change_pin: !!result.must_change_pin,
-        session_token: result.session_token || ''
+        session_token: result.session_token || '',
+        expires_at: result.expires_at || result.session_expires_at
       })
 
       if (result.must_change_pin) {
@@ -176,6 +183,10 @@ export default function RiderLogin() {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (checkingSession) {
+    return <div className="flex min-h-screen items-center justify-center bg-[#061827]" dir="rtl"><div className="text-center text-white"><div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-teal-400 border-t-transparent"/><p className="mt-3 text-sm font-black">جاري استعادة جلسة الدليفري...</p></div></div>
   }
 
   // ===== CHANGE PIN SCREEN =====

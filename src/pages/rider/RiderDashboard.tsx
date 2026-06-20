@@ -1,9 +1,9 @@
 import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, X } from "lucide-react";
+import { LogOut, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "../../lib/supabase";
-import { getRiderSession, getRiderById } from "../../lib/auth";
+import { clearRiderSession, getRiderSession, getRiderById, logout } from "../../lib/auth";
 import {
   formatMoney,
   formatTime,
@@ -605,6 +605,10 @@ export default function RiderDashboard() {
               setRiderPermissions(permissionsRes.value.data ?? []);
             if (showToast) toast.success("تم تحديث البيانات");
             setLoading(false);
+            return;
+          } else if (dash?.error === "expired_session" || dash?.error === "invalid_session") {
+            clearRiderSession();
+            navigate("/rider-login", { replace: true });
             return;
           } else if (dashboardError) {
           }
@@ -1803,6 +1807,11 @@ export default function RiderDashboard() {
   })();
 
   // ── RENDER ────────────────────────────────────────────────────────────────
+  async function handleDeviceLogout() {
+    await logout();
+    navigate("/rider-login", { replace: true });
+  }
+
   return (
     <>
       <PwaInstallPrompt />
@@ -1818,16 +1827,11 @@ export default function RiderDashboard() {
             }}
           />
           <div className="relative flex items-center justify-between gap-4">
-            <button
-              onClick={() => setActiveModal("notifications")}
-              className="relative grid h-14 w-14 place-items-center rounded-3xl bg-white/10 text-white backdrop-blur transition active:scale-95"
-              aria-label="التنبيهات"
-            >
-              <span className="text-2xl">🔔</span>
-              {notificationCount > 0 && (
-                <span className="absolute -right-1 -top-1 h-4 w-4 rounded-full bg-rose-500 ring-2 ring-white" />
-              )}
-            </button>
+            <div className="flex gap-2"><button onClick={() => void handleDeviceLogout()} className="grid h-11 w-11 place-items-center rounded-2xl bg-white/10 text-white backdrop-blur" aria-label="تسجيل خروج من هذا الجهاز"><LogOut size={18}/></button><button
+                onClick={() => setActiveModal("notifications")}
+                className="relative grid h-11 w-11 place-items-center rounded-2xl bg-white/10 text-white backdrop-blur transition active:scale-95"
+                aria-label="التنبيهات"
+              ><span className="text-xl">🔔</span>{notificationCount > 0 && <span className="absolute -right-1 -top-1 h-4 w-4 rounded-full bg-rose-500 ring-2 ring-white" />}</button></div>
 
             <div className="flex flex-1 items-center justify-end gap-5">
               <div className="hidden items-center gap-4 border-r border-white/35 pr-5 sm:flex">
@@ -2347,6 +2351,7 @@ export default function RiderDashboard() {
                 </button>
               </div>
             </div>
+            <button type="button" onClick={() => void handleDeviceLogout()} className="flex w-full items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 py-3 text-sm font-black text-rose-700"><LogOut size={17}/> تسجيل خروج من هذا الجهاز</button>
             {notificationCount === 0 ? (
               <div className="rounded-3xl bg-white p-6 text-center shadow-sm">
                 <p className="text-4xl">🔔</p>

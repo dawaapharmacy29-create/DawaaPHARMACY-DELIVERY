@@ -172,6 +172,7 @@ export function setRiderSession(data: {
   role?: string
   must_change_pin?: boolean
   session_token?: string
+  expires_at?: string
 }) {
   const loggedInAt = new Date()
   localStorage.setItem(RIDER_SESSION_KEY, JSON.stringify({
@@ -185,7 +186,7 @@ export function setRiderSession(data: {
     must_change_pin: !!data.must_change_pin,
     session_token: data.session_token || '',
     logged_in_at: loggedInAt.toISOString(),
-    expires_at: new Date(loggedInAt.getTime() + SESSION_DURATION_MS).toISOString(),
+    expires_at: data.expires_at || new Date(loggedInAt.getTime() + SESSION_DURATION_MS).toISOString(),
   }))
   // backward compat
   if (data.rider_id) localStorage.setItem('rider_id', data.rider_id)
@@ -208,6 +209,46 @@ export function clearRiderSession() {
 export function hasRiderSession(): boolean {
   const s = restoreRiderSession()
   return !!(s?.account_id || s?.rider_id)
+}
+
+export async function validateStoredRiderSession(): Promise<StoredRiderSession | null> {
+  const local = restoreRiderSession()
+  if (!local?.session_token) {
+    clearRiderSession()
+    return null
+  }
+  try {
+    const { data, error } = await supabase.rpc('rider_validate_session', { p_token: local.session_token })
+    const result = (Array.isArray(data) ? data[0] : data) as any
+    // خطأ اتصال أو PostgREST مؤقت لا يخرج الدليفري من الشغل؛ الرد valid=false فقط هو الذي يلغي الجلسة.
+    if (error) return local
+    if (!result?.valid) {
+      clearRiderSession()
+      return null
+    }
+    const verified: StoredRiderSession = normalizeStoredSession({
+      ...local,
+      account_id: result.account_id || local.account_id,
+      rider_id: result.rider_id || local.rider_id,
+      username: result.username || local.username,
+      rider_name: result.rider_name || local.rider_name,
+      branch_id: result.branch_id || local.branch_id,
+      branch_name: result.branch_name || local.branch_name,
+      role: result.role || local.role,
+      must_change_pin: result.must_change_pin ?? local.must_change_pin,
+      expires_at: result.expires_at || local.expires_at,
+      session_token: local.session_token,
+    })
+    localStorage.setItem(RIDER_SESSION_KEY, JSON.stringify(verified))
+    return verified
+  } catch {
+    // فشل الشبكة المؤقت لا يساوي انتهاء الجلسة؛ نحتفظ بها حتى يعود الاتصال.
+    if (navigator.onLine) {
+      clearRiderSession()
+      return null
+    }
+    return local
+  }
 }
 
 // ─── RIDER DATA FETCHING (by rider_id from session) ───────────────────────
@@ -277,7 +318,14 @@ export async function getUserProfile(userId: string): Promise<any | null> {
 }
 
 export async function logout() {
-  // Clear rider session
+  const riderSession = restoreRiderSession()
+  if (riderSession?.session_token) {
+    try {
+      await supabase.rpc('rider_logout', { p_token: riderSession.session_token })
+    } catch {
+      // نمسح الجهاز حتى لو تعذر إبلاغ السيرفر؛ الجلسة ستنتهي أو تُلغى عند Login جديد.
+    }
+  }
   clearRiderSession()
   // Also clear Supabase Auth session for admin
   await supabase.auth.signOut()

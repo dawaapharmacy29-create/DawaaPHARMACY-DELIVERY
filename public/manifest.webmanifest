@@ -2,7 +2,7 @@
   "name": "Dawaa Delivery Control",
   "short_name": "Dawaa",
   "description": "تطبيق إدارة الدليفري لصيدليات دواء",
-  "start_url": "/login?source=pwa",
+  "start_url": "/rider-login?source=pwa",
   "scope": "/",
   "id": "/login?source=pwa",
   "display": "standalone",
