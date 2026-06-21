@@ -1,7 +1,5 @@
 import { defineConfig } from 'vite'
-// NOTE: Only @vitejs/plugin-react-swc is installed in this project.
-// Do NOT change this to @vitejs/plugin-react — it will break the build.
-import react from '@vitejs/plugin-react-swc'
+import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
