@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import ErrorBoundary from './components/ErrorBoundary'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -48,11 +48,28 @@ function PageLoader() {
   )
 }
 
+function AdminQuickPreviewButton() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  if (!location.pathname.startsWith('/admin') || location.pathname === '/admin/rider-preview') return null
+  return (
+    <button
+      type="button"
+      onClick={() => navigate('/admin/rider-preview')}
+      className="fixed bottom-5 left-5 z-[90] rounded-3xl bg-[#008E92] px-5 py-4 text-sm font-black text-white shadow-2xl shadow-teal-950/20 transition hover:-translate-y-1 hover:bg-[#00777b]"
+      dir="rtl"
+    >
+      تجربة كالدليفري
+    </button>
+  )
+}
+
 function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
         <Toaster richColors position="top-center" dir="rtl" />
+        <AdminQuickPreviewButton />
         <Suspense fallback={<PageLoader />}>
           <Routes>
             {/* Public routes */}
