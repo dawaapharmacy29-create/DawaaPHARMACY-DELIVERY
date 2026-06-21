@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { Eye, RefreshCw, Search, Smartphone, UserCheck } from 'lucide-react'
 import RiderOperatingDashboard from '../../components/rider/RiderOperatingDashboard'
 import { supabase } from '../../lib/supabase'
+import { getAdminStats } from '../../lib/delivery'
 import { formatDateTime, todayIso } from '../../lib/helpers'
 import { readRiderDeviceSnapshot, type RiderDeviceSnapshot } from '../../lib/riderDeviceSnapshot'
 import type { Attendance, Branch, DeliveryOrder, InternalTrip, Rider } from '../../lib/types'
@@ -26,6 +27,14 @@ function customerName(order: any) {
 
 function invoiceNumber(order: any) {
   return order.invoice_number || order.invoice_no || '—'
+}
+
+function riderDisplayName(item: any) {
+  return item.name || item.display_name || item.username || 'مندوب'
+}
+
+function sortRiders(rows: Rider[]) {
+  return [...rows].sort((a: any, b: any) => riderDisplayName(a).localeCompare(riderDisplayName(b), 'ar'))
 }
 
 export default function RiderImpersonationPreview() {
@@ -56,13 +65,26 @@ export default function RiderImpersonationPreview() {
   async function loadRiders() {
     try {
       setLoading(true)
-      const { data, error } = await supabase
+      let rows: Rider[] = []
+
+      const direct = await supabase
         .from('delivery_riders')
         .select('*')
-        .order('name', { ascending: true })
-      if (error) throw error
-      setRiders((data ?? []) as Rider[])
-      if (!selectedRiderId && data?.[0]?.id) setSelectedRiderId(data[0].id)
+        .limit(500)
+
+      if (!direct.error && direct.data?.length) {
+        rows = direct.data as Rider[]
+      }
+
+      if (rows.length === 0) {
+        const stats = await getAdminStats(null)
+        rows = ((stats as any)?.riders ?? []) as Rider[]
+      }
+
+      const sorted = sortRiders(rows)
+      setRiders(sorted)
+      if (!selectedRiderId && sorted[0]?.id) setSelectedRiderId(sorted[0].id)
+      if (sorted.length === 0) toast.warning('لم يتم العثور على مناديب. راجع صلاحيات جدول المناديب أو مصدر getAdminStats.')
     } catch (error: any) {
       toast.error(error?.message || 'تعذر تحميل المناديب')
     } finally {
@@ -75,23 +97,27 @@ export default function RiderImpersonationPreview() {
     try {
       setLoading(true)
       const today = todayIso()
-      const riderRow = riders.find((item) => item.id === riderId)
-      const riderPromise = riderRow
-        ? Promise.resolve({ data: riderRow, error: null })
-        : supabase.from('delivery_riders').select('*').eq('id', riderId).maybeSingle()
+      let loadedRider = riders.find((item) => item.id === riderId) || null
 
-      const [riderRes, attRes, orderRes, tripRes, deviceSnapshot] = await Promise.all([
-        riderPromise,
+      if (!loadedRider) {
+        const direct = await supabase.from('delivery_riders').select('*').eq('id', riderId).maybeSingle()
+        if (!direct.error && direct.data) loadedRider = direct.data as Rider
+      }
+
+      if (!loadedRider) {
+        const stats = await getAdminStats(null)
+        loadedRider = (((stats as any)?.riders ?? []) as Rider[]).find((item) => item.id === riderId) || null
+      }
+
+      if (!loadedRider) throw new Error('لم يتم العثور على المندوب')
+      setRider(loadedRider)
+
+      const [attRes, orderRes, tripRes, deviceSnapshot] = await Promise.all([
         supabase.from('delivery_attendance').select('*').eq('rider_id', riderId).gte('work_date', today).lte('work_date', today).order('check_in_at', { ascending: false }).limit(5),
         supabase.from('delivery_orders').select('*').eq('rider_id', riderId).gte('work_date', today).lte('work_date', today).order('registered_at', { ascending: false }),
         supabase.from('internal_trips').select('*').eq('rider_id', riderId).gte('work_date', today).lte('work_date', today).order('registered_at', { ascending: false }),
         readRiderDeviceSnapshot(),
       ])
-
-      if (riderRes.error) throw riderRes.error
-      const loadedRider = riderRes.data as Rider | null
-      if (!loadedRider) throw new Error('لم يتم العثور على المندوب')
-      setRider(loadedRider)
 
       if (loadedRider.branch_id) {
         const { data: branchData } = await supabase.from('delivery_branches').select('*').eq('id', loadedRider.branch_id).maybeSingle()
@@ -141,6 +167,7 @@ export default function RiderImpersonationPreview() {
           </div>
           <div className="flex flex-wrap gap-2">
             <button onClick={() => navigate('/admin')} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-600">رجوع للإدارة</button>
+            <button onClick={() => void loadRiders()} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-600">تحديث القائمة</button>
             <button onClick={() => void loadSelectedRider(selectedRiderId, true)} className="inline-flex items-center gap-2 rounded-2xl bg-[#008E92] px-4 py-2 text-sm font-black text-white">
               <RefreshCw size={16} /> تحديث
             </button>
@@ -160,7 +187,7 @@ export default function RiderImpersonationPreview() {
               return (
                 <button key={item.id} onClick={() => setSelectedRiderId(item.id)} className={`w-full rounded-2xl border p-3 text-right transition ${active ? 'border-[#008E92] bg-[#EAF8F8]' : 'border-slate-100 bg-slate-50 hover:bg-slate-100'}`}>
                   <div className="flex items-center justify-between gap-2">
-                    <p className="font-black text-slate-800">{item.name || item.display_name || 'مندوب'}</p>
+                    <p className="font-black text-slate-800">{riderDisplayName(item)}</p>
                     {active ? <UserCheck size={17} className="text-[#008E92]" /> : <Smartphone size={17} className="text-slate-400" />}
                   </div>
                   <p className="mt-1 text-xs font-bold text-slate-500">{item.branch_name || 'فرع غير محدد'}</p>
@@ -168,6 +195,7 @@ export default function RiderImpersonationPreview() {
                 </button>
               )
             })}
+            {loading ? <p className="rounded-2xl bg-slate-50 p-3 text-center text-sm font-black text-slate-500">جاري تحميل المناديب...</p> : null}
             {!loading && filteredRiders.length === 0 ? <p className="rounded-2xl bg-amber-50 p-3 text-center text-sm font-black text-amber-700">لا توجد نتائج</p> : null}
           </div>
         </aside>
