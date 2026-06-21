@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import RiderOperatingDashboard from '../../components/rider/RiderOperatingDashboard'
+import RiderQuickOrderForm from '../../components/rider/RiderQuickOrderForm'
 import { supabase } from '../../lib/supabase'
 import { getRiderById, getRiderSession, logout } from '../../lib/auth'
 import { todayIso } from '../../lib/helpers'
@@ -69,6 +70,7 @@ export default function RiderDashboardV2() {
   const [saving, setSaving] = useState(false)
   const [device, setDevice] = useState<RiderDeviceSnapshot | null>(null)
   const [pendingSyncCount, setPendingSyncCount] = useState(offlineQueueCount())
+  const [quickOrderOpen, setQuickOrderOpen] = useState(false)
 
   const session = useMemo(() => getRiderSession(), [])
   const riderId = rider?.id || session.rider_id
@@ -213,46 +215,53 @@ export default function RiderDashboardV2() {
   }
 
   return (
-    <RiderOperatingDashboard
-      rider={rider}
-      branchName={branch?.name ?? rider.branch_name}
-      attendance={attendance}
-      orders={orders}
-      trips={trips}
-      saving={saving}
-      pendingSyncCount={pendingSyncCount}
-      device={{
-        batteryPercent: device?.batteryPercent,
-        batterySupported: device?.batterySupported,
-        isCharging: device?.isCharging,
-        online: device?.online,
-        gpsAccuracy: device?.gpsAccuracy,
-        lastSyncText: 'تحديث مباشر',
-      }}
-      onCheckInOut={handleCheckInOut}
-      onNewOrder={() => {
-        toast.info('التسجيل الحقيقي للأوردرات ما زال في الداشبورد الحالي لحين نقل الفورم بأمان')
-        navigate('/rider')
-      }}
-      onOpenOrders={() => {
-        toast.info('افتحنا الداشبورد الحالي لعرض وإدارة الأوردرات بدون كسر الوظائف القديمة')
-        navigate('/rider')
-      }}
-      onNewTrip={() => {
-        toast.info('تسجيل المشاوير ما زال في الداشبورد الحالي لحين نقل الفورم بأمان')
-        navigate('/rider')
-      }}
-      onRefresh={() => void loadAll(true)}
-      onLogout={() => void handleLogout()}
-    >
-      <section className="rounded-[30px] border border-slate-100 bg-white p-4 shadow-sm" dir="rtl">
-        <h2 className="text-lg font-black text-[#061827]">تشغيل تجريبي آمن</h2>
-        <div className="mt-3 space-y-2 text-sm font-bold text-slate-600">
-          <p>✅ هذه النسخة تقرأ بياناتك الفعلية وتدعم الحضور والانصراف بنفس RPC الحالي.</p>
-          <p>✅ تسجيل الأوردرات والمشاوير ما زال يتحول للداشبورد الحالي حتى لا نكسر أي فورم أو مراجعة موجودة.</p>
-          <p>✅ بعد الاختبار، ننقل فورم الأوردرات والمشاوير تدريجيًا إلى هذه الشاشة.</p>
-        </div>
-      </section>
-    </RiderOperatingDashboard>
+    <>
+      <RiderOperatingDashboard
+        rider={rider}
+        branchName={branch?.name ?? rider.branch_name}
+        attendance={attendance}
+        orders={orders}
+        trips={trips}
+        saving={saving}
+        pendingSyncCount={pendingSyncCount}
+        device={{
+          batteryPercent: device?.batteryPercent,
+          batterySupported: device?.batterySupported,
+          isCharging: device?.isCharging,
+          online: device?.online,
+          gpsAccuracy: device?.gpsAccuracy,
+          lastSyncText: 'تحديث مباشر',
+        }}
+        onCheckInOut={handleCheckInOut}
+        onNewOrder={() => setQuickOrderOpen(true)}
+        onOpenOrders={() => {
+          toast.info('إدارة الأوردرات المتقدمة ما زالت في الداشبورد الحالي مؤقتًا')
+          navigate('/rider')
+        }}
+        onNewTrip={() => {
+          toast.info('تسجيل المشاوير ما زال في الداشبورد الحالي لحين نقل الفورم بأمان')
+          navigate('/rider')
+        }}
+        onRefresh={() => void loadAll(true)}
+        onLogout={() => void handleLogout()}
+      >
+        <section className="rounded-[30px] border border-slate-100 bg-white p-4 shadow-sm" dir="rtl">
+          <h2 className="text-lg font-black text-[#061827]">تشغيل تجريبي آمن</h2>
+          <div className="mt-3 space-y-2 text-sm font-bold text-slate-600">
+            <p>✅ الحضور والانصراف يعملان من هذه الشاشة.</p>
+            <p>✅ تسجيل الأوردر السريع يعمل الآن للفواتير العادية بدون ريسيت أو ×1.5.</p>
+            <p>✅ الأوردرات المتقدمة، الريسيت، المشاوير، والتعديل الكامل ما زالت في الداشبورد الحالي مؤقتًا.</p>
+          </div>
+        </section>
+      </RiderOperatingDashboard>
+
+      <RiderQuickOrderForm
+        open={quickOrderOpen}
+        rider={rider}
+        branchName={branch?.name ?? rider.branch_name}
+        onClose={() => setQuickOrderOpen(false)}
+        onSaved={() => loadAll(false)}
+      />
+    </>
   )
 }
