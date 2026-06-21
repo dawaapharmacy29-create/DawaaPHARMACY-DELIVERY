@@ -24,6 +24,7 @@ const Trips               = lazy(() => import('./pages/admin/Trips'))
 const TripsWithoutInvoice = lazy(() => import('./pages/admin/TripsWithoutInvoice'))
 const RiderAccounts       = lazy(() => import('./pages/admin/RiderAccounts'))
 const RiderActions        = lazy(() => import('./pages/admin/RiderActions'))
+const RiderImpersonationPreview = lazy(() => import('./pages/admin/RiderImpersonationPreview'))
 const BranchManagerDashboard = lazy(() => import('./pages/admin/BranchManagerDashboard'))
 const CustomerImport = lazy(() => import('./pages/admin/CustomerImport'))
 const CustomerAnalytics = lazy(() => import('./pages/admin/CustomerAnalytics'))
@@ -72,6 +73,7 @@ function App() {
             <Route path="/admin/rider-schedules"       element={<ProtectedRoute pageKey="rider_schedules"><RiderSchedules /></ProtectedRoute>} />
             <Route path="/admin/riders"                element={<ProtectedRoute pageKey="riders"><Riders /></ProtectedRoute>} />
             <Route path="/admin/rider-accounts"        element={<ProtectedRoute pageKey="rider_accounts"><RiderAccounts /></ProtectedRoute>} />
+            <Route path="/admin/rider-preview"         element={<ProtectedRoute pageKey="riders"><RiderImpersonationPreview /></ProtectedRoute>} />
             <Route path="/admin/performance"           element={<ProtectedRoute pageKey="performance"><Performance /></ProtectedRoute>} />
             <Route path="/admin/riders/:riderId/performance" element={<ProtectedRoute pageKey="performance"><RiderPerformanceDetail /></ProtectedRoute>} />
             <Route path="/admin/duplicate-invoices"    element={<ProtectedRoute pageKey="duplicate_invoices"><DuplicateInvoices /></ProtectedRoute>} />
