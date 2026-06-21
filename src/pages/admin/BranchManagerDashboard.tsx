@@ -1,3 +1,4 @@
+
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, Bell, Bike, CheckCircle2, Gift, LogOut, Package, RefreshCw, Search, XCircle } from 'lucide-react'
@@ -51,7 +52,8 @@ export default function BranchManagerDashboard() {
   const [loading, setLoading] = useState(true)
   const period = getOperationalPeriod()
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // The 'react-hooks/exhaustive-deps' rule is for ESLint, not a TypeScript syntax error.
+  // Removing the ESLint directive to fix the reported "error".
   async function load() {
     setLoading(true)
     try {
