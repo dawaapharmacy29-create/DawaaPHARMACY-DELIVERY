@@ -276,6 +276,10 @@ const ADMIN_LOGIN_ALIASES: Record<string, string> = {
   'DR.MOAZ':  `dr.moaz@${ADMIN_EMAIL_DOMAIN}`,
   'د.معاذ':   `dr.moaz@${ADMIN_EMAIL_DOMAIN}`,
   'د. معاذ':  `dr.moaz@${ADMIN_EMAIL_DOMAIN}`,
+  'د معاذ':   `dr.moaz@${ADMIN_EMAIL_DOMAIN}`,
+  'د/ معاذ':  `dr.moaz@${ADMIN_EMAIL_DOMAIN}`,
+  'د/معاذ':   `dr.moaz@${ADMIN_EMAIL_DOMAIN}`,
+  'معاذ':     `dr.moaz@${ADMIN_EMAIL_DOMAIN}`,
 }
 
 export function resolveAdminLogin(input: string): string | null {
