@@ -9,9 +9,8 @@ const Login          = lazy(() => import('./pages/Login'))
 const RiderLogin     = lazy(() => import('./pages/RiderLogin'))
 const Health         = lazy(() => import('./pages/Health'))
 const SafeAdmin      = lazy(() => import('./pages/SafeAdmin'))
-const RiderDashboard = lazy(() => import('./pages/rider/RiderDashboardV3'))
-const RiderDashboardLegacy = lazy(() => import('./pages/rider/RiderDashboard'))
-const RiderDashboardV2 = lazy(() => import('./pages/rider/RiderDashboardV2'))
+// ⚠️ Only RiderDashboard exists — do not import V2/V3/Legacy variants
+const RiderDashboard = lazy(() => import('./pages/rider/RiderDashboard'))
 
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'))
 const ExecutiveDashboard = lazy(() => import('./pages/admin/ExecutiveDashboard'))
@@ -80,8 +79,6 @@ function App() {
 
             {/* Protected — Rider */}
             <Route path="/rider" element={<ProtectedRoute pageKey="rider"><RiderDashboard /></ProtectedRoute>} />
-            <Route path="/rider-v2" element={<ProtectedRoute pageKey="rider"><RiderDashboardV2 /></ProtectedRoute>} />
-            <Route path="/rider-legacy" element={<ProtectedRoute pageKey="rider"><RiderDashboardLegacy /></ProtectedRoute>} />
 
             {/* Protected — Admin */}
             <Route path="/admin"                       element={<ProtectedRoute pageKey="dashboard"><AdminDashboard /></ProtectedRoute>} />
