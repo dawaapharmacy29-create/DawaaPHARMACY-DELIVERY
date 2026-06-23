@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, AlertCircle, User, Lock } from 'lucide-react'
-import { getUserProfile, loginUnified, loginWithPin, resolveAdminLogin, setRiderSession } from '../lib/auth'
+import { clearRiderSession, getUserProfile, loginUnified, loginWithPin, resolveAdminLogin, setRiderSession } from '../lib/auth'
 import { supabase } from '../lib/supabase'
 import { toast } from 'sonner'
 import PwaInstallPrompt from '../components/PwaInstallPrompt'
@@ -54,7 +54,6 @@ export default function Login() {
       return
     }
 
-
     const result = await loginWithPin(riderUsername, pin)
 
     if (!result?.success || (!result.rider_id && !result.account_id)) {
@@ -106,8 +105,11 @@ export default function Login() {
       return
     }
 
+    // مهم جدًا: نمسح جلسة الدليفري/PIN القديمة حتى لا تمنع دخول الإدارة.
+    clearRiderSession()
+
     toast.success(`أهلاً ${profile.display_name}`)
-    navigate(profile.role === 'rider' ? '/rider' : '/admin', { replace: true })
+    navigate(profile.role === 'rider' ? '/rider' : (profile.role === 'branch_manager' ? '/admin/branch' : '/admin'), { replace: true })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -124,14 +126,14 @@ export default function Login() {
       const pinCandidate = normalizePin(password)
       const shouldTryPinFirst = /^\d{4,6}$/.test(pinCandidate)
 
-      if (shouldTryPinFirst) {
-        // أرقام فقط = PIN → نجرب rider login أولاً
-        await handleRiderLogin()
-      } else if (looksLikeAdmin && !shouldTryPinFirst) {
-        // يبدو إدارة + كلمة سر طويلة = admin
+      if (looksLikeAdmin) {
+        // لو الاسم أدمن معروف مثل د معاذ أو dr.moaz، ندخله Supabase Auth حتى لو الباسورد أرقام.
         await handleAdminLogin()
+      } else if (shouldTryPinFirst) {
+        // أرقام فقط = PIN → Rider login
+        await handleRiderLogin()
       } else {
-        // باقي الحالات = rider
+        // باقي الحالات = rider username/password-like fallback
         await handleRiderLogin()
       }
     } catch (err: any) {
@@ -180,14 +182,14 @@ export default function Login() {
                 {looksLikeAdmin ? 'دخول الإدارة' : 'دخول الدليفري'}
               </h2>
               <p className="mt-2 font-bold text-slate-500">
-                {looksLikeAdmin ? 'اكتب dr.moaz والـ PIN أو الإيميل وكلمة السر' : 'اكتب username والـ PIN'}
+                {looksLikeAdmin ? 'اكتب dr.moaz أو د معاذ والـ PIN أو الإيميل وكلمة السر' : 'اكتب username والـ PIN'}
               </p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
               <div>
                 <label className="dawaa-label">
-                  {looksLikeAdmin ? 'البريد الإلكتروني' : 'Username'}
+                  {looksLikeAdmin ? 'البريد الإلكتروني / اسم الإدارة' : 'Username'}
                 </label>
                 <div className="relative">
                   <User size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -196,7 +198,7 @@ export default function Login() {
                     value={username}
                     onChange={e => { setUsername(e.target.value); setError('') }}
                     className="dawaa-input pr-9 text-right"
-                    placeholder={looksLikeAdmin ? 'مثال: dr.moaz' : 'مثال: AHMD.ALBTL'}
+                    placeholder={looksLikeAdmin ? 'مثال: dr.moaz أو د معاذ' : 'مثال: AHMD.ALBTL'}
                     disabled={loading}
                     autoCapitalize="none"
                     autoCorrect="off"
@@ -250,7 +252,7 @@ export default function Login() {
             </form>
 
             <p className="mt-6 text-center text-xs font-bold text-slate-400">
-              الدليفري يدخل بالـ username والـ PIN. الإدارة تدخل بـ dr.moaz أو الإيميل وكلمة السر.
+              الدليفري يدخل بالـ username والـ PIN. الإدارة تدخل بـ dr.moaz أو د معاذ أو الإيميل وكلمة السر.
             </p>
           </div>
         </div>
