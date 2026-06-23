@@ -68,6 +68,17 @@ function normalizedWhatsappPhone(phone: string) {
 function tripLabel(trip: any) {
   return `${trip.from_label || '—'} ← ${trip.to_label || '—'}`
 }
+function normalizeAttendance(row: any): Attendance {
+  return {
+    ...row,
+    work_date: row.work_date || row.shift_date,
+    check_in_at: row.check_in_at || row.check_in_time,
+    check_out_at: row.check_out_at || row.check_out_time,
+  } as Attendance
+}
+function attendanceIsOpen(row: Attendance) {
+  return Boolean((row as any).check_in_at && !(row as any).check_out_at)
+}
 
 function LoadingScreen() {
   return (
@@ -119,18 +130,50 @@ export default function RiderDashboardV3() {
       const loadedRider = await getRiderById(currentRiderId)
       if (!loadedRider) throw new Error('لم يتم العثور على حساب الدليفري')
       setRider(loadedRider)
+
       const today = todayIso()
-      const [branchRes, attRes, orderRes, tripRes] = await Promise.allSettled([
+      const yesterday = new Date()
+      yesterday.setDate(yesterday.getDate() - 1)
+      const yesterdayIso = yesterday.toISOString().slice(0, 10)
+
+      const [branchRes, attRes] = await Promise.allSettled([
         loadedRider.branch_id ? supabase.from('delivery_branches').select('*').eq('id', loadedRider.branch_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
-        supabase.from('delivery_attendance').select('*').eq('rider_id', currentRiderId).gte('work_date', today).lte('work_date', today).order('check_in_at', { ascending: false }).limit(5),
-        supabase.from('delivery_orders').select('*').eq('rider_id', currentRiderId).gte('work_date', today).lte('work_date', today).order('registered_at', { ascending: false }),
-        supabase.from('internal_trips').select('*').eq('rider_id', currentRiderId).gte('work_date', today).lte('work_date', today).order('registered_at', { ascending: false }),
+        supabase
+          .from('delivery_attendance')
+          .select('*')
+          .eq('rider_id', currentRiderId)
+          .or(`work_date.eq.${today},shift_date.eq.${today},work_date.eq.${yesterdayIso},shift_date.eq.${yesterdayIso},check_out_at.is.null,check_out_time.is.null`)
+          .order('created_at', { ascending: false })
+          .limit(10),
       ])
+
       if (branchRes.status === 'fulfilled' && !branchRes.value.error) setBranch(branchRes.value.data as Branch | null)
+
+      let activeAttendance: Attendance | null = null
       if (attRes.status === 'fulfilled' && !attRes.value.error) {
-        const rows = ((attRes.value.data ?? []) as any[]).map((row) => ({ ...row, work_date: row.work_date || row.shift_date, check_in_at: row.check_in_at || row.check_in_time, check_out_at: row.check_out_at || row.check_out_time })) as Attendance[]
-        setAttendance(rows.find((row) => row.check_in_at && !row.check_out_at) || rows[0] || null)
+        const rows = ((attRes.value.data ?? []) as any[]).map(normalizeAttendance)
+        activeAttendance = rows.find(attendanceIsOpen) || rows[0] || null
+        setAttendance(activeAttendance)
       }
+
+      const activeWorkDate = ((activeAttendance as any)?.work_date || (activeAttendance as any)?.shift_date || today) as string
+      const workDates = Array.from(new Set([activeWorkDate, today].filter(Boolean)))
+
+      const [orderRes, tripRes] = await Promise.allSettled([
+        supabase
+          .from('delivery_orders')
+          .select('*')
+          .eq('rider_id', currentRiderId)
+          .in('work_date', workDates)
+          .order('registered_at', { ascending: false }),
+        supabase
+          .from('internal_trips')
+          .select('*')
+          .eq('rider_id', currentRiderId)
+          .in('work_date', workDates)
+          .order('registered_at', { ascending: false }),
+      ])
+
       if (orderRes.status === 'fulfilled' && !orderRes.value.error) setOrders((orderRes.value.data ?? []) as DeliveryOrder[])
       if (tripRes.status === 'fulfilled' && !tripRes.value.error) setTrips((tripRes.value.data ?? []) as InternalTrip[])
       await refreshDevice()
@@ -291,7 +334,7 @@ export default function RiderDashboardV3() {
                       </div>
                       <div className="flex flex-wrap gap-2 sm:justify-end">
                         {phone ? <a href={`tel:${phone}`} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-sky-700 shadow-sm">اتصال</a> : null}
-                        {waPhone ? <button type="button" onClick={() => window.open(`https://api.whatsapp.com/send?phone=${waPhone}&text=${encodeURIComponent(`أهلاً ${customer}، طلبك من صيدلية دواء في الطريق إليك الآن. رقم الفاتورة: ${invoice}`)}`, '_blank', 'noopener,noreferrer')} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-emerald-700 shadow-sm">واتساب</button> : null}
+                        {waPhone ? <button type="button" onClick={() => window.open(`https://api.whatsapp.com/send?phone=${waPhone}&text=${encodeURIComponent(`أهلاً بحضرتك يا فندم\nمع حضرتك مندوب صيدليات دواء\n\nقيمة الفاتورة الخاصة بحضرتك: ${order.invoice_amount || order.invoice_value || 'غير محددة'} جنيه\n\nنتشرف بخدمة حضرتك دائمًا`)}`, '_blank', 'noopener,noreferrer')} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-emerald-700 shadow-sm">واتساب</button> : null}
                         <button type="button" disabled={saving} onClick={() => void handleDelivered(order)} className="rounded-xl bg-[#008E92] px-3 py-2 text-xs font-black text-white disabled:opacity-50">تم التسليم</button>
                         <button type="button" disabled={saving} onClick={() => { setFailOrder(order); setFailReason('') }} className="rounded-xl bg-rose-600 px-3 py-2 text-xs font-black text-white disabled:opacity-50">فشل</button>
                       </div>
@@ -330,7 +373,7 @@ export default function RiderDashboardV3() {
             <p>✅ تسجيل الأوردر السريع للفواتير العادية.</p>
             <p>✅ تأكيد التسليم وفشل التسليم للأوردرات المفتوحة.</p>
             <p>✅ تسجيل المشاوير داخل النسخة الجديدة مع دعم Offline.</p>
-            <p>⏳ المرحلة التالية: الريسيت، ×1.5، منع التكرار المتقدم، وتعديل الأوردر.</p>
+            <p>✅ تم تحسين عرض الأوردرات والمشاوير بعد 12 بالليل على الشيفت المفتوح.</p>
           </div>
         </section>
       </RiderOperatingDashboard>
