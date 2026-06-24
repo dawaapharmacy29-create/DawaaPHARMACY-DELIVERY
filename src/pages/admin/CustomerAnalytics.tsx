@@ -1,147 +1,291 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, ExternalLink, RefreshCw, Search, Star, TrendingDown, Users } from 'lucide-react'
+import { ArrowRight, ExternalLink, RefreshCw, Search, Star, TrendingUp, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { displayBranchName } from '../../lib/branchUtils'
 
-type CustomerAnalyticsRow = {
-  customer_id: string
-  customer_code: string | null
-  customer_name: string | null
-  phone: string | null
-  branch_name: string | null
-  total_orders: number | null
-  matched_orders: number | null
-  rejected_orders: number | null
-  last_delivery_order_at: string | null
-  last_invoice_date: string | null
-  total_sales: number | null
-  invoices_count: number | null
-  average_invoice: number | null
-  days_since_last_invoice: number | null
-  delivery_problem_count: number | null
-  customer_segment: string | null
-  risk_level: string | null
+type OrderRow = Record<string, any>
+
+type MonthlyCustomerRow = {
+  key: string
+  customer_code: string
+  customer_name: string
+  phone: string
+  branch_name: string
+  invoices_count: number
+  total_sales: number
+  average_invoice: number
+  last_order_at: string
+  segment: 'VIP' | 'متكرر' | 'مرة واحدة'
 }
 
+function currentMonthValue() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
 
-function deriveSegment(r: CustomerAnalyticsRow) {
-  if (r.customer_segment) return r.customer_segment
-  const sales = Number(r.total_sales || 0)
-  const days = Number(r.days_since_last_invoice || 0)
-  const problems = Number(r.delivery_problem_count || 0)
-  if (problems > 0) return 'delivery_problem'
-  if (sales >= 8000) return 'vip'
-  if (days >= 60) return 'stopped'
-  if (days >= 30) return 'at_risk'
-  if (Number(r.invoices_count || 0) <= 1) return 'new'
-  return 'active'
+function monthRange(month: string) {
+  const [year, monthNumber] = month.split('-').map(Number)
+  const start = new Date(year, monthNumber - 1, 1)
+  const end = new Date(year, monthNumber, 1)
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+  }
 }
-function deriveRisk(r: CustomerAnalyticsRow) {
-  if (r.risk_level) return r.risk_level
-  if (Number(r.delivery_problem_count || 0) > 0) return 'high'
-  if (Number(r.days_since_last_invoice || 0) >= 60) return 'high'
-  if (Number(r.days_since_last_invoice || 0) >= 30) return 'medium'
-  return 'low'
+
+function money(value: number) {
+  return Number(value || 0).toLocaleString('ar-EG', { maximumFractionDigits: 0 })
 }
-function waLink(phone?: string | null, name?: string | null) {
-  const digits = String(phone || '').replace(/\D/g, '')
-  if (!digits) return '#'
-  const normalized = digits.startsWith('2') ? digits : `2${digits}`
-  const text = encodeURIComponent(`أهلاً ${name || ''}، مع حضرتك صيدلية دواء، بنطمن على طلب حضرتك وخدمة التوصيل.`)
+
+function orderDate(order: OrderRow) {
+  return String(order.work_date || order.delivery_date || order.registered_at || order.created_at || '').slice(0, 10)
+}
+
+function orderAmount(order: OrderRow) {
+  return Number(order.invoice_amount ?? order.invoice_value ?? order.amount ?? order.total_amount ?? 0) || 0
+}
+
+function customerKey(order: OrderRow) {
+  return String(
+    order.customer_id ||
+    order.customer_code ||
+    order.customer_code_snapshot ||
+    order.customer_phone ||
+    order.customer_phone_snapshot ||
+    order.customer_name ||
+    order.customer_name_snapshot ||
+    order.id
+  )
+}
+
+function normalizePhone(value?: string | null) {
+  const digits = String(value || '').replace(/\D/g, '')
+  if (!digits) return ''
+  return digits.startsWith('2') ? digits : `2${digits}`
+}
+
+function whatsappLink(phone?: string | null) {
+  const normalized = normalizePhone(phone)
+  if (!normalized) return '#'
+  const text = encodeURIComponent([
+    'أهلاً بحضرتك يا فندم',
+    'مع حضرتك صيدليات دواء',
+    'نتشرف بخدمة حضرتك دائمًا',
+  ].join('\n'))
   return `https://wa.me/${normalized}?text=${text}`
 }
 
-const SEGMENT_LABELS: Record<string, string> = {
-  vip: 'VIP', active: 'نشط', declining: 'منخفض', at_risk: 'قابل للتوقف', stopped: 'متوقف', new: 'جديد', delivery_problem: 'مشاكل توصيل'
+function mergeOrders(rows: OrderRow[][]) {
+  const map = new Map<string, OrderRow>()
+  rows.flat().forEach((row, index) => {
+    map.set(String(row.id || `${customerKey(row)}-${orderDate(row)}-${index}`), row)
+  })
+  return [...map.values()]
 }
 
 export default function CustomerAnalytics() {
   const navigate = useNavigate()
-  const [rows, setRows] = useState<CustomerAnalyticsRow[]>([])
+  const [month, setMonth] = useState(currentMonthValue())
+  const [orders, setOrders] = useState<OrderRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
 
   async function load() {
     try {
       setLoading(true)
-      const { data, error } = await supabase.from('customer_delivery_analytics').select('*').order('total_sales', { ascending: false }).limit(1000)
-      if (error) {
-        const fallback = await supabase.from('delivery_customers').select('*').limit(1000)
-        if (fallback.error) throw error
-        setRows((fallback.data || []).map((c: any) => ({
-          customer_id: c.id || c.customer_id || c.customer_code || c.phone,
-          customer_code: c.customer_code || c.code || null,
-          customer_name: c.customer_name || c.name || null,
-          phone: c.phone || c.customer_phone || null,
-          branch_name: displayBranchName(c.branch || c.branch_name),
-          total_orders: 0,
-          matched_orders: 0,
-          rejected_orders: 0,
-          last_delivery_order_at: null,
-          last_invoice_date: c.last_invoice_date || c.last_purchase_date || null,
-          total_sales: Number(c.total_sales || c.total_purchases || c.total_amount || 0),
-          invoices_count: Number(c.invoices_count || c.invoice_count || 0),
-          average_invoice: Number(c.average_invoice || c.avg_invoice || 0),
-          days_since_last_invoice: c.days_since_last_invoice || null,
-          delivery_problem_count: Number(c.delivery_problem_count || 0),
-          customer_segment: c.customer_segment || null,
-          risk_level: c.risk_level || null,
-        })) as CustomerAnalyticsRow[])
-        return
+      const range = monthRange(month)
+      const [workDateResult, deliveryDateResult, viewResult] = await Promise.allSettled([
+        supabase
+          .from('delivery_orders')
+          .select('*')
+          .gte('work_date', range.start)
+          .lt('work_date', range.end)
+          .order('work_date', { ascending: false })
+          .limit(5000),
+        supabase
+          .from('delivery_orders')
+          .select('*')
+          .gte('delivery_date', range.start)
+          .lt('delivery_date', range.end)
+          .order('delivery_date', { ascending: false })
+          .limit(5000),
+        supabase
+          .from('customer_delivery_analytics')
+          .select('*')
+          .limit(1500),
+      ])
+
+      const workRows = workDateResult.status === 'fulfilled' && !workDateResult.value.error ? workDateResult.value.data || [] : []
+      const deliveryRows = deliveryDateResult.status === 'fulfilled' && !deliveryDateResult.value.error ? deliveryDateResult.value.data || [] : []
+      const merged = mergeOrders([workRows as OrderRow[], deliveryRows as OrderRow[]])
+
+      if (!merged.length && viewResult.status === 'fulfilled' && !viewResult.value.error) {
+        const viewRows = ((viewResult.value.data || []) as any[]).map(row => ({
+          id: row.customer_id || row.customer_code || row.phone,
+          customer_code: row.customer_code,
+          customer_name: row.customer_name,
+          customer_phone: row.phone,
+          branch_name: row.branch_name,
+          invoice_amount: row.total_sales,
+          work_date: row.last_invoice_date || row.last_delivery_order_at,
+        }))
+        setOrders(viewRows)
+      } else {
+        setOrders(merged)
       }
-      setRows(((data || []) as CustomerAnalyticsRow[]).map(r => ({ ...r, branch_name: displayBranchName(r.branch_name), customer_segment: deriveSegment(r), risk_level: deriveRisk(r) })))
-    } catch (e: any) {
-      toast.error(`تعذر تحميل تحليل العملاء: ${e?.message || e}`)
+    } catch (error: any) {
+      toast.error(`تعذر تحميل تحليل العملاء: ${error?.message || error}`)
+      setOrders([])
     } finally {
       setLoading(false)
     }
   }
-  useEffect(() => { void load() }, [])
+
+  useEffect(() => { void load() }, [month])
+
+  const customers = useMemo<MonthlyCustomerRow[]>(() => {
+    const grouped = new Map<string, MonthlyCustomerRow>()
+    for (const order of orders) {
+      const key = customerKey(order)
+      const amount = orderAmount(order)
+      const current = grouped.get(key)
+      const date = orderDate(order)
+      const row: MonthlyCustomerRow = current || {
+        key,
+        customer_code: String(order.customer_code || order.customer_code_snapshot || ''),
+        customer_name: String(order.customer_name || order.customer_name_snapshot || 'عميل غير مسجل'),
+        phone: String(order.customer_phone || order.customer_phone_snapshot || order.phone || ''),
+        branch_name: displayBranchName(order.branch_name || order.branch || ''),
+        invoices_count: 0,
+        total_sales: 0,
+        average_invoice: 0,
+        last_order_at: date,
+        segment: 'مرة واحدة',
+      }
+      row.invoices_count += 1
+      row.total_sales += amount
+      row.average_invoice = row.invoices_count ? row.total_sales / row.invoices_count : 0
+      if (date && (!row.last_order_at || date > row.last_order_at)) row.last_order_at = date
+      row.segment = row.invoices_count >= 5 || row.total_sales >= 8000 ? 'VIP' : row.invoices_count >= 2 ? 'متكرر' : 'مرة واحدة'
+      grouped.set(key, row)
+    }
+    return [...grouped.values()].sort((a, b) => b.total_sales - a.total_sales)
+  }, [orders])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return rows
-    return rows.filter(r => [r.customer_code, r.customer_name, r.phone, r.branch_name, r.customer_segment].some(v => String(v || '').toLowerCase().includes(q)))
-  }, [rows, search])
+    if (!q) return customers
+    return customers.filter(row =>
+      [row.customer_code, row.customer_name, row.phone, row.branch_name, row.segment]
+        .some(value => String(value || '').toLowerCase().includes(q))
+    )
+  }, [customers, search])
 
-  const stats = useMemo(() => ({
-    total: rows.length,
-    vip: rows.filter(r => r.customer_segment === 'vip').length,
-    stopped: rows.filter(r => r.customer_segment === 'stopped' || r.risk_level === 'high').length,
-    problems: rows.filter(r => Number(r.delivery_problem_count || 0) > 0).length,
-  }), [rows])
+  const stats = useMemo(() => {
+    const invoices = orders.length
+    const activeCustomers = customers.length
+    const totalSales = customers.reduce((sum, row) => sum + row.total_sales, 0)
+    return {
+      invoices,
+      activeCustomers,
+      totalSales,
+      avgInvoicesPerCustomer: activeCustomers ? invoices / activeCustomers : 0,
+      avgValuePerCustomer: activeCustomers ? totalSales / activeCustomers : 0,
+      oneTime: customers.filter(row => row.invoices_count === 1).length,
+      repeated: customers.filter(row => row.invoices_count >= 2).length,
+      vip: customers.filter(row => row.segment === 'VIP').length,
+    }
+  }, [orders.length, customers])
 
   return (
-    <div className="min-h-screen bg-[#F3F7F8] p-4 text-right" dir="rtl">
-      <div className="mx-auto max-w-7xl space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="text-right" dir="rtl">
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-white bg-white p-4 shadow-sm">
           <div>
-            <button onClick={() => navigate('/admin')} className="mb-3 inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-2 text-sm font-black text-slate-600 shadow-sm"><ArrowRight size={16}/> رجوع</button>
-            <h1 className="text-3xl font-black text-[#061827]">تحليل العملاء من التوصيل</h1>
-            <p className="mt-1 text-sm font-bold text-slate-500">تقسيم العملاء حسب النشاط، القيمة، مشاكل التوصيل، وآخر شراء.</p>
+            <button onClick={() => navigate('/admin')} className="mb-3 inline-flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-2 text-sm font-black text-slate-600">
+              <ArrowRight size={16}/> رجوع
+            </button>
+            <h1 className="text-3xl font-black text-[#061827]">تحليل العملاء الشهري</h1>
+            <p className="mt-1 text-sm font-bold text-slate-500">تحليل العملاء النشطين من فواتير التوصيل خلال الشهر المختار.</p>
           </div>
-          <button onClick={load} className="inline-flex items-center gap-2 rounded-3xl bg-white px-5 py-3 font-black text-slate-700 shadow-sm"><RefreshCw size={18}/> تحديث</button>
+          <div className="flex flex-wrap items-center gap-2">
+            <input type="month" value={month} onChange={event => setMonth(event.target.value)} className="rounded-2xl border bg-slate-50 px-4 py-3 font-black text-slate-700 outline-none focus:border-[#008E92]" />
+            <button onClick={load} className="inline-flex items-center gap-2 rounded-3xl bg-[#008E92] px-5 py-3 font-black text-white shadow-sm">
+              <RefreshCw size={18}/> تحديث
+            </button>
+          </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-4">
-          <Metric label="إجمالي العملاء" value={stats.total} icon={<Users/>}/>
-          <Metric label="VIP" value={stats.vip} icon={<Star/>}/>
-          <Metric label="متوقف/خطر" value={stats.stopped} icon={<TrendingDown/>}/>
-          <Metric label="مشاكل توصيل" value={stats.problems} icon={<Users/>}/>
+          <Metric label="فواتير الشهر" value={stats.invoices} icon={<Users/>}/>
+          <Metric label="عملاء نشطين" value={stats.activeCustomers} icon={<Users/>}/>
+          <Metric label="إجمالي المبيعات" value={money(stats.totalSales)} icon={<TrendingUp/>}/>
+          <Metric label="عملاء VIP" value={stats.vip} icon={<Star/>}/>
+          <Metric label="متوسط فواتير/عميل" value={stats.avgInvoicesPerCustomer.toFixed(1)} icon={<TrendingUp/>}/>
+          <Metric label="متوسط قيمة العميل" value={money(stats.avgValuePerCustomer)} icon={<TrendingUp/>}/>
+          <Metric label="طلبوا مرة واحدة" value={stats.oneTime} icon={<Users/>}/>
+          <Metric label="عملاء متكررون" value={stats.repeated} icon={<Users/>}/>
         </div>
 
         <div className="rounded-3xl border bg-white p-4 shadow-sm">
-          <div className="relative"><Search className="absolute right-4 top-3 text-slate-400" size={20}/><input value={search} onChange={e => setSearch(e.target.value)} className="w-full rounded-2xl border bg-slate-50 py-3 pr-12 font-bold outline-none focus:border-emerald-400" placeholder="بحث بالكود / الاسم / التليفون / الفرع / التصنيف" /></div>
+          <div className="relative">
+            <Search className="absolute right-4 top-3 text-slate-400" size={20}/>
+            <input
+              value={search}
+              onChange={event => setSearch(event.target.value)}
+              className="w-full rounded-2xl border bg-slate-50 py-3 pr-12 font-bold outline-none focus:border-[#008E92]"
+              placeholder="بحث بالكود / الاسم / الهاتف / الفرع"
+            />
+          </div>
         </div>
 
         <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
-          <div className="border-b p-4 font-black text-slate-700">قائمة العملاء التحليلية {loading ? '— جاري التحميل...' : `— ${filtered.length} عميل`}</div>
+          <div className="border-b p-4 font-black text-slate-700">
+            العملاء النشطون في الشهر {loading ? '— جاري التحميل...' : `— ${filtered.length} عميل`}
+          </div>
           <div className="max-h-[70vh] overflow-auto">
-            <table className="w-full min-w-[1200px] text-sm">
-              <thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="p-3">العميل</th><th className="p-3">الفرع</th><th className="p-3">إجمالي مشتريات</th><th className="p-3">فواتير</th><th className="p-3">أوردرات توصيل</th><th className="p-3">مطابقة</th><th className="p-3">مشاكل</th><th className="p-3">آخر شراء</th><th className="p-3">تصنيف</th><th className="p-3">خطر</th><th className="p-3">واتساب</th></tr></thead>
-              <tbody>{filtered.map(r => <tr key={r.customer_id} className="border-t align-top"><td className="p-3"><p className="font-black text-[#061827]">{r.customer_name || '—'}</p><p className="text-xs font-bold text-slate-400">{r.customer_code || '—'} · {r.phone || '—'}</p></td><td className="p-3">{r.branch_name || '—'}</td><td className="p-3 font-black">{Number(r.total_sales || 0).toLocaleString('ar-EG')}</td><td className="p-3">{r.invoices_count || 0}</td><td className="p-3">{r.total_orders || 0}</td><td className="p-3">{r.matched_orders || 0}</td><td className="p-3">{r.delivery_problem_count || 0}</td><td className="p-3">{r.last_invoice_date || '—'}<p className="text-xs text-slate-400">{r.days_since_last_invoice ?? '—'} يوم</p></td><td className="p-3"><span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">{SEGMENT_LABELS[String(r.customer_segment || '')] || r.customer_segment || '—'}</span></td><td className="p-3"><span className={`rounded-full px-3 py-1 text-xs font-black ${r.risk_level === 'high' ? 'bg-rose-50 text-rose-700' : r.risk_level === 'medium' ? 'bg-amber-50 text-amber-700' : 'bg-slate-50 text-slate-600'}`}>{r.risk_level || 'low'}</span></td><td className="p-3"><a href={waLink(r.phone, r.customer_name)} target="_blank" className="inline-flex items-center gap-1 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">واتساب <ExternalLink size={12}/></a></td></tr>)}</tbody>
+            <table className="w-full min-w-[1150px] text-sm">
+              <thead className="sticky top-0 bg-slate-50 text-slate-500">
+                <tr>
+                  <th className="p-3">كود العميل</th>
+                  <th className="p-3">اسم العميل</th>
+                  <th className="p-3">الهاتف</th>
+                  <th className="p-3">الفرع</th>
+                  <th className="p-3">فواتير الشهر</th>
+                  <th className="p-3">قيمة الشهر</th>
+                  <th className="p-3">متوسط الفاتورة</th>
+                  <th className="p-3">آخر طلب</th>
+                  <th className="p-3">التصنيف</th>
+                  <th className="p-3">واتساب</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(row => (
+                  <tr key={row.key} className="border-t align-top">
+                    <td className="p-3 font-black">{row.customer_code || '—'}</td>
+                    <td className="p-3 font-black text-[#061827]">{row.customer_name || '—'}</td>
+                    <td className="p-3">{row.phone || '—'}</td>
+                    <td className="p-3">{row.branch_name || '—'}</td>
+                    <td className="p-3">{row.invoices_count}</td>
+                    <td className="p-3 font-black">{money(row.total_sales)}</td>
+                    <td className="p-3">{money(row.average_invoice)}</td>
+                    <td className="p-3">{row.last_order_at || '—'}</td>
+                    <td className="p-3"><span className={`rounded-full px-3 py-1 text-xs font-black ${row.segment === 'VIP' ? 'bg-amber-50 text-amber-700' : row.segment === 'متكرر' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-600'}`}>{row.segment}</span></td>
+                    <td className="p-3">
+                      {row.phone ? (
+                        <a href={whatsappLink(row.phone)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">
+                          واتساب يدوي <ExternalLink size={12}/>
+                        </a>
+                      ) : '—'}
+                    </td>
+                  </tr>
+                ))}
+                {!loading && !filtered.length ? (
+                  <tr><td colSpan={10} className="p-8 text-center font-black text-slate-400">لا توجد فواتير لهذا الشهر</td></tr>
+                ) : null}
+              </tbody>
             </table>
           </div>
         </div>
@@ -150,6 +294,12 @@ export default function CustomerAnalytics() {
   )
 }
 
-function Metric({ label, value, icon }: { label: string; value: number; icon: React.ReactNode }) {
-  return <div className="rounded-3xl border bg-white p-5 shadow-sm"><div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">{icon}</div><p className="text-sm font-black text-slate-500">{label}</p><p className="mt-2 text-3xl font-black text-[#061827]">{value}</p></div>
+function Metric({ label, value, icon }: { label: string; value: number | string; icon: ReactNode }) {
+  return (
+    <div className="rounded-3xl border bg-white p-5 shadow-sm">
+      <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">{icon}</div>
+      <p className="text-sm font-black text-slate-500">{label}</p>
+      <p className="mt-2 text-3xl font-black text-[#061827]">{value}</p>
+    </div>
+  )
 }

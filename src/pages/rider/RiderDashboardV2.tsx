@@ -107,7 +107,8 @@ export default function RiderDashboardV2() {
   const openOrders = useMemo(() => orders.filter(isOpenOrder), [orders])
 
   const refreshDevice = useCallback(async (gpsAccuracy?: number | null) => {
-    const snapshot = await readRiderDeviceSnapshot(gpsAccuracy)
+    void gpsAccuracy
+    const snapshot = await readRiderDeviceSnapshot()
     setDevice(snapshot)
     return snapshot
   }, [])

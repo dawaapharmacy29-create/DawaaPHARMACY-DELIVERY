@@ -1,4 +1,4 @@
-import { ChangeEvent, useMemo, useState } from 'react'
+import { ChangeEvent, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowRight, CheckCircle2, FileSpreadsheet, Loader2, UploadCloud, XCircle } from 'lucide-react'
 import { read, utils } from 'xlsx'
@@ -12,12 +12,10 @@ type ImportRow = {
   name: string
   phone: string
   phone_normalized: string
-  phone2: string
   address: string
   branch_name: string
   first_invoice_date: string | null
   last_invoice_date: string | null
-  last_invoice_number: string
   total_sales: number
   invoices_count: number
   average_invoice: number
@@ -25,18 +23,18 @@ type ImportRow = {
   error?: string
 }
 
-const CODE_KEYS = ['customer_code', 'code', 'كود العميل', 'الكود', 'كود', 'رقم العميل']
-const NAME_KEYS = ['name', 'customer_name', 'اسم العميل', 'العميل', 'client_name']
-const PHONE_KEYS = ['phone', 'mobile', 'customer_phone', 'تليفون', 'هاتف', 'موبايل', 'رقم التليفون']
-const PHONE2_KEYS = ['phone2', 'mobile2', 'تليفون 2', 'هاتف 2', 'موبايل 2']
-const ADDRESS_KEYS = ['address', 'customer_address', 'العنوان', 'عنوان', 'منطقة']
-const BRANCH_KEYS = ['branch', 'branch_name', 'الفرع', 'اسم الفرع']
-const LAST_DATE_KEYS = ['last_invoice_date', 'آخر شراء', 'اخر شراء', 'تاريخ اخر فاتورة', 'last_date']
-const FIRST_DATE_KEYS = ['first_invoice_date', 'أول شراء', 'اول شراء', 'first_date']
-const LAST_INVOICE_KEYS = ['last_invoice_number', 'رقم اخر فاتورة', 'last_invoice', 'invoice_number']
-const TOTAL_KEYS = ['total_sales', 'اجمالي المبيعات', 'total', 'إجمالي']
-const COUNT_KEYS = ['invoices_count', 'عدد الفواتير', 'count']
-const AVG_KEYS = ['average_invoice', 'متوسط الفاتورة', 'avg_invoice']
+const FIELD_KEYS = {
+  customer_code: ['customer_code', 'code', 'كود العميل', 'الكود'],
+  name: ['name', 'customer_name', 'اسم العميل'],
+  phone: ['phone', 'mobile', 'customer_phone', 'تليفون', 'موبايل', 'هاتف'],
+  address: ['address', 'customer_address', 'العنوان', 'المنطقة'],
+  branch_name: ['branch', 'branch_name', 'الفرع'],
+  first_invoice_date: ['first_invoice_date', 'أول شراء', 'اول شراء'],
+  last_invoice_date: ['last_invoice_date', 'آخر شراء', 'اخر شراء'],
+  total_sales: ['total_sales', 'إجمالي المبيعات', 'اجمالي المبيعات'],
+  invoices_count: ['invoices_count', 'عدد الفواتير'],
+  average_invoice: ['average_invoice', 'متوسط الفاتورة'],
+}
 
 function first(row: RawRow, keys: string[]) {
   for (const key of keys) {
@@ -49,7 +47,9 @@ function first(row: RawRow, keys: string[]) {
 }
 
 function normalizePhone(value: string) {
-  let digits = String(value || '').replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/\D+/g, '')
+  let digits = String(value || '')
+    .replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+    .replace(/\D+/g, '')
   if (digits.startsWith('0020')) digits = digits.slice(4)
   if (digits.startsWith('20') && digits.length === 12) digits = digits.slice(2)
   if (digits.length === 10 && digits.startsWith('1')) digits = `0${digits}`
@@ -63,34 +63,33 @@ function num(value: string) {
 
 function normalizeDate(value: string): string | null {
   if (!value) return null
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10)
   const d = new Date(value)
   if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10)
   return null
 }
 
 function mapRow(row: RawRow, index: number): ImportRow {
-  const phone = first(row, PHONE_KEYS)
-  const customer_code = first(row, CODE_KEYS)
-  const name = first(row, NAME_KEYS)
+  const phone = first(row, FIELD_KEYS.phone)
   const mapped: ImportRow = {
     row_number: index + 2,
-    customer_code,
-    name,
+    customer_code: first(row, FIELD_KEYS.customer_code),
+    name: first(row, FIELD_KEYS.name),
     phone,
     phone_normalized: normalizePhone(phone),
-    phone2: first(row, PHONE2_KEYS),
-    address: first(row, ADDRESS_KEYS),
-    branch_name: first(row, BRANCH_KEYS),
-    first_invoice_date: normalizeDate(first(row, FIRST_DATE_KEYS)),
-    last_invoice_date: normalizeDate(first(row, LAST_DATE_KEYS)),
-    last_invoice_number: first(row, LAST_INVOICE_KEYS),
-    total_sales: num(first(row, TOTAL_KEYS)),
-    invoices_count: Math.round(num(first(row, COUNT_KEYS))),
-    average_invoice: num(first(row, AVG_KEYS)),
+    address: first(row, FIELD_KEYS.address),
+    branch_name: first(row, FIELD_KEYS.branch_name),
+    first_invoice_date: normalizeDate(first(row, FIELD_KEYS.first_invoice_date)),
+    last_invoice_date: normalizeDate(first(row, FIELD_KEYS.last_invoice_date)),
+    total_sales: num(first(row, FIELD_KEYS.total_sales)),
+    invoices_count: Math.round(num(first(row, FIELD_KEYS.invoices_count))),
+    average_invoice: num(first(row, FIELD_KEYS.average_invoice)),
     raw_data: row,
   }
-  if (!mapped.customer_code && !mapped.phone_normalized) mapped.error = 'لا يوجد كود عميل أو رقم تليفون صالح'
-  if (!mapped.name) mapped.error = mapped.error ? `${mapped.error} — اسم العميل فارغ` : 'اسم العميل فارغ'
+  const errors: string[] = []
+  if (!mapped.customer_code && !mapped.phone_normalized) errors.push('لا يوجد كود عميل أو رقم هاتف صالح')
+  if (!mapped.name) errors.push('اسم العميل فارغ')
+  if (errors.length) mapped.error = errors.join(' — ')
   return mapped
 }
 
@@ -99,12 +98,14 @@ export default function CustomerImport() {
   const [fileName, setFileName] = useState('')
   const [rows, setRows] = useState<ImportRow[]>([])
   const [saving, setSaving] = useState(false)
+  const [auditWarning, setAuditWarning] = useState('')
   const validRows = useMemo(() => rows.filter(r => !r.error), [rows])
   const errorRows = useMemo(() => rows.filter(r => r.error), [rows])
 
-  async function handleFile(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
+  async function handleFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
     if (!file) return
+    setAuditWarning('')
     setFileName(file.name)
     const buffer = await file.arrayBuffer()
     const workbook = read(buffer, { type: 'array', cellDates: true })
@@ -114,101 +115,177 @@ export default function CustomerImport() {
     toast.success(`تم قراءة ${raw.length} صف من الملف`)
   }
 
-  async function saveImport() {
-    if (!validRows.length) { toast.error('لا توجد صفوف صالحة للحفظ'); return }
-    try {
-      setSaving(true)
-      const { data: batch, error: batchError } = await supabase.from('customer_import_batches').insert({
-        file_name: fileName || 'manual-upload.xlsx',
+  async function createBatch() {
+    const { data, error } = await supabase
+      .from('customer_import_batches')
+      .insert({
+        file_name: fileName || 'customer-upload.xlsx',
         total_rows: rows.length,
         inserted_count: 0,
-        updated_count: validRows.length,
+        updated_count: 0,
         failed_count: errorRows.length,
         status: 'processing',
-      }).select('id').single()
-      if (batchError) throw batchError
+      })
+      .select('id')
+      .single()
 
-      let inserted = 0
-      let updated = 0
-      for (const r of validRows) {
-        const payload = {
-          customer_code: r.customer_code || null,
-          name: r.name,
-          normalized_name: r.name.trim().toLowerCase(),
-          phone: r.phone || null,
-          phone_normalized: r.phone_normalized || null,
-          phone2: r.phone2 || null,
-          address: r.address || null,
-          branch_name: r.branch_name || null,
-          first_invoice_date: r.first_invoice_date,
-          last_invoice_date: r.last_invoice_date,
-          last_invoice_number: r.last_invoice_number || null,
-          total_sales: r.total_sales,
-          invoices_count: r.invoices_count,
-          average_invoice: r.average_invoice,
-          source_batch_id: batch.id,
-          updated_at: new Date().toISOString(),
-        }
-        const lookup = r.customer_code
-          ? await supabase.from('delivery_customers').select('id').eq('customer_code', r.customer_code).limit(1).maybeSingle()
-          : await supabase.from('delivery_customers').select('id').eq('phone_normalized', r.phone_normalized).limit(1).maybeSingle()
-        if (lookup.error) throw lookup.error
-        if (lookup.data?.id) {
-          const { error } = await supabase.from('delivery_customers').update(payload).eq('id', lookup.data.id)
-          if (error) throw error
-          updated++
-        } else {
-          const { error } = await supabase.from('delivery_customers').insert({ ...payload, created_at: new Date().toISOString() })
-          if (error) throw error
-          inserted++
+    if (error) {
+      setAuditWarning('سجل الاستيراد غير متاح حاليًا، لكن حفظ العملاء سيستمر مباشرة.')
+      return null
+    }
+    return data?.id || null
+  }
+
+  async function saveImport() {
+    if (!validRows.length) {
+      toast.error('لا توجد صفوف صالحة للحفظ')
+      return
+    }
+
+    setSaving(true)
+    setAuditWarning('')
+    let inserted = 0
+    let updated = 0
+    const failed: ImportRow[] = [...errorRows]
+
+    try {
+      const batchId = await createBatch()
+
+      for (const row of validRows) {
+        try {
+          const payload: Record<string, any> = {
+            customer_code: row.customer_code || null,
+            name: row.name,
+            normalized_name: row.name.trim().toLowerCase(),
+            phone: row.phone || null,
+            phone_normalized: row.phone_normalized || null,
+            address: row.address || null,
+            branch_name: row.branch_name || null,
+            first_invoice_date: row.first_invoice_date,
+            last_invoice_date: row.last_invoice_date,
+            total_sales: row.total_sales,
+            invoices_count: row.invoices_count,
+            average_invoice: row.average_invoice,
+            updated_at: new Date().toISOString(),
+          }
+          if (batchId) payload.source_batch_id = batchId
+
+          const lookup = row.customer_code
+            ? await supabase.from('delivery_customers').select('id').eq('customer_code', row.customer_code).limit(1).maybeSingle()
+            : await supabase.from('delivery_customers').select('id').eq('phone_normalized', row.phone_normalized).limit(1).maybeSingle()
+
+          if (lookup.error) throw lookup.error
+
+          if (lookup.data?.id) {
+            const { error } = await supabase.from('delivery_customers').update(payload).eq('id', lookup.data.id)
+            if (error) throw error
+            updated++
+          } else {
+            const { error } = await supabase.from('delivery_customers').insert({ ...payload, created_at: new Date().toISOString() })
+            if (error) throw error
+            inserted++
+          }
+        } catch (error: any) {
+          failed.push({ ...row, error: error?.message || 'فشل حفظ الصف' })
         }
       }
 
-      if (errorRows.length) {
-        await supabase.from('customer_import_errors').insert(errorRows.map(r => ({
-          batch_id: batch.id,
-          row_number: r.row_number,
-          raw_data: r.raw_data,
-          error_message: r.error,
-        })))
+      if (batchId) {
+        if (failed.length) {
+          const { error } = await supabase.from('customer_import_errors').insert(failed.map(row => ({
+            batch_id: batchId,
+            row_number: row.row_number,
+            raw_data: row.raw_data,
+            error_message: row.error,
+          })))
+          if (error) setAuditWarning('تم حفظ العملاء، لكن سجل أخطاء الاستيراد غير متاح.')
+        }
+        await supabase
+          .from('customer_import_batches')
+          .update({
+            status: 'completed',
+            inserted_count: inserted,
+            updated_count: updated,
+            failed_count: failed.length,
+            completed_at: new Date().toISOString(),
+          })
+          .eq('id', batchId)
       }
-      await supabase.from('customer_import_batches').update({ status: 'completed', inserted_count: inserted, updated_count: updated, failed_count: errorRows.length, completed_at: new Date().toISOString() }).eq('id', batch.id)
-      toast.success(`تم إضافة ${inserted} عميل وتحديث ${updated} عميل وتسجيل ${errorRows.length} خطأ`)
-    } catch (e: any) {
-      toast.error(`فشل حفظ العملاء: ${e?.message || e}`)
+
+      toast.success(`تم إضافة ${inserted} عميل. تم تحديث ${updated} عميل. يوجد ${failed.length} خطأ.`)
+      if (failed.length !== errorRows.length) setRows(prev => prev.map(row => failed.find(f => f.row_number === row.row_number) || row))
+    } catch (error: any) {
+      toast.error(`فشل حفظ العملاء: ${error?.message || error}`)
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <div className="min-h-screen bg-[#F3F7F8] p-4 text-right" dir="rtl">
-      <div className="mx-auto max-w-7xl space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="text-right" dir="rtl">
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-white bg-white p-4 shadow-sm">
           <div>
-            <button onClick={() => navigate('/admin')} className="mb-3 inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-2 text-sm font-black text-slate-600 shadow-sm"><ArrowRight size={16}/> رجوع</button>
-            <h1 className="text-3xl font-black text-[#061827]">رفع العملاء اليومي</h1>
-            <p className="mt-1 text-sm font-bold text-slate-500">تحديث قاعدة العملاء يوميًا بدون تكرار، مع تنظيف أرقام الهاتف وتسجيل أخطاء الملف.</p>
+            <button onClick={() => navigate('/admin')} className="mb-3 inline-flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-2 text-sm font-black text-slate-600">
+              <ArrowRight size={16}/> رجوع
+            </button>
+            <h1 className="text-3xl font-black text-[#061827]">استيراد وتحديث العملاء</h1>
+            <p className="mt-1 text-sm font-bold text-slate-500">اقرأ Excel/CSV بأعمدة عربية أو إنجليزية، ثم راجع العينة واحفظ بتحديث ذكي.</p>
           </div>
           <label className="flex cursor-pointer items-center gap-3 rounded-3xl bg-[#008E92] px-5 py-4 font-black text-white shadow-lg">
-            <UploadCloud size={22}/> اختار Excel / CSV
+            <UploadCloud size={22}/> اختر Excel / CSV
             <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} className="hidden" />
           </label>
         </div>
 
+        {auditWarning ? <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm font-black text-amber-800">{auditWarning}</div> : null}
+
         <div className="grid gap-4 md:grid-cols-4">
           <Metric label="إجمالي الصفوف" value={rows.length} icon={<FileSpreadsheet/>}/>
           <Metric label="صفوف صالحة" value={validRows.length} icon={<CheckCircle2/>}/>
-          <Metric label="أخطاء" value={errorRows.length} icon={<XCircle/>}/>
-          <button onClick={saveImport} disabled={saving || !validRows.length} className="rounded-3xl bg-emerald-600 p-5 text-lg font-black text-white shadow-sm disabled:opacity-50">{saving ? <Loader2 className="mx-auto animate-spin"/> : 'حفظ وتحديث العملاء'}</button>
+          <Metric label="صفوف بها أخطاء" value={errorRows.length} icon={<XCircle/>}/>
+          <button onClick={saveImport} disabled={saving || !validRows.length} className="rounded-3xl bg-emerald-600 p-5 text-lg font-black text-white shadow-sm disabled:opacity-50">
+            {saving ? <Loader2 className="mx-auto animate-spin"/> : 'حفظ وتحديث العملاء'}
+          </button>
         </div>
 
         <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
-          <div className="border-b p-4 font-black text-slate-700">معاينة أول 100 صف</div>
+          <div className="border-b p-4 font-black text-slate-700">معاينة أول 100 صف {fileName ? `— ${fileName}` : ''}</div>
           <div className="max-h-[65vh] overflow-auto">
             <table className="w-full min-w-[1100px] text-sm">
-              <thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="p-3">#</th><th className="p-3">الكود</th><th className="p-3">الاسم</th><th className="p-3">التليفون</th><th className="p-3">العنوان</th><th className="p-3">الفرع</th><th className="p-3">آخر شراء</th><th className="p-3">إجمالي</th><th className="p-3">الحالة</th></tr></thead>
-              <tbody>{rows.slice(0, 100).map(r => <tr key={r.row_number} className="border-t"><td className="p-3 font-bold">{r.row_number}</td><td className="p-3">{r.customer_code || '—'}</td><td className="p-3 font-black">{r.name || '—'}</td><td className="p-3">{r.phone_normalized || r.phone || '—'}</td><td className="p-3">{r.address || '—'}</td><td className="p-3">{r.branch_name || '—'}</td><td className="p-3">{r.last_invoice_date || '—'}</td><td className="p-3">{r.total_sales}</td><td className="p-3"><span className={`rounded-full px-3 py-1 text-xs font-black ${r.error ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>{r.error || 'جاهز'}</span></td></tr>)}</tbody>
+              <thead className="sticky top-0 bg-slate-50 text-slate-500">
+                <tr>
+                  <th className="p-3">#</th>
+                  <th className="p-3">الكود</th>
+                  <th className="p-3">الاسم</th>
+                  <th className="p-3">الهاتف</th>
+                  <th className="p-3">العنوان/المنطقة</th>
+                  <th className="p-3">الفرع</th>
+                  <th className="p-3">أول شراء</th>
+                  <th className="p-3">آخر شراء</th>
+                  <th className="p-3">إجمالي</th>
+                  <th className="p-3">عدد الفواتير</th>
+                  <th className="p-3">الحالة</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.slice(0, 100).map(row => (
+                  <tr key={row.row_number} className="border-t">
+                    <td className="p-3 font-bold">{row.row_number}</td>
+                    <td className="p-3">{row.customer_code || '—'}</td>
+                    <td className="p-3 font-black">{row.name || '—'}</td>
+                    <td className="p-3">{row.phone_normalized || row.phone || '—'}</td>
+                    <td className="p-3">{row.address || '—'}</td>
+                    <td className="p-3">{row.branch_name || '—'}</td>
+                    <td className="p-3">{row.first_invoice_date || '—'}</td>
+                    <td className="p-3">{row.last_invoice_date || '—'}</td>
+                    <td className="p-3">{row.total_sales}</td>
+                    <td className="p-3">{row.invoices_count}</td>
+                    <td className="p-3"><span className={`rounded-full px-3 py-1 text-xs font-black ${row.error ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>{row.error || 'جاهز'}</span></td>
+                  </tr>
+                ))}
+                {!rows.length ? <tr><td colSpan={11} className="p-8 text-center font-black text-slate-400">اختر ملف Excel أو CSV لعرض المعاينة</td></tr> : null}
+              </tbody>
             </table>
           </div>
         </div>
@@ -217,6 +294,12 @@ export default function CustomerImport() {
   )
 }
 
-function Metric({ label, value, icon }: { label: string; value: number; icon: React.ReactNode }) {
-  return <div className="rounded-3xl border bg-white p-5 shadow-sm"><div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">{icon}</div><p className="text-sm font-black text-slate-500">{label}</p><p className="mt-2 text-3xl font-black text-[#061827]">{value}</p></div>
+function Metric({ label, value, icon }: { label: string; value: number; icon: ReactNode }) {
+  return (
+    <div className="rounded-3xl border bg-white p-5 shadow-sm">
+      <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">{icon}</div>
+      <p className="text-sm font-black text-slate-500">{label}</p>
+      <p className="mt-2 text-3xl font-black text-[#061827]">{value}</p>
+    </div>
+  )
 }

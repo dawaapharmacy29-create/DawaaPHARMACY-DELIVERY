@@ -102,7 +102,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
       if (!token) throw new Error('انتهت الجلسة. سجل دخول مرة أخرى من تطبيق الدليفري.')
 
       const gps = await requestRiderGps()
-      const device = await readRiderDeviceSnapshot(gps.accuracy)
+      const device = await readRiderDeviceSnapshot()
 
       const customerNameForSave = customerName.trim() || customerCode.trim() || customerPhone.trim() || 'عميل غير مسجل'
       const customerCodeForSave = customerCode.trim() || null

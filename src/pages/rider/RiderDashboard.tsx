@@ -188,6 +188,12 @@ function getRpcResult<T = any>(data: any): T | null {
   return (Array.isArray(data) ? data[0] : data) as T | null;
 }
 
+function shiftIsoDate(dateIso: string, days: number): string {
+  const date = new Date(`${dateIso}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 type RiderGpsFix = {
   lat: number;
   lng: number;
@@ -616,6 +622,8 @@ export default function RiderDashboard() {
 
         // 5. Legacy fallback: direct table reads for older database versions.
         const today = todayIso();
+        const yesterday = shiftIsoDate(today, -1);
+        const candidateWorkDates = [today, yesterday];
         const [
           attRes,
           ordRes,
@@ -632,20 +640,20 @@ export default function RiderDashboard() {
             .from("delivery_attendance")
             .select("*")
             .eq("rider_id", riderId)
-            .or(`shift_date.eq.${today},check_out_time.is.null`)
+            .or(`work_date.in.(${candidateWorkDates.join(",")}),shift_date.in.(${candidateWorkDates.join(",")}),check_out_time.is.null,check_out_at.is.null`)
             .order("created_at", { ascending: false })
             .limit(5),
           supabase
             .from("delivery_orders")
             .select("*")
             .eq("rider_id", riderId)
-            .eq("work_date", today)
+            .in("work_date", candidateWorkDates)
             .order("registered_at", { ascending: false }),
           supabase
             .from("internal_trips")
             .select("*")
             .eq("rider_id", riderId)
-            .eq("work_date", today)
+            .in("work_date", candidateWorkDates)
             .order("registered_at", { ascending: false }),
           supabase
             .from("delivery_orders")
@@ -683,6 +691,7 @@ export default function RiderDashboard() {
             .limit(20),
         ]);
 
+        let effectiveDailyWorkDates = new Set<string>([today]);
         if (attRes.status === "fulfilled" && !attRes.value.error) {
           const rows = (attRes.value.data ?? []) as Attendance[];
           const normalizedRows = rows.map((r: any) => ({
@@ -696,12 +705,16 @@ export default function RiderDashboard() {
             normalizedRows.find((r: any) => r.work_date === today) ||
             normalizedRows[0] ||
             null;
+          const openShiftWorkDate = (best as any)?.check_in_at && !(best as any)?.check_out_at
+            ? String((best as any)?.work_date || (best as any)?.shift_date || today)
+            : today;
+          effectiveDailyWorkDates = new Set([today, openShiftWorkDate].filter(Boolean));
           setAttendance(best);
         }
         if (ordRes.status === "fulfilled")
-          setOrders((ordRes.value.data ?? []) as DeliveryOrder[]);
+          setOrders(((ordRes.value.data ?? []) as DeliveryOrder[]).filter((order: any) => effectiveDailyWorkDates.has(String(order.work_date || order.delivery_date || "").slice(0, 10))));
         if (tripRes.status === "fulfilled")
-          setTrips((tripRes.value.data ?? []) as InternalTrip[]);
+          setTrips(((tripRes.value.data ?? []) as InternalTrip[]).filter((trip: any) => effectiveDailyWorkDates.has(String(trip.work_date || trip.trip_date || "").slice(0, 10))));
         if (cycleOrdRes.status === "fulfilled")
           setCycleOrders((cycleOrdRes.value.data ?? []) as DeliveryOrder[]);
         if (cycleTripRes.status === "fulfilled")

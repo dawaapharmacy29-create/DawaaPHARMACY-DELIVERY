@@ -114,7 +114,8 @@ export default function RiderDashboardV3() {
   const shiftOpen = Boolean(attendance?.check_in_at && !attendance?.check_out_at)
 
   const refreshDevice = useCallback(async (gpsAccuracy?: number | null) => {
-    const snapshot = await readRiderDeviceSnapshot(gpsAccuracy)
+    void gpsAccuracy
+    const snapshot = await readRiderDeviceSnapshot()
     setDevice(snapshot)
     return snapshot
   }, [])

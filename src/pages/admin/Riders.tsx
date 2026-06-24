@@ -331,6 +331,7 @@ export default function Riders() {
       setLoadingPerformance(false)
     }
   }
+  void openPerformanceModal
 
   async function openScheduleModal(rider: Rider) {
     setScheduleRider(rider)
@@ -648,32 +649,32 @@ export default function Riders() {
                   تعديل
                 </button>
                 <button
-                  onClick={() => openPerformanceModal(rider)}
+                  onClick={() => navigate(`/admin/riders/${rider.id}/performance`)}
                   className="rounded-xl border border-slate-300 p-2 text-sm font-bold hover:bg-slate-50 flex items-center justify-center gap-1"
                 >
                   <Eye size={16} />
-                  الأداء
+                  تقرير الأداء
                 </button>
                 <button
-                  onClick={() => openScheduleModal(rider)}
+                  onClick={() => { openScheduleModal(rider); setSelectedRider({id: rider.id, branchId: rider.branch_id || ''}) }}
                   className="rounded-xl border border-slate-300 p-2 text-sm font-bold hover:bg-slate-50 flex items-center justify-center gap-1"
                 >
                   <Calendar size={16} />
-                  المواعيد
+                  المواعيد والإذونات
                 </button>
                 <button
-                  onClick={() => { setSelectedRider({id: rider.id, branchId: rider.branch_id || ''}); setLeaveModalOpen(true) }}
+                  onClick={() => navigate('/admin/rider-accounts')}
                   className="rounded-xl bg-[#008E92] p-2 text-sm font-bold text-white hover:bg-[#05777B] flex items-center justify-center gap-1"
                 >
                   <AlertCircle size={16} />
-                  إذن
+                  الأجهزة والحساب
                 </button>
                 <button
                   onClick={() => openActionModal(rider)}
                   className="rounded-xl bg-amber-500 p-2 text-sm font-black text-white hover:bg-amber-600 flex items-center justify-center gap-1"
                 >
                   <ShieldAlert size={16} />
-                  موقف/مكافأة
+                  إجراءات وملاحظات
                 </button>
               </div>
             </div>
