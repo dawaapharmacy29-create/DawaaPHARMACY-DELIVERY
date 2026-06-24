@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowRight, ExternalLink, RefreshCw, Search, Star, TrendingUp, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
@@ -87,10 +87,12 @@ function mergeOrders(rows: OrderRow[][]) {
 
 export default function CustomerAnalytics() {
   const navigate = useNavigate()
-  const [month, setMonth] = useState(currentMonthValue())
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [month, setMonth] = useState(searchParams.get('month') || currentMonthValue())
   const [orders, setOrders] = useState<OrderRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  void setSearchParams
 
   async function load() {
     try {
@@ -143,6 +145,10 @@ export default function CustomerAnalytics() {
     }
   }
 
+  useEffect(() => {
+    const monthParam = searchParams.get('month')
+    if (monthParam && monthParam !== month) setMonth(monthParam)
+  }, [searchParams, month])
   useEffect(() => { void load() }, [month])
 
   const customers = useMemo<MonthlyCustomerRow[]>(() => {
@@ -176,12 +182,23 @@ export default function CustomerAnalytics() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return customers
-    return customers.filter(row =>
+    const filter = searchParams.get('filter')
+    const branch = searchParams.get('branch')
+    const issue = searchParams.get('issue')
+    let rows = customers
+    if (filter === 'vip') rows = rows.filter(row => row.segment === 'VIP')
+    if (filter === 'one_order') rows = rows.filter(row => row.invoices_count === 1)
+    if (filter === 'repeat') rows = rows.filter(row => row.invoices_count >= 2)
+    if (filter === 'stopped') rows = rows.filter(row => row.invoices_count === 0)
+    if (filter === 'at_risk') rows = rows.filter(row => row.invoices_count === 1 && row.total_sales < 8000)
+    if (branch) rows = rows.filter(row => row.branch_name === branch)
+    if (issue === 'bad_names') rows = rows.filter(row => row.customer_name.length < 3 || /^\d+$/.test(row.customer_name))
+    if (!q) return rows
+    return rows.filter(row =>
       [row.customer_code, row.customer_name, row.phone, row.branch_name, row.segment]
         .some(value => String(value || '').toLowerCase().includes(q))
     )
-  }, [customers, search])
+  }, [customers, search, searchParams])
 
   const stats = useMemo(() => {
     const invoices = orders.length
@@ -294,12 +311,14 @@ export default function CustomerAnalytics() {
   )
 }
 
-function Metric({ label, value, icon }: { label: string; value: number | string; icon: ReactNode }) {
+function Metric({ label, value, icon, onClick }: { label: string; value: number | string; icon: ReactNode; onClick?: () => void }) {
+  const Component = onClick ? 'button' : 'div'
   return (
-    <div className="rounded-3xl border bg-white p-5 shadow-sm">
+    <Component type={onClick ? 'button' : undefined} onClick={onClick} title={onClick ? 'اضغط للتفاصيل' : undefined} className={`w-full rounded-3xl border bg-white p-5 text-right shadow-sm ${onClick ? 'cursor-pointer transition hover:-translate-y-0.5 hover:shadow-lg' : ''}`}>
       <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">{icon}</div>
       <p className="text-sm font-black text-slate-500">{label}</p>
       <p className="mt-2 text-3xl font-black text-[#061827]">{value}</p>
-    </div>
+      {onClick && <p className="mt-2 text-[11px] font-black text-slate-400">اضغط للتفاصيل</p>}
+    </Component>
   )
 }

@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, CheckCircle2, XCircle, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { DeliveryOrder, Rider } from '../../lib/types'
-import { getTodayOrders, getRiders, approveDuplicateInvoice, rejectDuplicateInvoice } from '../../lib/delivery'
+import { getRiders, approveDuplicateInvoice, rejectDuplicateInvoice } from '../../lib/delivery'
 import { formatTime } from '../../lib/helpers'
+import { supabase } from '../../lib/supabase'
 
 export default function DuplicateInvoices() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [orders, setOrders] = useState<DeliveryOrder[]>([])
   const [riders, setRiders] = useState<Rider[]>([])
   const [loading, setLoading] = useState(true)
@@ -15,19 +17,25 @@ export default function DuplicateInvoices() {
   const [searchTerm, setSearchTerm] = useState('')
 
   useEffect(() => {
-    loadAll()
-  }, [])
+    const status = searchParams.get('status') as typeof filter | null
+    if (status && ['all', 'pending', 'approved', 'rejected'].includes(status)) setFilter(status)
+    void loadAll()
+  }, [searchParams])
 
   async function loadAll() {
     try {
       setLoading(true)
+      const today = new Date().toISOString().slice(0, 10)
+      const fromDate = searchParams.get('date') === 'today' ? today : (searchParams.get('from') || searchParams.get('date') || today)
+      const toDate = searchParams.get('date') === 'today' ? today : (searchParams.get('to') || searchParams.get('date') || today)
       const [ordersData, ridersData] = await Promise.allSettled([
-        getTodayOrders(),
+        supabase.from('delivery_orders').select('*').gte('delivery_date', fromDate).lte('delivery_date', toDate).order('registered_at', { ascending: false }),
         getRiders()
       ])
       
       if (ordersData.status === 'fulfilled') {
-        const duplicateOrders = ordersData.value.filter(o => o.is_duplicate_invoice)
+        const result = ordersData.value as any
+        const duplicateOrders = ((result.data || []) as DeliveryOrder[]).filter(o => o.is_duplicate_invoice)
         setOrders(duplicateOrders)
       }
       if (ridersData.status === 'fulfilled') {
@@ -44,11 +52,14 @@ export default function DuplicateInvoices() {
   const riderMap = new Map(riders.map(r => [r.id, r]))
   const filteredOrders = orders.filter(order => {
     const matchesFilter = filter === 'all' || order.duplicate_review_status === filter
+    const matchesRider = !searchParams.get('rider_id') || order.rider_id === searchParams.get('rider_id')
+    const branch = searchParams.get('branch')
+    const matchesBranch = !branch || String((order as any).branch_name || '').includes(branch)
     const matchesSearch = !searchTerm || 
       order.invoice_number.includes(searchTerm) ||
       order.customer_name_snapshot?.includes(searchTerm) ||
       (riderMap.get(order.rider_id)?.name || '').includes(searchTerm)
-    return matchesFilter && matchesSearch
+    return matchesFilter && matchesSearch && matchesRider && matchesBranch
   })
 
   async function handleApprove(orderId: string) {

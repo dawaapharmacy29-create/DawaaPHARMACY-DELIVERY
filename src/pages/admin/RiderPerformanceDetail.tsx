@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Download, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
@@ -25,6 +25,7 @@ function Card({ label, value, tone='slate', onClick }: { label: string; value: a
 
 export default function RiderPerformanceDetail() {
   const { riderId } = useParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const period = getOperationalPeriod()
   const [loading, setLoading] = useState(true)
@@ -38,6 +39,14 @@ export default function RiderPerformanceDetail() {
   const [draft, setDraft] = useState<any | null>(null)
 
   useEffect(() => { void load() }, [riderId])
+  useEffect(() => {
+    const raw = searchParams.get('filter')
+    const normalized = raw === 'multiplier' ? 'multi' : raw
+    if (normalized && ['all', 'one', 'multi', 'review', 'delivered', 'failed', 'duplicate', 'uncounted', 'trips'].includes(normalized)) {
+      setFilter(normalized as FilterKey)
+      setTimeout(() => document.getElementById('rider-orders-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120)
+    }
+  }, [searchParams])
 
   async function load() {
     if (!riderId) return
@@ -93,6 +102,7 @@ export default function RiderPerformanceDetail() {
 
   function openFilter(next: FilterKey) {
     setFilter(next)
+    setSearchParams(next === 'multi' ? { filter: 'multiplier' } : { filter: next })
     setTimeout(() => document.getElementById('rider-orders-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
   }
 
@@ -178,7 +188,7 @@ export default function RiderPerformanceDetail() {
         <section id="rider-orders-list" className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm scroll-mt-24">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div className="font-black text-[#061827]">{filterLabel(filter)}</div>
-            <div className="flex flex-wrap gap-2">{(['all','one','multi','review','delivered','failed','duplicate','uncounted','trips'] as FilterKey[]).map(f => <button key={f} onClick={() => setFilter(f)} className={`rounded-xl px-3 py-2 text-xs font-black ${filter === f ? 'bg-[#008E92] text-white' : 'bg-slate-100 text-slate-600'}`}>{filterLabel(f)}</button>)}</div>
+            <div className="flex flex-wrap gap-2">{(['all','one','multi','review','delivered','failed','duplicate','uncounted','trips'] as FilterKey[]).map(f => <button key={f} onClick={() => openFilter(f)} className={`cursor-pointer rounded-xl px-3 py-2 text-xs font-black transition hover:-translate-y-0.5 hover:shadow-lg ${filter === f ? 'bg-[#008E92] text-white' : 'bg-slate-100 text-slate-600'}`} title="اضغط للتفاصيل">{filterLabel(f)}</button>)}</div>
           </div>
           {filter === 'trips' ? <div className="overflow-x-auto"><table className="w-full min-w-[800px] text-right text-sm"><thead className="bg-slate-50 text-xs text-slate-500"><tr><th className="p-3">التاريخ</th><th className="p-3">من</th><th className="p-3">إلى</th><th className="p-3">السبب</th><th className="p-3">الحالة</th><th className="p-3">القيمة</th></tr></thead><tbody>{trips.map((t:any) => <tr key={t.id} className="border-t"><td className="p-3">{(t.work_date || t.trip_date || t.created_at || '').slice(0,10)}</td><td className="p-3 font-bold">{t.from_label || '—'}</td><td className="p-3 font-bold">{t.to_label || '—'}</td><td className="p-3">{t.reason || t.notes || '—'}</td><td className="p-3">{t.status || t.review_status || '—'}</td><td className="p-3">{formatMoney(n(t.trip_earning || t.trip_rate))}</td></tr>)}</tbody></table></div> : <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-right text-sm"><thead className="bg-slate-50 text-xs text-slate-500"><tr><th className="p-3">التاريخ</th><th className="p-3">الفاتورة</th><th className="p-3">العميل</th><th className="p-3">الحالة</th><th className="p-3">×</th><th className="p-3">القيمة</th><th className="p-3">مراجعة</th><th className="p-3 no-print">إجراء</th></tr></thead><tbody>{visibleOrders.slice(0,250).map((o:any) => <tr key={o.id} className="border-t"><td className="p-3">{(o.delivery_date || o.work_date || o.created_at || '').slice(0,10)}</td><td className="p-3 font-black">{o.invoice_number || o.invoice_no || '—'}</td><td className="p-3">{o.customer_name || o.customer_name_snapshot || '—'}</td><td className="p-3">{o.status || '—'}</td><td className="p-3 font-black">{isMulti(o) ? '1.5' : '1'}</td><td className="p-3">{formatMoney(n(o.invoice_amount || o.invoice_value || o.amount))}</td><td className="p-3">{o.review_status || o.reconciliation_status || '—'}</td><td className="p-3 no-print"><button onClick={() => openEdit(o)} className="rounded-xl bg-[#008E92] px-3 py-2 text-xs font-black text-white">تعديل</button></td></tr>)}</tbody></table></div>}
         </section>

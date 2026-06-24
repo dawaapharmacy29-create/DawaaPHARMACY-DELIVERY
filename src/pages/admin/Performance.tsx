@@ -4,6 +4,7 @@ import { ArrowLeft, TrendingUp, TrendingDown, Award, RefreshCw } from 'lucide-re
 import { getRiderPerformanceDaily, getRiders, getBranches } from '../../lib/delivery'
 import { formatMoney } from '../../lib/helpers'
 import { toast } from 'sonner'
+import { riderPerformanceUrl } from '../../lib/adminDrilldown'
 
 type Period = 'daily' | 'weekly' | 'monthly' | 'quarterly'
 
@@ -67,6 +68,14 @@ function StatCard({ label, value, sub, icon, tone = 'green' }: { label: string; 
         </div>
       </div>
     </div>
+  )
+}
+
+function DrillNumber({ value, onClick }: { value: string | number; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} title="اضغط للتفاصيل" className="cursor-pointer rounded-xl px-2 py-1 font-black text-[#008E92] transition hover:-translate-y-0.5 hover:bg-emerald-50 hover:shadow-lg">
+      {value}
+    </button>
   )
 }
 
@@ -277,7 +286,16 @@ export default function Performance() {
               ))}
             </div>
 
-            <button onClick={() => navigate(`/admin/riders/${r.riderId}/performance`)} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#008E92] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#00777B] active:scale-[0.99]">
+            <div className="grid grid-cols-3 gap-2 rounded-2xl bg-slate-50 p-2 text-center text-xs font-black">
+              <DrillNumber value={`الكل ${r.orders}`} onClick={() => navigate(riderPerformanceUrl(r.riderId, { filter: 'all' }))} />
+              <DrillNumber value={`تم ${r.delivered}`} onClick={() => navigate(riderPerformanceUrl(r.riderId, { filter: 'delivered' }))} />
+              <DrillNumber value={`فشل ${r.failed}`} onClick={() => navigate(riderPerformanceUrl(r.riderId, { filter: 'failed' }))} />
+              <DrillNumber value={`مكرر ${r.duplicates}`} onClick={() => navigate(riderPerformanceUrl(r.riderId, { filter: 'duplicate' }))} />
+              <DrillNumber value={`مشاوير ${r.trips}`} onClick={() => navigate(riderPerformanceUrl(r.riderId, { filter: 'trips' }))} />
+              <DrillNumber value="1.5x" onClick={() => navigate(riderPerformanceUrl(r.riderId, { filter: 'multiplier' }))} />
+            </div>
+
+            <button onClick={() => navigate(riderPerformanceUrl(r.riderId))} title="اضغط للتفاصيل" className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-[#008E92] px-4 py-3 text-sm font-black text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#00777B] hover:shadow-lg active:scale-[0.99]">
               فتح الصفحة التفصيلية + تقرير PDF
             </button>
 

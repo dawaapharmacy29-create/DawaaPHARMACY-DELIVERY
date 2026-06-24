@@ -220,6 +220,15 @@ export default function Reconciliation() {
     notes: '',
     edit_reason: '',
   })
+  const activeDrillFilters = useMemo(() => {
+    const out: Record<string, string> = {}
+    ;['status', 'review_status', 'branch', 'rider_id', 'multiplier', 'countable', 'date', 'from', 'to', 'issue'].forEach(key => {
+      const value = searchParams.get(key)
+      if (value) out[key] = value
+    })
+    return out
+  }, [searchParams])
+  const hasDrillFilters = Object.keys(activeDrillFilters).length > 0
 
   useEffect(() => {
     const incoming = searchParams.get('filter') as FilterKey | null
@@ -232,30 +241,36 @@ export default function Reconciliation() {
   async function loadAll() {
     try {
       setLoading(true)
+      const fromDate = searchParams.get('date') === 'today'
+        ? new Date().toISOString().slice(0, 10)
+        : (searchParams.get('from') || period.start)
+      const toDate = searchParams.get('date') === 'today'
+        ? new Date().toISOString().slice(0, 10)
+        : (searchParams.get('to') || period.end)
       const [ordersRes, ridersRes, tripsRes, attendanceRes, actionsRes] = await Promise.allSettled([
         supabase
           .from('delivery_orders')
           .select('*')
-          .gte('delivery_date', period.start)
-          .lte('delivery_date', period.end)
+          .gte('delivery_date', fromDate)
+          .lte('delivery_date', toDate)
           .order('registered_at', { ascending: false }),
         getRiders(),
         supabase
           .from('internal_trips')
           .select('*')
-          .gte('trip_date', period.start)
-          .lte('trip_date', period.end)
+          .gte('trip_date', fromDate)
+          .lte('trip_date', toDate)
           .order('registered_at', { ascending: false }),
         supabase
           .from('attendance')
           .select('*')
-          .gte('work_date', period.start)
-          .lte('work_date', period.end),
+          .gte('work_date', fromDate)
+          .lte('work_date', toDate),
         supabase
           .from('rider_shift_actions')
           .select('*')
-          .gte('shift_date', period.start)
-          .lte('shift_date', period.end)
+          .gte('shift_date', fromDate)
+          .lte('shift_date', toDate)
           .order('incident_at', { ascending: false }),
       ])
       if (ordersRes.status === 'fulfilled') setOrders((ordersRes.value.data ?? []) as DeliveryOrder[])
@@ -289,6 +304,22 @@ export default function Reconciliation() {
     const isDuplicate = duplicateInvoiceSet.has(inv) || order.is_duplicate_invoice
     const isMultiplier = (order.order_multiplier ?? 1) >= 1.5
     const finalStatus = (order as any).final_count_status
+    const branchName = String((order as any).branch_name || '')
+    const reviewStatus = String((order as any).review_status || (order as any).duplicate_review_status || '')
+    const issue = activeDrillFilters.issue
+    const matchesDrill =
+      (!activeDrillFilters.status || String(order.status || '') === activeDrillFilters.status) &&
+      (!activeDrillFilters.review_status || reviewStatus === activeDrillFilters.review_status || (activeDrillFilters.review_status === 'pending' && reviewStatus.startsWith('pending'))) &&
+      (!activeDrillFilters.branch || branchName === activeDrillFilters.branch || normalizeBranchName(branchName) === normalizeBranchName(activeDrillFilters.branch)) &&
+      (!activeDrillFilters.rider_id || order.rider_id === activeDrillFilters.rider_id) &&
+      (!activeDrillFilters.multiplier || Number(order.order_multiplier || 1) >= Number(activeDrillFilters.multiplier)) &&
+      (!activeDrillFilters.countable || String((order as any).is_countable) === activeDrillFilters.countable) &&
+      (!issue ||
+        (issue === 'missing_branch' && !order.branch_id && !branchName) ||
+        (issue === 'missing_rider' && !order.rider_id) ||
+        (issue === 'missing_invoice' && !inv) ||
+        (issue === 'duplicate' && isDuplicate) ||
+        (issue === 'failed' && isFailed))
     const matchesFilter =
       (filter === 'all' && !isDeleted) ||
       (filter === 'counted' && ((order as any).is_countable === true || finalStatus === 'counted')) ||
@@ -315,7 +346,7 @@ export default function Reconciliation() {
       (order as any).driver_name,
     ].map(v => String(v || ''))
     const matchesSearch = !searchTerm.trim() || haystack.some(v => wildcardMatchText(v, searchTerm))
-    return matchesFilter && matchesSearch
+    return matchesFilter && matchesSearch && matchesDrill
   })
 
   async function readImportFile(file: File): Promise<Record<string, unknown>[]> {
@@ -1061,6 +1092,20 @@ export default function Reconciliation() {
               <Kpi label="تلاعب/غير موجود" value={report.notFound} tone="red" />
               <Kpi label="فاشل مستبعد" value={report.failedExcluded} tone="red" />
               <Kpi label="فواتير لم يسجلها دليفري" value={report.bconnectWithoutRider} tone="amber" />
+            </div>
+          </div>
+        )}
+
+        {hasDrillFilters && (
+          <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-black text-emerald-800">فلاتر نشطة:</span>
+              {Object.entries(activeDrillFilters).map(([key, value]) => (
+                <span key={key} className="rounded-full bg-white px-3 py-1 text-xs font-black text-emerald-700 shadow-sm">{key}: {value}</span>
+              ))}
+              <button type="button" onClick={() => navigate('/admin/reconciliation')} className="cursor-pointer rounded-full bg-[#008E92] px-4 py-2 text-xs font-black text-white transition hover:-translate-y-0.5 hover:shadow-lg">
+                مسح الفلاتر
+              </button>
             </div>
           </div>
         )}
