@@ -42,7 +42,6 @@ drop trigger if exists trg_single_active_rider_session on public.rider_sessions;
 create trigger trg_single_active_rider_session before insert on public.rider_sessions
 for each row execute function public.enforce_single_active_rider_session();
 
-drop function if exists public.rider_validate_session(text);
 create or replace function public.rider_validate_session(p_token text)
 returns jsonb language plpgsql security definer set search_path=public as $$
 declare v_session record;v_account record;v_rider record;v_att record;
@@ -62,7 +61,6 @@ begin
     'expires_at',v_session.expires_at,'open_attendance_id',v_att.id,'shift_date',v_att.shift_date,'check_in_time',v_att.check_in_time);
 end $$;
 
-drop function if exists public.rider_logout(text);
 create or replace function public.rider_logout(p_token text)
 returns jsonb language plpgsql security definer set search_path=public as $$
 declare v_count int;
