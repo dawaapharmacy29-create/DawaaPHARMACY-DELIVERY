@@ -66,14 +66,14 @@ export default function AdminShell({ children }: AdminShellProps) {
   }, [location.pathname])
 
   return (
-    <div className="min-h-screen bg-[#F3F7F8]" dir="rtl">
+    <div className="min-h-screen overflow-x-hidden bg-[#F3F7F8]" dir="rtl">
       <aside className="hidden w-72 shrink-0 overflow-y-auto rounded-[28px] border border-white/70 bg-white p-4 shadow-sm lg:fixed lg:right-3 lg:top-3 lg:block lg:h-[calc(100vh-24px)]">
         <div className="mb-4 rounded-3xl bg-[#EAF8F8] p-4">
           <p className="text-xs font-black text-[#008E92]">Dawaa Delivery</p>
           <h2 className="mt-1 text-xl font-black text-[#061827]">لوحة الإدارة</h2>
           <p className="mt-1 text-xs font-bold text-slate-500">تشغيل، متابعة، وتحليل من مكان واحد.</p>
         </div>
-        <nav className="space-y-4 pb-10">
+        <nav className="space-y-4 pb-16">
           {groups.map(group => (
             <section key={group.title}>
               <p className="mb-2 px-2 text-xs font-black text-slate-400">{group.title}</p>
@@ -87,9 +87,12 @@ export default function AdminShell({ children }: AdminShellProps) {
             </section>
           ))}
         </nav>
+        <div className="pointer-events-none sticky bottom-0 -mx-4 bg-gradient-to-t from-white via-white/95 to-transparent px-4 pb-2 pt-8 text-center text-[11px] font-black text-slate-400">
+          مرّر لعرض باقي الصفحات ↑ ↓
+        </div>
       </aside>
 
-      <div className="mx-auto w-full max-w-[1800px] p-3 lg:mr-[312px] lg:pr-3">
+      <div className="w-full min-w-0 p-3 lg:mr-[312px] lg:w-[calc(100%-312px)] lg:max-w-none lg:pr-3">
         <div className="lg:hidden">
           <label className="mb-1 block text-xs font-black text-slate-500">انتقال سريع لصفحات الإدارة</label>
           <select value={currentPath} onChange={event => navigate(event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 shadow-sm outline-none focus:border-[#008E92]">
@@ -100,7 +103,7 @@ export default function AdminShell({ children }: AdminShellProps) {
             ))}
           </select>
         </div>
-        <main className="min-w-0">{children}</main>
+        <main className="min-w-0 overflow-x-hidden">{children}</main>
       </div>
     </div>
   )
