@@ -47,7 +47,7 @@ const groups = [
     title: 'الرقابة والماليات',
     links: [
       { to: '/admin/fraud-alerts', label: 'تنبيهات التلاعب' },
-      { to: '/admin/cash-flow', label: 'الملخص المالي' },
+      { to: '/admin/cash-flow', label: 'التدفق النقدي الشهري' },
       { to: '/admin/branch', label: 'مدير الفرع' },
     ],
   },
@@ -67,47 +67,32 @@ export default function AdminShell({ children }: AdminShellProps) {
 
   return (
     <div className="min-h-screen bg-[#F3F7F8]" dir="rtl">
-      <div className="mx-auto flex w-full max-w-[1800px] flex-col gap-3 p-3 lg:flex-row-reverse lg:items-start">
-        <aside className="hidden w-72 shrink-0 rounded-[28px] border border-white/70 bg-white p-4 shadow-sm lg:sticky lg:top-3 lg:block">
-          <div className="mb-4 rounded-3xl bg-[#EAF8F8] p-4">
-            <p className="text-xs font-black text-[#008E92]">Dawaa Delivery</p>
-            <h2 className="mt-1 text-xl font-black text-[#061827]">لوحة الإدارة</h2>
-            <p className="mt-1 text-xs font-bold text-slate-500">تشغيل، متابعة، وتحليل من مكان واحد.</p>
-          </div>
-          <nav className="space-y-4">
-            {groups.map(group => (
-              <section key={group.title}>
-                <p className="mb-2 px-2 text-xs font-black text-slate-400">{group.title}</p>
-                <div className="space-y-1">
-                  {group.links.map(link => (
-                    <NavLink
-                      key={link.to}
-                      to={link.to}
-                      end={link.to === '/admin'}
-                      className={({ isActive }) =>
-                        `block rounded-2xl px-3 py-2.5 text-sm font-black transition ${
-                          isActive || currentPath === link.to
-                            ? 'bg-[#008E92] text-white shadow-sm'
-                            : 'text-slate-600 hover:bg-slate-50 hover:text-[#008E92]'
-                        }`
-                      }
-                    >
-                      {link.label}
-                    </NavLink>
-                  ))}
-                </div>
-              </section>
-            ))}
-          </nav>
-        </aside>
+      <aside className="hidden w-72 shrink-0 overflow-y-auto rounded-[28px] border border-white/70 bg-white p-4 shadow-sm lg:fixed lg:right-3 lg:top-3 lg:block lg:h-[calc(100vh-24px)]">
+        <div className="mb-4 rounded-3xl bg-[#EAF8F8] p-4">
+          <p className="text-xs font-black text-[#008E92]">Dawaa Delivery</p>
+          <h2 className="mt-1 text-xl font-black text-[#061827]">لوحة الإدارة</h2>
+          <p className="mt-1 text-xs font-bold text-slate-500">تشغيل، متابعة، وتحليل من مكان واحد.</p>
+        </div>
+        <nav className="space-y-4 pb-10">
+          {groups.map(group => (
+            <section key={group.title}>
+              <p className="mb-2 px-2 text-xs font-black text-slate-400">{group.title}</p>
+              <div className="space-y-1">
+                {group.links.map(link => (
+                  <NavLink key={link.to} to={link.to} end={link.to === '/admin'} className={({ isActive }) => `block rounded-2xl px-3 py-2.5 text-sm font-black transition ${isActive || currentPath === link.to ? 'bg-[#008E92] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-[#008E92]'}`}>
+                    {link.label}
+                  </NavLink>
+                ))}
+              </div>
+            </section>
+          ))}
+        </nav>
+      </aside>
 
+      <div className="mx-auto w-full max-w-[1800px] p-3 lg:mr-[312px] lg:pr-3">
         <div className="lg:hidden">
           <label className="mb-1 block text-xs font-black text-slate-500">انتقال سريع لصفحات الإدارة</label>
-          <select
-            value={currentPath}
-            onChange={event => navigate(event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 shadow-sm outline-none focus:border-[#008E92]"
-          >
+          <select value={currentPath} onChange={event => navigate(event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 shadow-sm outline-none focus:border-[#008E92]">
             {groups.map(group => (
               <optgroup key={group.title} label={group.title}>
                 {group.links.map(link => <option key={link.to} value={link.to}>{link.label}</option>)}
@@ -115,8 +100,7 @@ export default function AdminShell({ children }: AdminShellProps) {
             ))}
           </select>
         </div>
-
-        <main className="min-w-0 flex-1">{children}</main>
+        <main className="min-w-0">{children}</main>
       </div>
     </div>
   )
