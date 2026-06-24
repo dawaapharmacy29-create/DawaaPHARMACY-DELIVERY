@@ -14,7 +14,7 @@ const RiderDashboard = lazy(() => import('./pages/rider/RiderDashboard'))
 
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'))
 const ExecutiveDashboard = lazy(() => import('./pages/admin/ExecutiveDashboard'))
-const RiderSchedules = lazy(() => import('./pages/admin/RiderSchedules'))
+const RiderSchedules = lazy(() => import('./pages/admin/RiderSchedulesWeekly'))
 const Riders = lazy(() => import('./pages/admin/Riders'))
 const Performance = lazy(() => import('./pages/admin/PerformanceActual'))
 const DuplicateInvoices = lazy(() => import('./pages/admin/DuplicateInvoices'))
