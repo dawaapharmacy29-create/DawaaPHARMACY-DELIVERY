@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowRight, ExternalLink, RefreshCw, Search, Star, TrendingDown, TrendingUp, Users } from 'lucide-react'
+import { ArrowRight, ExternalLink, RefreshCw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { displayBranchName } from '../../lib/branchUtils'
