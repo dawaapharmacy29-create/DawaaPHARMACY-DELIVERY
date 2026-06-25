@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Eye, MapPin, ShieldAlert, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
@@ -75,12 +75,11 @@ export default function TripFraudWatch() {
 
   const stats = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10)
-    const risky = trips.filter(trip => tripRisk(trip).length > 0)
     const noProof = trips.filter(trip => !proofUrl(trip))
     const noInvoice = trips.filter(trip => !trip.has_invoice_reference && !trip.related_invoice_number)
     const pending = trips.filter(trip => trip.status === 'pending_approval')
     const todayTrips = trips.filter(trip => tripDate(trip) === today)
-    return { risky, noProof, noInvoice, pending, todayTrips }
+    return { noProof, noInvoice, pending, todayTrips }
   }, [trips])
 
   const topRisk = useMemo(() => {
@@ -183,6 +182,6 @@ function Metric({ title, value, tone }: { title: string; value: number; tone: 's
   return <div className={`rounded-2xl p-4 text-center ${cls}`}><p className="text-xs font-black opacity-80">{title}</p><b className="mt-2 block text-2xl">{value}</b></div>
 }
 
-function Info({ label, value, wide }: { label: string; value: React.ReactNode; wide?: boolean }) {
+function Info({ label, value, wide }: { label: string; value: ReactNode; wide?: boolean }) {
   return <div className={`rounded-2xl bg-slate-50 p-3 ${wide ? 'md:col-span-2' : ''}`}><p className="text-[11px] font-black text-slate-400">{label}</p><div className="mt-1 text-sm font-bold text-slate-700">{value}</div></div>
 }
