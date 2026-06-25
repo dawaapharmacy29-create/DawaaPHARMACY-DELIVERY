@@ -12,7 +12,7 @@ const Health = lazy(() => import('./pages/Health'))
 const SafeAdmin = lazy(() => import('./pages/SafeAdmin'))
 const RiderDashboard = lazy(() => import('./pages/rider/RiderDashboard'))
 
-const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'))
+const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboardWithTripAudit'))
 const ExecutiveDashboard = lazy(() => import('./pages/admin/ExecutiveDashboard'))
 const RiderSchedules = lazy(() => import('./pages/admin/RiderSchedules'))
 const Riders = lazy(() => import('./pages/admin/Riders'))
