@@ -101,9 +101,19 @@
   }
 
   @media (min-width: 1280px) {
+    main > div[dir="rtl"] > div > section:nth-of-type(3),
     main > div[dir="rtl"] > div > section:nth-of-type(4),
     main > div[dir="rtl"] > div > section:nth-of-type(5) {
       grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    main > div[dir="rtl"] > div > section:nth-of-type(3) > section:first-child {
+      width: 100% !important;
+    }
+
+    main > div[dir="rtl"] > div > section:nth-of-type(3) > section:first-child > div:last-child {
+      height: 320px !important;
+      gap: 0.5rem !important;
     }
 
     main > div[dir="rtl"] > div > section:nth-of-type(4) table {
