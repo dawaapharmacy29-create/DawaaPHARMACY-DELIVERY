@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ChangeEvent, ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Upload, CheckCircle2, XCircle, Search, AlertTriangle, FileSpreadsheet, Trash2, RotateCcw, Printer, Download, Pencil } from 'lucide-react'
+import { ArrowLeft, Upload, CheckCircle2, XCircle, Search, AlertTriangle, FileSpreadsheet, Trash2, RotateCcw, Printer, Download, Pencil, Eye } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
@@ -48,6 +48,21 @@ type OrderEditForm = {
   customer_phone: string
   notes: string
   edit_reason: string
+}
+
+type ReconciliationUploadLog = {
+  id: string
+  uploaded_at: string
+  file_name: string | null
+  match_date: string | null
+  period_start: string | null
+  period_end: string | null
+  rows_count: number | null
+  matched_count: number | null
+  unmatched_count: number | null
+  uploaded_by: string | null
+  notes: string | null
+  last_reconciliation_day?: string | null
 }
 
 const BRANCH_KEYS = ['branch_name', 'branch', 'المخزن', 'الفرع', 'فرع']
@@ -196,7 +211,7 @@ function normalizeOrderInvoice(order: DeliveryOrder): string {
 
 export default function Reconciliation() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const period = useMemo(() => getOperationalPeriod(), [])
   const [orders, setOrders] = useState<DeliveryOrder[]>([])
   const [trips, setTrips] = useState<InternalTrip[]>([])
@@ -208,9 +223,11 @@ export default function Reconciliation() {
   const [searchTerm, setSearchTerm] = useState('')
   const [uploading, setUploading] = useState(false)
   const [report, setReport] = useState<ReconciliationReport | null>(null)
+  const [latestUploadLog, setLatestUploadLog] = useState<ReconciliationUploadLog | null>(null)
   const [missingFromRiders, setMissingFromRiders] = useState<BConnectRow[]>([])
   const [, setLastBatchId] = useState<string | null>(null)
   const [editingOrder, setEditingOrder] = useState<DeliveryOrder | null>(null)
+  const [detailsOrder, setDetailsOrder] = useState<DeliveryOrder | null>(null)
   const [editForm, setEditForm] = useState<OrderEditForm>({
     invoice_number: '',
     invoice_amount: '',
@@ -238,6 +255,24 @@ export default function Reconciliation() {
     void loadAll()
   }, [])
 
+  function applyMainFilter(nextFilter: FilterKey) {
+    setFilter(nextFilter)
+    const next = new URLSearchParams()
+    ;['date', 'from', 'to'].forEach(key => {
+      const value = searchParams.get(key)
+      if (value) next.set(key, value)
+    })
+    if (nextFilter !== 'all') next.set('filter', nextFilter)
+    if (searchTerm.trim()) next.set('q', searchTerm.trim())
+    setSearchParams(next, { replace: true })
+  }
+
+  function clearAllFilters() {
+    setFilter('all')
+    setSearchTerm('')
+    setSearchParams({}, { replace: true })
+  }
+
   async function loadAll() {
     try {
       setLoading(true)
@@ -247,7 +282,7 @@ export default function Reconciliation() {
       const toDate = searchParams.get('date') === 'today'
         ? new Date().toISOString().slice(0, 10)
         : (searchParams.get('to') || period.end)
-      const [ordersRes, ridersRes, tripsRes, attendanceRes, actionsRes] = await Promise.allSettled([
+      const [ordersRes, ridersRes, tripsRes, attendanceRes, actionsRes, uploadLogRes] = await Promise.allSettled([
         supabase
           .from('delivery_orders')
           .select('*')
@@ -272,12 +307,19 @@ export default function Reconciliation() {
           .gte('shift_date', fromDate)
           .lte('shift_date', toDate)
           .order('incident_at', { ascending: false }),
+        supabase
+          .from('reconciliation_upload_history')
+          .select('*')
+          .order('uploaded_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
       ])
       if (ordersRes.status === 'fulfilled') setOrders((ordersRes.value.data ?? []) as DeliveryOrder[])
       if (ridersRes.status === 'fulfilled') setRiders(ridersRes.value)
       if (tripsRes.status === 'fulfilled') setTrips((tripsRes.value.data ?? []) as InternalTrip[])
       if (attendanceRes.status === 'fulfilled') setAttendanceRows((attendanceRes.value.data ?? []) as Attendance[])
       if (actionsRes.status === 'fulfilled') setRiderActions((actionsRes.value.data ?? []) as any[])
+      if (uploadLogRes.status === 'fulfilled' && !uploadLogRes.value.error) setLatestUploadLog((uploadLogRes.value.data ?? null) as ReconciliationUploadLog | null)
 
     } catch (error) {
       console.error(error)
@@ -598,6 +640,23 @@ export default function Reconciliation() {
       }
 
       setMissingFromRiders(bconnectOnly.slice(0, 300))
+      try {
+        const matchedCount = counted + failedExcluded
+        const unmatchedCount = notFound + duplicatesPending + bconnectOnly.length
+        await supabase.from('reconciliation_upload_log').insert({
+          file_name: file.name,
+          period_start: period.start,
+          period_end: period.end,
+          match_date: period.end,
+          rows_count: rows.length,
+          matched_count: matchedCount,
+          unmatched_count: unmatchedCount,
+          uploaded_by: 'admin',
+          notes: `B-Connect: ${bconnect.length} | Rider orders: ${currentOrders.length} | Failed excluded: ${failedExcluded} | 1.5 review: ${multiplierReview}`,
+        })
+      } catch (logError) {
+        console.warn('Reconciliation upload log was not saved, reconciliation succeeded', logError)
+      }
       setReport({
         importedRows: rows.length,
         bconnectInvoices: bconnect.length,
@@ -1019,6 +1078,34 @@ export default function Reconciliation() {
           <Kpi label="مؤشر مخاطر" value={riskTotal} tone="red" />
         </div>
 
+        <div className="rounded-3xl border border-teal-100 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-xl font-black text-[#061827]">سجل آخر مطابقة</h2>
+              <p className="mt-1 text-sm font-bold text-slate-500">آخر ملف B-Connect تم رفعه ومراجعته داخل النظام.</p>
+            </div>
+            <span className="rounded-full bg-teal-50 px-4 py-2 text-xs font-black text-teal-700">
+              {latestUploadLog?.uploaded_at ? new Date(latestUploadLog.uploaded_at).toLocaleString('ar-EG') : 'لا يوجد سجل رفع بعد'}
+            </span>
+          </div>
+          {latestUploadLog ? (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Info label="آخر ملف" value={latestUploadLog.file_name || 'ملف مطابقة'} />
+              <Info label="رقم مسلسل الملف" value={latestUploadLog.id || '—'} />
+              <Info label="الفترة" value={`${latestUploadLog.period_start || '—'} إلى ${latestUploadLog.period_end || '—'}`} />
+              <Info label="آخر يوم تمت مطابقته" value={latestUploadLog.last_reconciliation_day || latestUploadLog.match_date || '—'} />
+              <Info label="عدد الصفوف" value={String(latestUploadLog.rows_count ?? 0)} />
+              <Info label="فواتير مطابقة" value={String(latestUploadLog.matched_count ?? 0)} />
+              <Info label="فواتير غير مطابقة" value={String(latestUploadLog.unmatched_count ?? 0)} />
+              <Info label="من رفع الملف" value={latestUploadLog.uploaded_by || '—'} />
+            </div>
+          ) : (
+            <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-500">
+              لم يتم العثور على سجل مطابقة سابق. عند رفع ملف جديد سيتم حفظ السجل تلقائيًا في reconciliation_upload_log.
+            </div>
+          )}
+        </div>
+
         <div className="flex flex-wrap justify-end gap-2">
           <button onClick={printMonthlyReport} className="flex items-center gap-2 rounded-2xl bg-[#061827] px-5 py-3 font-black text-white shadow-sm hover:bg-[#0b2a42]">
             <Printer size={18} /> تصدير تقرير نهاية الدورة PDF
@@ -1103,7 +1190,7 @@ export default function Reconciliation() {
               {Object.entries(activeDrillFilters).map(([key, value]) => (
                 <span key={key} className="rounded-full bg-white px-3 py-1 text-xs font-black text-emerald-700 shadow-sm">{key}: {value}</span>
               ))}
-              <button type="button" onClick={() => navigate('/admin/reconciliation')} className="cursor-pointer rounded-full bg-[#008E92] px-4 py-2 text-xs font-black text-white transition hover:-translate-y-0.5 hover:shadow-lg">
+              <button type="button" onClick={clearAllFilters} className="cursor-pointer rounded-full bg-[#008E92] px-4 py-2 text-xs font-black text-white transition hover:-translate-y-0.5 hover:shadow-lg">
                 مسح الفلاتر
               </button>
             </div>
@@ -1112,13 +1199,13 @@ export default function Reconciliation() {
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
-            <FilterButton active={filter === 'all'} onClick={() => setFilter('all')}>الكل ({orders.length})</FilterButton>
-            <FilterButton active={filter === 'counted'} onClick={() => setFilter('counted')}>محتسبة ({countedTotal})</FilterButton>
-            <FilterButton active={filter === 'failed'} onClick={() => setFilter('failed')}>فاشلة ({failedTotal})</FilterButton>
-            <FilterButton active={filter === 'not_found'} onClick={() => setFilter('not_found')}>غير موجودة ({notFoundTotal})</FilterButton>
-            <FilterButton active={filter === 'duplicate'} onClick={() => setFilter('duplicate')}>مكررة ({duplicateTotal})</FilterButton>
-            <FilterButton active={filter === 'multiplier'} onClick={() => setFilter('multiplier')}>×1.5 ({multiplierTotal})</FilterButton>
-            <FilterButton active={filter === 'deleted'} onClick={() => setFilter('deleted')}>محذوفة ({deletedTotal})</FilterButton>
+            <FilterButton active={filter === 'all'} onClick={() => applyMainFilter('all')}>الكل ({orders.length})</FilterButton>
+            <FilterButton active={filter === 'counted'} onClick={() => applyMainFilter('counted')}>محتسبة ({countedTotal})</FilterButton>
+            <FilterButton active={filter === 'failed'} onClick={() => applyMainFilter('failed')}>فاشلة ({failedTotal})</FilterButton>
+            <FilterButton active={filter === 'not_found'} onClick={() => applyMainFilter('not_found')}>غير موجودة ({notFoundTotal})</FilterButton>
+            <FilterButton active={filter === 'duplicate'} onClick={() => applyMainFilter('duplicate')}>مكررة ({duplicateTotal})</FilterButton>
+            <FilterButton active={filter === 'multiplier'} onClick={() => applyMainFilter('multiplier')}>×1.5 ({multiplierTotal})</FilterButton>
+            <FilterButton active={filter === 'deleted'} onClick={() => applyMainFilter('deleted')}>محذوفة ({deletedTotal})</FilterButton>
           </div>
           <div className="relative">
             <Search className="absolute right-3 top-3 text-slate-400" size={20} />
@@ -1163,6 +1250,7 @@ export default function Reconciliation() {
                     <div className="flex flex-wrap gap-2 sm:flex-col">
                       {!(order as any).deleted_at ? (
                         <>
+                          <button onClick={() => setDetailsOrder(order)} className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 font-black text-white hover:bg-slate-800"><Eye size={18} /> عرض التفاصيل</button>
                           <button onClick={() => openEditOrder(order)} className="flex items-center gap-2 rounded-xl bg-amber-100 px-4 py-2 font-black text-amber-800 hover:bg-amber-200"><Pencil size={18} /> تعديل البيانات</button>
                           <button onClick={() => handleManualMatch(order.id)} className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 font-black text-white hover:bg-emerald-600"><CheckCircle2 size={18} /> اعتماد يدوي</button>
                           <button onClick={() => handleMarkNotFound(order.id)} className="flex items-center gap-2 rounded-xl bg-rose-100 px-4 py-2 font-black text-rose-700 hover:bg-rose-200"><XCircle size={18} /> استبعاد</button>
@@ -1170,7 +1258,10 @@ export default function Reconciliation() {
                           <button onClick={() => handleSoftDelete(order)} className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 font-black text-slate-700 hover:bg-slate-200"><Trash2 size={18} /> حذف مع حفظ البيان</button>
                         </>
                       ) : (
-                        <button onClick={() => handleRestore(order)} className="flex items-center gap-2 rounded-xl bg-emerald-100 px-4 py-2 font-black text-emerald-700 hover:bg-emerald-200"><RotateCcw size={18} /> استعادة</button>
+                        <>
+                          <button onClick={() => setDetailsOrder(order)} className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 font-black text-white hover:bg-slate-800"><Eye size={18} /> عرض التفاصيل</button>
+                          <button onClick={() => handleRestore(order)} className="flex items-center gap-2 rounded-xl bg-emerald-100 px-4 py-2 font-black text-emerald-700 hover:bg-emerald-200"><RotateCcw size={18} /> استعادة</button>
+                        </>
                       )}
                     </div>
                   </div>
