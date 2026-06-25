@@ -142,6 +142,30 @@
       width: 100%;
       table-layout: fixed;
     }
+
+    main [class*="xl:grid-cols-["],
+    main [class*="2xl:grid-cols["] {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    main [class*="xl:grid-cols-["] > *,
+    main [class*="2xl:grid-cols["] > * {
+      grid-column: 1 / -1 !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      min-width: 0 !important;
+    }
+
+    main [class*="xl:col-span-"],
+    main [class*="2xl:col-span-"] {
+      grid-column: 1 / -1 !important;
+    }
+
+    main section.rounded-\[2rem\],
+    main section.rounded-\[2\.5rem\] {
+      width: 100% !important;
+      max-width: 100% !important;
+    }
   }
 
   @media (max-width: 1279px) {
