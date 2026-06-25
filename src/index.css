@@ -98,32 +98,49 @@
   main th,
   main td {
     white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  main th:not(:first-child),
+  main td:not(:first-child) {
+    text-align: center;
+  }
+
+  main th:first-child,
+  main td:first-child {
+    text-align: right;
   }
 
   @media (min-width: 1280px) {
     main > div[dir="rtl"] > div > section:nth-of-type(3),
     main > div[dir="rtl"] > div > section:nth-of-type(4),
-    main > div[dir="rtl"] > div > section:nth-of-type(5) {
+    main > div[dir="rtl"] > div > section:nth-of-type(5),
+    main > div[dir="rtl"] > div > section:nth-of-type(6),
+    main > div[dir="rtl"] > div > section:nth-of-type(7) {
       grid-template-columns: minmax(0, 1fr) !important;
     }
 
-    main > div[dir="rtl"] > div > section:nth-of-type(3) > section:first-child {
+    main > div[dir="rtl"] > div > section:nth-of-type(3) > section,
+    main > div[dir="rtl"] > div > section:nth-of-type(4) > section,
+    main > div[dir="rtl"] > div > section:nth-of-type(5) > section,
+    main > div[dir="rtl"] > div > section:nth-of-type(6) > section,
+    main > div[dir="rtl"] > div > section:nth-of-type(7) > section {
       width: 100% !important;
+      max-width: 100% !important;
     }
 
     main > div[dir="rtl"] > div > section:nth-of-type(3) > section:first-child > div:last-child {
-      height: 320px !important;
+      height: 340px !important;
       gap: 0.5rem !important;
     }
 
-    main > div[dir="rtl"] > div > section:nth-of-type(4) table {
+    main > div[dir="rtl"] > div > section:nth-of-type(4) table,
+    main > div[dir="rtl"] > div > section:nth-of-type(5) table,
+    main > div[dir="rtl"] > div > section:nth-of-type(6) table,
+    main > div[dir="rtl"] > div > section:nth-of-type(7) table {
       min-width: 1080px !important;
       width: 100%;
-    }
-
-    main > div[dir="rtl"] > div > section:nth-of-type(5) table {
-      min-width: 980px !important;
-      width: 100%;
+      table-layout: fixed;
     }
   }
 
