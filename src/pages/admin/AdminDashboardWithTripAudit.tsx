@@ -1,6 +1,11 @@
-import TripFraudWatch from '../../components/TripFraudWatch'
 import AdminDashboard from './AdminDashboard'
+import TripFraudWatch from '../../components/TripFraudWatch'
 
 export default function AdminDashboardWithTripAudit() {
-  return <><TripFraudWatch /><AdminDashboard /></>
+  return (
+    <div className="space-y-5" dir="rtl">
+      <AdminDashboard />
+      <TripFraudWatch />
+    </div>
+  )
 }
