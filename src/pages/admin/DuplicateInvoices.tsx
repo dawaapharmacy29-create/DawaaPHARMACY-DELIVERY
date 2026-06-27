@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, CheckCircle2, Search, XCircle } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Eye, Search, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { DeliveryOrder, Rider } from '../../lib/types'
 import { approveDuplicateInvoice, getRiders, rejectDuplicateInvoice } from '../../lib/delivery'
 import { formatTime, getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
 import CycleSelector from '../../components/CycleSelector'
+import OrderDetailsModal from '../../components/OrderDetailsModal'
 
 function normalizeInvoice(order: any) {
   return String(order.invoice_number || order.invoice_no || '').trim()
@@ -29,6 +30,7 @@ export default function DuplicateInvoices() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
   const [searchTerm, setSearchTerm] = useState('')
+  const [detailsOrder, setDetailsOrder] = useState<DeliveryOrder | null>(null)
 
   const selectedFrom = searchParams.get('from') || period.start
   const selectedTo = searchParams.get('to') || period.end
@@ -144,7 +146,7 @@ export default function DuplicateInvoices() {
           </button>
           <div>
             <h1 className="text-2xl font-black">إدارة الفواتير المكررة</h1>
-            <p className="text-sm text-white/80">كل الفواتير التي تكررت داخل الدورة المختارة، حتى لو لم تكن معلّمة يدويًا</p>
+            <p className="text-sm text-white/80">كل الفواتير التي تكررت داخل الدورة المختارة، مع سبب التكرار واسم الدكتور إن سجله الدليفري</p>
           </div>
         </div>
       </header>
@@ -153,7 +155,7 @@ export default function DuplicateInvoices() {
         <CycleSelector from={selectedFrom} to={selectedTo} onApply={applyCycle} />
 
         <div className="rounded-3xl border border-amber-100 bg-amber-50 p-4 text-sm font-bold text-amber-800">
-          الفترة الحالية: <b>{selectedFrom}</b> إلى <b>{selectedTo}</b> — الصفحة تعرض أي رقم فاتورة ظهر أكثر من مرة داخل نفس الفترة، بالإضافة إلى الفواتير المعلّمة كمكررة.
+          الفترة الحالية: <b>{selectedFrom}</b> إلى <b>{selectedTo}</b> — اضغط على زر العين لعرض كل تفاصيل الأوردر، والاعتماد يكون فقط بعد التأكد من السبب والدكتور الذي أخرج الأوردر.
         </div>
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -180,6 +182,10 @@ export default function DuplicateInvoices() {
               const status = safeStatus(order)
               const invoice = normalizeInvoice(order)
               const repeatCount = groupedCounts.get(invoice) || 1
+              const doctorName = (order as any).preparing_doctor_name || (order as any).receipt_extracted_doctor_name || 'غير مسجل'
+              const duplicateReason = (order as any).duplicate_reason || 'تكرار رقم الفاتورة داخل الدورة'
+              const duplicateNote = (order as any).duplicate_note || (order as any).notes || ''
+              const missingAuditInfo = status === 'pending' && (!duplicateNote || doctorName === 'غير مسجل')
               return (
                 <div key={order.id} className="rounded-2xl bg-white p-4 shadow-sm">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -191,23 +197,29 @@ export default function DuplicateInvoices() {
                           {status === 'approved' ? 'معتمدة' : status === 'rejected' ? 'مرفوضة' : 'قيد المراجعة'}
                         </span>
                         {!((order as any).is_duplicate_invoice) && <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-black text-blue-700">مكتشفة تلقائيًا</span>}
+                        {missingAuditInfo && <span className="rounded-full bg-rose-50 px-2 py-1 text-xs font-black text-rose-700">ناقص سبب/دكتور</span>}
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
                         <div><p className="text-slate-500">الدليفري</p><p className="font-bold">{rider?.name || 'غير محدد'}</p></div>
                         <div><p className="text-slate-500">العميل</p><p className="font-bold">{order.customer_name_snapshot || 'غير محدد'}</p></div>
                         <div><p className="text-slate-500">تاريخ التسجيل</p><p className="font-bold">{formatTime((order as any).registered_at || orderDate(order))}</p></div>
                         <div><p className="text-slate-500">قيمة الفاتورة</p><p className="font-bold">{(order as any).invoice_amount || '—'}</p></div>
-                        <div><p className="text-slate-500">سبب التكرار</p><p className="font-bold">{(order as any).duplicate_reason || 'تكرار رقم الفاتورة داخل الدورة'}</p></div>
+                        <div><p className="text-slate-500">سبب التكرار</p><p className="font-bold">{duplicateReason}</p></div>
+                        <div><p className="text-slate-500">الدكتور/المحضّر</p><p className="font-bold">{doctorName}</p></div>
                         <div><p className="text-slate-500">كود العميل</p><p className="font-bold">{(order as any).customer_code_snapshot || '—'}</p></div>
+                        <div><p className="text-slate-500">ملاحظة الدليفري</p><p className="font-bold">{duplicateNote || '—'}</p></div>
                       </div>
-                      {(order as any).duplicate_note && <div className="mt-2 rounded-lg bg-slate-50 p-2 text-sm"><p className="text-slate-500">ملاحظة التكرار</p><p className="font-bold">{(order as any).duplicate_note}</p></div>}
+                      {duplicateNote && <div className="mt-2 rounded-lg bg-slate-50 p-2 text-sm"><p className="text-slate-500">تفاصيل الملاحظة</p><p className="font-bold">{duplicateNote}</p></div>}
                     </div>
-                    {status === 'pending' && (
-                      <div className="flex gap-2 sm:flex-col">
-                        <button onClick={() => handleApprove(order.id)} className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 font-black text-white hover:bg-emerald-600"><CheckCircle2 size={18} />اعتماد</button>
-                        <button onClick={() => handleReject(order.id)} className="flex items-center gap-2 rounded-xl bg-rose-100 px-4 py-2 font-black text-rose-700 hover:bg-rose-200"><XCircle size={18} />رفض</button>
-                      </div>
-                    )}
+                    <div className="flex gap-2 sm:flex-col">
+                      <button onClick={() => setDetailsOrder(order)} className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 font-black text-white hover:bg-slate-800"><Eye size={18} />تفاصيل</button>
+                      {status === 'pending' && (
+                        <>
+                          <button onClick={() => handleApprove(order.id)} disabled={missingAuditInfo} title={missingAuditInfo ? 'لا تعتمد قبل تسجيل سبب التكرار واسم الدكتور' : 'اعتماد'} className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 font-black text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300"><CheckCircle2 size={18} />اعتماد</button>
+                          <button onClick={() => handleReject(order.id)} className="flex items-center gap-2 rounded-xl bg-rose-100 px-4 py-2 font-black text-rose-700 hover:bg-rose-200"><XCircle size={18} />رفض</button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               )
@@ -215,6 +227,17 @@ export default function DuplicateInvoices() {
           </div>
         )}
       </main>
+
+      {detailsOrder && (
+        <OrderDetailsModal
+          order={detailsOrder}
+          riderName={riderMap.get(detailsOrder.rider_id)?.name || (detailsOrder as any).rider_name || 'غير محدد'}
+          invoiceNumber={normalizeInvoice(detailsOrder)}
+          onClose={() => setDetailsOrder(null)}
+          onApprove={safeStatus(detailsOrder) === 'pending' ? () => { const id = detailsOrder.id; setDetailsOrder(null); void handleApprove(id) } : undefined}
+          onReject={safeStatus(detailsOrder) === 'pending' ? () => { const id = detailsOrder.id; setDetailsOrder(null); void handleReject(id) } : undefined}
+        />
+      )}
     </div>
   )
 }
