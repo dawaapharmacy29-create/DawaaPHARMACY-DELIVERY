@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowRight, ExternalLink, RefreshCw, Search, Star, TrendingUp, Users } from 'lucide-react'
+import { ArrowRight, ExternalLink, RefreshCw, Search, Star, TrendingUp, Users, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { displayBranchName } from '../../lib/branchUtils'
@@ -8,6 +8,9 @@ import CycleSelector from '../../components/CycleSelector'
 
 type OrderRow = Record<string, any>
 type RangeMode = 'cycle' | 'quarter' | 'all'
+type SegmentFilter = 'all' | 'VIP' | 'متكرر' | 'مرة واحدة'
+type InvoiceFilter = 'all' | 'one' | 'repeat' | 'vip_count' | 'high_value'
+type SortKey = 'sales' | 'invoices' | 'latest' | 'avg' | 'name'
 
 type MonthlyCustomerRow = {
   key: string
@@ -20,6 +23,7 @@ type MonthlyCustomerRow = {
   average_invoice: number
   last_order_at: string
   segment: 'VIP' | 'متكرر' | 'مرة واحدة'
+  orders: OrderRow[]
 }
 
 function iso(date: Date) {
@@ -50,6 +54,10 @@ function orderDate(order: OrderRow) {
 
 function orderAmount(order: OrderRow) {
   return Number(order.invoice_amount ?? order.invoice_value ?? order.amount ?? order.total_amount ?? 0) || 0
+}
+
+function invoiceNo(order: OrderRow) {
+  return String(order.invoice_number || order.invoice_no || order.invoice_id || '—')
 }
 
 function customerKey(order: OrderRow) {
@@ -99,6 +107,11 @@ export default function CustomerAnalytics() {
   const [orders, setOrders] = useState<OrderRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [segmentFilter, setSegmentFilter] = useState<SegmentFilter>('all')
+  const [invoiceFilter, setInvoiceFilter] = useState<InvoiceFilter>('all')
+  const [branchFilter, setBranchFilter] = useState('all')
+  const [sortBy, setSortBy] = useState<SortKey>('sales')
+  const [selectedCustomer, setSelectedCustomer] = useState<MonthlyCustomerRow | null>(null)
 
   const activeRange = useMemo(() => {
     if (mode === 'quarter') return quarterRangeForCycle(cycleRange.start)
@@ -208,10 +221,12 @@ export default function CustomerAnalytics() {
         average_invoice: 0,
         last_order_at: date,
         segment: 'مرة واحدة',
+        orders: [],
       }
       row.invoices_count += 1
       row.total_sales += amount
       row.average_invoice = row.invoices_count ? row.total_sales / row.invoices_count : 0
+      row.orders.push(order)
       if (date && (!row.last_order_at || date > row.last_order_at)) row.last_order_at = date
       row.segment = row.invoices_count >= 5 || row.total_sales >= 8000 ? 'VIP' : row.invoices_count >= 2 ? 'متكرر' : 'مرة واحدة'
       grouped.set(key, row)
@@ -219,25 +234,43 @@ export default function CustomerAnalytics() {
     return [...grouped.values()].sort((a, b) => b.total_sales - a.total_sales)
   }, [orders])
 
+  const branchOptions = useMemo(() => ['all', ...Array.from(new Set(customers.map(row => row.branch_name).filter(Boolean))).sort()], [customers])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    const filter = searchParams.get('filter')
+    const urlFilter = searchParams.get('filter')
     const branch = searchParams.get('branch')
     const issue = searchParams.get('issue')
     let rows = customers
-    if (filter === 'vip') rows = rows.filter(row => row.segment === 'VIP')
-    if (filter === 'one_order') rows = rows.filter(row => row.invoices_count === 1)
-    if (filter === 'repeat') rows = rows.filter(row => row.invoices_count >= 2)
-    if (filter === 'stopped') rows = rows.filter(row => row.invoices_count === 0)
-    if (filter === 'at_risk') rows = rows.filter(row => row.invoices_count === 1 && row.total_sales < 8000)
+    if (urlFilter === 'vip') rows = rows.filter(row => row.segment === 'VIP')
+    if (urlFilter === 'one_order') rows = rows.filter(row => row.invoices_count === 1)
+    if (urlFilter === 'repeat') rows = rows.filter(row => row.invoices_count >= 2)
+    if (urlFilter === 'stopped') rows = rows.filter(row => row.invoices_count === 0)
+    if (urlFilter === 'at_risk') rows = rows.filter(row => row.invoices_count === 1 && row.total_sales < 8000)
     if (branch) rows = rows.filter(row => row.branch_name === branch)
     if (issue === 'bad_names') rows = rows.filter(row => row.customer_name.length < 3 || /^\d+$/.test(row.customer_name))
-    if (!q) return rows
-    return rows.filter(row =>
-      [row.customer_code, row.customer_name, row.phone, row.branch_name, row.segment]
-        .some(value => String(value || '').toLowerCase().includes(q))
-    )
-  }, [customers, search, searchParams])
+    if (segmentFilter !== 'all') rows = rows.filter(row => row.segment === segmentFilter)
+    if (invoiceFilter === 'one') rows = rows.filter(row => row.invoices_count === 1)
+    if (invoiceFilter === 'repeat') rows = rows.filter(row => row.invoices_count >= 2)
+    if (invoiceFilter === 'vip_count') rows = rows.filter(row => row.invoices_count >= 5)
+    if (invoiceFilter === 'high_value') rows = rows.filter(row => row.total_sales >= 8000)
+    if (branchFilter !== 'all') rows = rows.filter(row => row.branch_name === branchFilter)
+    if (q) {
+      rows = rows.filter(row =>
+        [row.customer_code, row.customer_name, row.phone, row.branch_name, row.segment]
+          .some(value => String(value || '').toLowerCase().includes(q))
+      )
+    }
+    const sorted = [...rows]
+    sorted.sort((a, b) => {
+      if (sortBy === 'invoices') return b.invoices_count - a.invoices_count
+      if (sortBy === 'latest') return String(b.last_order_at).localeCompare(String(a.last_order_at))
+      if (sortBy === 'avg') return b.average_invoice - a.average_invoice
+      if (sortBy === 'name') return a.customer_name.localeCompare(b.customer_name, 'ar')
+      return b.total_sales - a.total_sales
+    })
+    return sorted
+  }, [customers, search, searchParams, segmentFilter, invoiceFilter, branchFilter, sortBy])
 
   const stats = useMemo(() => {
     const invoices = orders.length
@@ -254,6 +287,14 @@ export default function CustomerAnalytics() {
       vip: customers.filter(row => row.segment === 'VIP').length,
     }
   }, [orders.length, customers])
+
+  function resetFilters() {
+    setSearch('')
+    setSegmentFilter('all')
+    setInvoiceFilter('all')
+    setBranchFilter('all')
+    setSortBy('sales')
+  }
 
   return (
     <div className="text-right" dir="rtl">
@@ -283,25 +324,51 @@ export default function CustomerAnalytics() {
         </div>
 
         <div className="grid gap-4 md:grid-cols-4">
-          <Metric label={mode === 'all' ? 'فواتير طوال المدة' : mode === 'quarter' ? 'فواتير آخر 3 دورات' : 'فواتير الدورة'} value={stats.invoices} icon={<Users/>}/>
-          <Metric label="عملاء نشطين" value={stats.activeCustomers} icon={<Users/>}/>
-          <Metric label="إجمالي المبيعات" value={money(stats.totalSales)} icon={<TrendingUp/>}/>
-          <Metric label="عملاء VIP" value={stats.vip} icon={<Star/>}/>
-          <Metric label="متوسط فواتير/عميل" value={stats.avgInvoicesPerCustomer.toFixed(1)} icon={<TrendingUp/>}/>
-          <Metric label="متوسط قيمة العميل" value={money(stats.avgValuePerCustomer)} icon={<TrendingUp/>}/>
-          <Metric label="طلبوا مرة واحدة" value={stats.oneTime} icon={<Users/>}/>
-          <Metric label="عملاء متكررون" value={stats.repeated} icon={<Users/>}/>
+          <Metric label={mode === 'all' ? 'فواتير طوال المدة' : mode === 'quarter' ? 'فواتير آخر 3 دورات' : 'فواتير الدورة'} value={stats.invoices} icon={<Users/>} onClick={() => setInvoiceFilter('all')}/>
+          <Metric label="عملاء نشطين" value={stats.activeCustomers} icon={<Users/>} onClick={() => { setSegmentFilter('all'); setInvoiceFilter('all') }}/>
+          <Metric label="إجمالي المبيعات" value={money(stats.totalSales)} icon={<TrendingUp/>} onClick={() => setSortBy('sales')}/>
+          <Metric label="عملاء VIP" value={stats.vip} icon={<Star/>} onClick={() => setSegmentFilter('VIP')}/>
+          <Metric label="متوسط فواتير/عميل" value={stats.avgInvoicesPerCustomer.toFixed(1)} icon={<TrendingUp/>} onClick={() => setSortBy('invoices')}/>
+          <Metric label="متوسط قيمة العميل" value={money(stats.avgValuePerCustomer)} icon={<TrendingUp/>} onClick={() => setSortBy('avg')}/>
+          <Metric label="طلبوا مرة واحدة" value={stats.oneTime} icon={<Users/>} onClick={() => setInvoiceFilter('one')}/>
+          <Metric label="عملاء متكررون" value={stats.repeated} icon={<Users/>} onClick={() => setInvoiceFilter('repeat')}/>
         </div>
 
         <div className="rounded-3xl border bg-white p-4 shadow-sm">
-          <div className="relative">
-            <Search className="absolute right-4 top-3 text-slate-400" size={20}/>
-            <input
-              value={search}
-              onChange={event => setSearch(event.target.value)}
-              className="w-full rounded-2xl border bg-slate-50 py-3 pr-12 font-bold outline-none focus:border-[#008E92]"
-              placeholder="بحث بالكود / الاسم / الهاتف / الفرع"
-            />
+          <div className="grid gap-3 lg:grid-cols-[1.7fr_1fr_1fr_1fr_1fr_auto]">
+            <div className="relative">
+              <Search className="absolute right-4 top-3 text-slate-400" size={20}/>
+              <input
+                value={search}
+                onChange={event => setSearch(event.target.value)}
+                className="w-full rounded-2xl border bg-slate-50 py-3 pr-12 font-bold outline-none focus:border-[#008E92]"
+                placeholder="بحث بالكود / الاسم / الهاتف / الفرع"
+              />
+            </div>
+            <select value={segmentFilter} onChange={event => setSegmentFilter(event.target.value as SegmentFilter)} className="rounded-2xl border bg-slate-50 px-3 py-3 font-black outline-none focus:border-[#008E92]">
+              <option value="all">كل التصنيفات</option>
+              <option value="VIP">VIP</option>
+              <option value="متكرر">متكرر</option>
+              <option value="مرة واحدة">مرة واحدة</option>
+            </select>
+            <select value={invoiceFilter} onChange={event => setInvoiceFilter(event.target.value as InvoiceFilter)} className="rounded-2xl border bg-slate-50 px-3 py-3 font-black outline-none focus:border-[#008E92]">
+              <option value="all">كل عدد الفواتير</option>
+              <option value="one">فاتورة واحدة</option>
+              <option value="repeat">2 فاتورة فأكثر</option>
+              <option value="vip_count">5 فواتير فأكثر</option>
+              <option value="high_value">قيمة 8000 فأكثر</option>
+            </select>
+            <select value={branchFilter} onChange={event => setBranchFilter(event.target.value)} className="rounded-2xl border bg-slate-50 px-3 py-3 font-black outline-none focus:border-[#008E92]">
+              {branchOptions.map(branch => <option key={branch} value={branch}>{branch === 'all' ? 'كل الفروع' : branch}</option>)}
+            </select>
+            <select value={sortBy} onChange={event => setSortBy(event.target.value as SortKey)} className="rounded-2xl border bg-slate-50 px-3 py-3 font-black outline-none focus:border-[#008E92]">
+              <option value="sales">ترتيب بالقيمة</option>
+              <option value="invoices">ترتيب بعدد الفواتير</option>
+              <option value="latest">ترتيب بآخر طلب</option>
+              <option value="avg">ترتيب بمتوسط الفاتورة</option>
+              <option value="name">ترتيب بالاسم</option>
+            </select>
+            <button onClick={resetFilters} className="rounded-2xl bg-slate-100 px-4 py-3 font-black text-slate-700 hover:bg-slate-200">مسح</button>
           </div>
         </div>
 
@@ -313,33 +380,33 @@ export default function CustomerAnalytics() {
             <table className="w-full min-w-[1150px] text-sm">
               <thead className="sticky top-0 bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="p-3">كود العميل</th>
-                  <th className="p-3">اسم العميل</th>
+                  <th className="p-3"><button onClick={() => setSortBy('name')} className="font-black hover:text-[#008E92]">كود العميل</button></th>
+                  <th className="p-3"><button onClick={() => setSortBy('name')} className="font-black hover:text-[#008E92]">اسم العميل</button></th>
                   <th className="p-3">الهاتف</th>
                   <th className="p-3">الفرع</th>
-                  <th className="p-3">عدد الفواتير</th>
-                  <th className="p-3">القيمة</th>
-                  <th className="p-3">متوسط الفاتورة</th>
-                  <th className="p-3">آخر طلب</th>
+                  <th className="p-3"><button onClick={() => setSortBy('invoices')} className="font-black hover:text-[#008E92]">عدد الفواتير</button></th>
+                  <th className="p-3"><button onClick={() => setSortBy('sales')} className="font-black hover:text-[#008E92]">القيمة</button></th>
+                  <th className="p-3"><button onClick={() => setSortBy('avg')} className="font-black hover:text-[#008E92]">متوسط الفاتورة</button></th>
+                  <th className="p-3"><button onClick={() => setSortBy('latest')} className="font-black hover:text-[#008E92]">آخر طلب</button></th>
                   <th className="p-3">التصنيف</th>
                   <th className="p-3">واتساب</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map(row => (
-                  <tr key={row.key} className="border-t align-top">
+                  <tr key={row.key} onClick={() => setSelectedCustomer(row)} className="cursor-pointer border-t align-top transition hover:bg-emerald-50/40" title="اضغط لعرض تفاصيل العميل وفواتيره">
                     <td className="p-3 font-black">{row.customer_code || '—'}</td>
                     <td className="p-3 font-black text-[#061827]">{row.customer_name || '—'}</td>
                     <td className="p-3">{row.phone || '—'}</td>
                     <td className="p-3">{row.branch_name || '—'}</td>
-                    <td className="p-3">{row.invoices_count}</td>
+                    <td className="p-3 font-black text-[#008E92]">{row.invoices_count}</td>
                     <td className="p-3 font-black">{money(row.total_sales)}</td>
                     <td className="p-3">{money(row.average_invoice)}</td>
                     <td className="p-3">{row.last_order_at || '—'}</td>
                     <td className="p-3"><span className={`rounded-full px-3 py-1 text-xs font-black ${row.segment === 'VIP' ? 'bg-amber-50 text-amber-700' : row.segment === 'متكرر' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-600'}`}>{row.segment}</span></td>
                     <td className="p-3">
                       {row.phone ? (
-                        <a href={whatsappLink(row.phone)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">
+                        <a onClick={event => event.stopPropagation()} href={whatsappLink(row.phone)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">
                           واتساب يدوي <ExternalLink size={12}/>
                         </a>
                       ) : '—'}
@@ -354,6 +421,41 @@ export default function CustomerAnalytics() {
           </div>
         </div>
       </div>
+
+      {selectedCustomer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" dir="rtl">
+          <div className="max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-[2rem] bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-3 border-b bg-gradient-to-l from-[#061827] to-[#008E92] p-5 text-white">
+              <div>
+                <p className="text-xs font-black text-white/70">تفاصيل العميل</p>
+                <h2 className="text-2xl font-black">{selectedCustomer.customer_name || 'عميل غير مسجل'}</h2>
+                <p className="mt-1 text-sm font-bold text-white/80">{selectedCustomer.customer_code || 'بدون كود'} · {selectedCustomer.phone || 'بدون هاتف'} · {periodLabel}</p>
+              </div>
+              <button onClick={() => setSelectedCustomer(null)} className="rounded-full bg-white/15 p-2 hover:bg-white/25"><X size={22}/></button>
+            </div>
+            <div className="max-h-[calc(90vh-95px)] overflow-auto p-5">
+              <div className="mb-4 grid gap-3 md:grid-cols-4">
+                <Metric label="عدد الفواتير" value={selectedCustomer.invoices_count} icon={<Users/>}/>
+                <Metric label="إجمالي القيمة" value={money(selectedCustomer.total_sales)} icon={<TrendingUp/>}/>
+                <Metric label="متوسط الفاتورة" value={money(selectedCustomer.average_invoice)} icon={<TrendingUp/>}/>
+                <Metric label="التصنيف" value={selectedCustomer.segment} icon={<Star/>}/>
+              </div>
+              <div className="overflow-x-auto rounded-3xl border">
+                <table className="w-full min-w-[900px] text-sm">
+                  <thead className="bg-slate-50 text-slate-500"><tr><th className="p-3">التاريخ</th><th className="p-3">رقم الفاتورة</th><th className="p-3">القيمة</th><th className="p-3">الدليفري</th><th className="p-3">الحالة</th><th className="p-3">الفرع</th><th className="p-3">ملاحظات</th></tr></thead>
+                  <tbody>{selectedCustomer.orders.slice().sort((a, b) => orderDate(b).localeCompare(orderDate(a))).map((order, index) => (
+                    <tr key={String(order.id || index)} className="border-t"><td className="p-3">{orderDate(order) || '—'}</td><td className="p-3 font-black">{invoiceNo(order)}</td><td className="p-3 font-black">{money(orderAmount(order))}</td><td className="p-3">{order.rider_name || '—'}</td><td className="p-3">{order.status || '—'}</td><td className="p-3">{displayBranchName(order.branch_name || order.branch || '') || '—'}</td><td className="p-3">{order.notes || order.reconciliation_notes || '—'}</td></tr>
+                  ))}</tbody>
+                </table>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {selectedCustomer.phone && <a href={whatsappLink(selectedCustomer.phone)} target="_blank" rel="noreferrer" className="rounded-2xl bg-emerald-50 px-4 py-3 font-black text-emerald-700">فتح واتساب</a>}
+                <button onClick={() => setSelectedCustomer(null)} className="rounded-2xl bg-slate-100 px-4 py-3 font-black text-slate-700">إغلاق</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
