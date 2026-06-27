@@ -25,6 +25,7 @@ const groups: AdminNavGroup[] = [
       { to: '/admin/executive', label: 'لوحة الإدارة العليا' },
       { to: '/admin/ops', label: 'غرفة العمليات' },
       { to: '/admin/reports', label: 'مركز التقارير' },
+      { to: '/admin/cycles', label: 'أرشيف الدورات' },
     ],
   },
   {

@@ -1,9 +1,15 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 
 type CycleOption = {
   label: string
   start: string
   end: string
+}
+
+type CycleSelectorProps = {
+  from: string
+  to: string
+  onApply: (from: string, to: string) => void
 }
 
 function pad(value: number) {
@@ -33,18 +39,15 @@ export function getCycleOptions(count = 12) {
   return Array.from({ length: count }, (_, index) => shiftCycle(base, -index, index === 0 ? 'الدورة الحالية' : `دورة سابقة ${index}`))
 }
 
-export default function CycleSelector({
-  from,
-  to,
-  onApply,
-}: {
-  from: string
-  to: string
-  onApply: (from: string, to: string) => void
-}) {
+export default function CycleSelector({ from, to, onApply }: CycleSelectorProps) {
   const cycles = useMemo(() => getCycleOptions(12), [])
   const [manualFrom, setManualFrom] = useState(from)
   const [manualTo, setManualTo] = useState(to)
+
+  useEffect(() => {
+    setManualFrom(from)
+    setManualTo(to)
+  }, [from, to])
 
   return (
     <div className="rounded-3xl border border-teal-100 bg-white p-4 shadow-sm" dir="rtl">

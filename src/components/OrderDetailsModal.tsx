@@ -1,6 +1,17 @@
 import { CheckCircle2, Pencil, X, XCircle } from 'lucide-react'
 import { formatMoney } from '../lib/helpers'
 
+type OrderDetailsModalProps = {
+  order: any
+  riderName?: string
+  invoiceNumber?: string
+  onClose: () => void
+  onEdit?: () => void
+  onApprove?: () => void
+  onReject?: () => void
+  onReassign?: () => void
+}
+
 function valueOf(order: any, ...keys: string[]) {
   for (const key of keys) {
     const value = order?.[key]
@@ -34,16 +45,7 @@ export default function OrderDetailsModal({
   onApprove,
   onReject,
   onReassign,
-}: {
-  order: any
-  riderName: string
-  invoiceNumber: string
-  onClose: () => void
-  onEdit?: () => void
-  onApprove?: () => void
-  onReject?: () => void
-  onReassign?: () => void
-}) {
+}: OrderDetailsModalProps) {
   if (!order) return null
   const finalStatus = valueOf(order, 'final_count_status')
   const countable = order.is_countable === true ? 'نعم' : 'لا'

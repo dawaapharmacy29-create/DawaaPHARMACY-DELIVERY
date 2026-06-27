@@ -8,6 +8,8 @@ import { supabase } from '../../lib/supabase'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
 import { formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
+import OrderDetailsModal from '../../components/OrderDetailsModal'
+import CycleSelector from '../../components/CycleSelector'
 
 type FilterKey = 'all' | 'counted' | 'pending' | 'not_found' | 'failed' | 'duplicate' | 'multiplier' | 'deleted'
 
@@ -213,6 +215,8 @@ export default function Reconciliation() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const period = useMemo(() => getOperationalPeriod(), [])
+  const selectedFrom = searchParams.get('from') || period.start
+  const selectedTo = searchParams.get('to') || period.end
   const [orders, setOrders] = useState<DeliveryOrder[]>([])
   const [trips, setTrips] = useState<InternalTrip[]>([])
   const [attendanceRows, setAttendanceRows] = useState<Attendance[]>([])
@@ -252,8 +256,11 @@ export default function Reconciliation() {
     if (incoming && ['all','counted','pending','not_found','failed','duplicate','multiplier','deleted'].includes(incoming)) setFilter(incoming)
     const q = searchParams.get('q')
     if (q) setSearchTerm(q)
+  }, [searchParams])
+
+  useEffect(() => {
     void loadAll()
-  }, [])
+  }, [selectedFrom, selectedTo])
 
   function applyMainFilter(nextFilter: FilterKey) {
     setFilter(nextFilter)
@@ -273,15 +280,23 @@ export default function Reconciliation() {
     setSearchParams({}, { replace: true })
   }
 
+  function handleCycleApply(from: string, to: string) {
+    const next = new URLSearchParams(searchParams)
+    next.set('from', from)
+    next.set('to', to)
+    next.delete('date')
+    setSearchParams(next)
+  }
+
   async function loadAll() {
     try {
       setLoading(true)
       const fromDate = searchParams.get('date') === 'today'
         ? new Date().toISOString().slice(0, 10)
-        : (searchParams.get('from') || period.start)
+        : selectedFrom
       const toDate = searchParams.get('date') === 'today'
         ? new Date().toISOString().slice(0, 10)
-        : (searchParams.get('to') || period.end)
+        : selectedTo
       const [ordersRes, ridersRes, tripsRes, attendanceRes, actionsRes, uploadLogRes] = await Promise.allSettled([
         supabase
           .from('delivery_orders')
@@ -1066,6 +1081,8 @@ export default function Reconciliation() {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-4 p-4">
+        <CycleSelector from={selectedFrom} to={selectedTo} onApply={handleCycleApply} />
+
         <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
           <Kpi label="تسجيلات الدليفري" value={orders.length} />
           <Kpi label="محتسبة بعد المطابقة" value={countedTotal} tone="green" />
@@ -1138,6 +1155,7 @@ export default function Reconciliation() {
                   <th className="p-2">مكرر</th>
                   <th className="p-2">مشاوير معلقة</th>
                   <th className="p-2">مخاطر</th>
+                  <th className="p-2">ملف الأداء</th>
                 </tr>
               </thead>
               <tbody>
@@ -1152,6 +1170,11 @@ export default function Reconciliation() {
                     <td className="p-2 text-center text-amber-700">{row.duplicates}</td>
                     <td className="p-2 text-center text-blue-700">{row.pendingTrips}</td>
                     <td className={`p-2 text-center font-black ${row.riskScore > 5 ? 'text-rose-700' : row.riskScore > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>{row.riskScore}</td>
+                    <td className="p-2 text-center">
+                      <button type="button" onClick={() => navigate(`/admin/riders/${row.rider.id}/performance?from=${encodeURIComponent(selectedFrom)}&to=${encodeURIComponent(selectedTo)}`)} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50">
+                        ملف الأداء
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1278,6 +1301,27 @@ export default function Reconciliation() {
               {missingFromRiders.map(row => <div key={row.invoice_number} className="grid grid-cols-4 gap-2 border-b py-2"><span>{row.invoice_number}</span><span>{row.customer_code}</span><span>{row.customer_name}</span><span>{row.phone}</span></div>)}
             </div>
           </div>
+        )}
+
+        {detailsOrder && (
+          <OrderDetailsModal
+            order={detailsOrder}
+            riderName={riderMap.get(detailsOrder.rider_id)?.name || (detailsOrder as any).rider_name || '—'}
+            invoiceNumber={normalizeOrderInvoice(detailsOrder)}
+            onClose={() => setDetailsOrder(null)}
+            onEdit={() => {
+              openEditOrder(detailsOrder)
+              setDetailsOrder(null)
+            }}
+            onApprove={() => {
+              void handleManualMatch(detailsOrder.id)
+              setDetailsOrder(null)
+            }}
+            onReject={() => {
+              void handleMarkNotFound(detailsOrder.id)
+              setDetailsOrder(null)
+            }}
+          />
         )}
 
         {editingOrder && (

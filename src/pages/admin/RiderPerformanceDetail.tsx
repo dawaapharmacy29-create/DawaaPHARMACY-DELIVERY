@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { formatMoney, getOperationalPeriod } from '../../lib/helpers'
 import { displayBranchName } from '../../lib/branchUtils'
+import CycleSelector from '../../components/CycleSelector'
 
 type FilterKey = 'all' | 'one' | 'multi' | 'review' | 'delivered' | 'failed' | 'duplicate' | 'uncounted' | 'trips'
 
@@ -28,17 +29,21 @@ export default function RiderPerformanceDetail() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const period = getOperationalPeriod()
+  const selectedFrom = searchParams.get('from') || period.start
+  const selectedTo = searchParams.get('to') || period.end
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [rider, setRider] = useState<any>(null)
   const [branch, setBranch] = useState<any>(null)
   const [orders, setOrders] = useState<any[]>([])
   const [trips, setTrips] = useState<any[]>([])
+  const [attendanceRows, setAttendanceRows] = useState<any[]>([])
+  const [riderActions, setRiderActions] = useState<any[]>([])
   const [filter, setFilter] = useState<FilterKey>('all')
   const [edit, setEdit] = useState<any | null>(null)
   const [draft, setDraft] = useState<any | null>(null)
 
-  useEffect(() => { void load() }, [riderId])
+  useEffect(() => { void load() }, [riderId, selectedFrom, selectedTo])
   useEffect(() => {
     const raw = searchParams.get('filter')
     const normalized = raw === 'multiplier' ? 'multi' : raw
@@ -58,14 +63,20 @@ export default function RiderPerformanceDetail() {
         const { data: b } = await supabase.from('delivery_branches').select('*').eq('id', r.branch_id).maybeSingle()
         setBranch(b)
       }
-      const [or, tr] = await Promise.all([
-        supabase.from('delivery_orders').select('*').eq('rider_id', riderId).gte('work_date', period.start).lte('work_date', period.end).order('work_date', { ascending: false }),
-        supabase.from('internal_trips').select('*').eq('rider_id', riderId).gte('work_date', period.start).lte('work_date', period.end).order('work_date', { ascending: false }),
+      const [or, tr, at, ac] = await Promise.all([
+        supabase.from('delivery_orders').select('*').eq('rider_id', riderId).gte('delivery_date', selectedFrom).lte('delivery_date', selectedTo).order('delivery_date', { ascending: false }),
+        supabase.from('internal_trips').select('*').eq('rider_id', riderId).gte('trip_date', selectedFrom).lte('trip_date', selectedTo).order('trip_date', { ascending: false }),
+        supabase.from('attendance').select('*').eq('rider_id', riderId).gte('work_date', selectedFrom).lte('work_date', selectedTo),
+        supabase.from('rider_shift_actions').select('*').eq('rider_id', riderId).gte('shift_date', selectedFrom).lte('shift_date', selectedTo),
       ])
       if (or.error) throw or.error
       if (tr.error) throw tr.error
+      if (at.error) throw at.error
+      if (ac.error) throw ac.error
       setOrders(or.data || [])
       setTrips(tr.data || [])
+      setAttendanceRows(at.data || [])
+      setRiderActions(ac.data || [])
     } catch (e: any) {
       toast.error(e?.message || 'فشل تحميل تفاصيل الدليفري')
     } finally { setLoading(false) }
@@ -74,20 +85,40 @@ export default function RiderPerformanceDetail() {
   const stats = useMemo(() => {
     const clean = orders.filter(o => !isDeleted(o))
     const one = clean.filter(o => !isMulti(o) && !isFailed(o))
+    const counted = clean.filter(o => o.is_countable === true || String(o.final_count_status || o.reconciliation_status || '').startsWith('counted'))
+    const notFound = clean.filter(o => o.bconnect_match_status === 'invoice_not_found' || String(o.final_count_status || o.reconciliation_status || '').includes('not_found'))
+    const attendanceMinutes = attendanceRows.reduce((sum, row: any) => {
+      if (typeof row.total_minutes === 'number' && row.total_minutes > 0) return sum + row.total_minutes
+      if (row.check_in_at && row.check_out_at) return sum + Math.max(0, Math.round((new Date(row.check_out_at).getTime() - new Date(row.check_in_at).getTime()) / 60000))
+      return sum
+    }, 0)
+    const approvedDeductions = riderActions.filter((row: any) => row.review_status === 'approved' && ['deduction', 'deduction_request'].includes(String(row.final_action_type || row.action_type || '').toLowerCase()))
+    const approvedRewards = riderActions.filter((row: any) => row.review_status === 'approved' && ['reward', 'reward_request'].includes(String(row.final_action_type || row.action_type || '').toLowerCase()))
+    const deductions = approvedDeductions.reduce((sum, row: any) => sum + Number(row.final_amount ?? row.requested_amount ?? 0), 0)
+    const rewards = approvedRewards.reduce((sum, row: any) => sum + Number(row.final_amount ?? row.requested_amount ?? 0), 0)
+    const revenue = clean.reduce((sum, o: any) => sum + n(o.invoice_amount || o.invoice_value || o.amount), 0)
+    const net = revenue - deductions + rewards
+    const riskScore = clean.filter(isFailed).length + clean.filter(isDuplicate).length + notFound.length + clean.filter(isUncounted).length + clean.filter(isReview).length
     return {
       clean,
       one,
+      counted,
       multi: clean.filter(isMulti),
       review: clean.filter(isReview),
       delivered: clean.filter(isDelivered),
       failed: clean.filter(isFailed),
       duplicate: clean.filter(isDuplicate),
       uncounted: clean.filter(isUncounted),
+      notFound,
       trips: trips.filter((t:any) => ['approved','countable','تم الاعتماد'].includes(String(t.status || t.review_status || '').toLowerCase())),
-      hours: 0,
-      net: 0,
+      attendanceDays: new Set(attendanceRows.filter((row: any) => row.check_in_at || row.work_date).map((row: any) => row.work_date)).size,
+      attendanceHours: Math.round((attendanceMinutes / 60) * 100) / 100,
+      deductions,
+      rewards,
+      net,
+      riskScore,
     }
-  }, [orders, trips])
+  }, [orders, trips, attendanceRows, riderActions])
 
   const visibleOrders = useMemo(() => {
     if (filter === 'one') return stats.one
@@ -102,8 +133,18 @@ export default function RiderPerformanceDetail() {
 
   function openFilter(next: FilterKey) {
     setFilter(next)
-    setSearchParams(next === 'multi' ? { filter: 'multiplier' } : { filter: next })
+    const nextParams = new URLSearchParams(searchParams)
+    if (next === 'all') nextParams.delete('filter')
+    else nextParams.set('filter', next === 'multi' ? 'multiplier' : next)
+    setSearchParams(nextParams)
     setTimeout(() => document.getElementById('rider-orders-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
+  }
+
+  function handleCycleApply(from: string, to: string) {
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.set('from', from)
+    nextParams.set('to', to)
+    setSearchParams(nextParams)
   }
 
   function openEdit(order: any) {
@@ -173,16 +214,24 @@ export default function RiderPerformanceDetail() {
           </div>
         </section>
 
+        <CycleSelector from={selectedFrom} to={selectedTo} onApply={handleCycleApply} />
+
         <section className="grid grid-cols-2 gap-3 lg:grid-cols-6">
+          <Card label="إجمالي الأوردرات" value={stats.clean.length} tone="blue" onClick={() => openFilter('all')} />
+          <Card label="محتسبة" value={stats.counted.length} tone="green" onClick={() => openFilter('all')} />
           <Card label="أوردرات ×1" value={stats.one.length} tone="blue" onClick={() => openFilter('one')} />
           <Card label="أوردرات ×1.5" value={stats.multi.length} tone="orange" onClick={() => openFilter('multi')} />
-          <Card label="المشاوير المعتمدة" value={stats.trips.length} tone="purple" onClick={() => openFilter('trips')} />
           <Card label="الفاشلة" value={stats.failed.length} tone="red" onClick={() => openFilter('failed')} />
           <Card label="المكررة" value={stats.duplicate.length} tone="red" onClick={() => openFilter('duplicate')} />
+          <Card label="غير موجودة" value={stats.notFound.length} tone="slate" onClick={() => openFilter('uncounted')} />
           <Card label="غير محتسبة" value={stats.uncounted.length} tone="slate" onClick={() => openFilter('uncounted')} />
-          <Card label="تحت المراجعة" value={stats.review.length} tone="orange" onClick={() => openFilter('review')} />
-          <Card label="تم التسليم" value={stats.delivered.length} tone="green" onClick={() => openFilter('delivered')} />
-          <Card label="إجمالي الأوردرات" value={stats.clean.length} tone="blue" onClick={() => openFilter('all')} />
+          <Card label="المشاوير" value={stats.trips.length} tone="purple" onClick={() => openFilter('trips')} />
+          <Card label="أيام حضور" value={stats.attendanceDays} tone="purple" onClick={() => openFilter('all')} />
+          <Card label="ساعات حضور" value={stats.attendanceHours} tone="slate" onClick={() => openFilter('all')} />
+          <Card label="خصومات" value={formatMoney(stats.deductions)} tone="red" onClick={() => openFilter('all')} />
+          <Card label="مكافآت" value={formatMoney(stats.rewards)} tone="green" onClick={() => openFilter('all')} />
+          <Card label="صافي تقديري" value={formatMoney(stats.net)} tone="blue" onClick={() => openFilter('all')} />
+          <Card label="Risk Score" value={stats.riskScore} tone={stats.riskScore > 8 ? 'red' : stats.riskScore > 3 ? 'orange' : 'green'} onClick={() => openFilter('review')} />
         </section>
 
         <section id="rider-orders-list" className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm scroll-mt-24">
