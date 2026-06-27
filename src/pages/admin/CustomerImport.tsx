@@ -24,23 +24,35 @@ type ImportRow = {
 }
 
 const FIELD_KEYS = {
-  customer_code: ['customer_code', 'code', 'كود العميل', 'الكود'],
-  name: ['name', 'customer_name', 'اسم العميل'],
-  phone: ['phone', 'mobile', 'customer_phone', 'تليفون', 'موبايل', 'هاتف'],
-  address: ['address', 'customer_address', 'العنوان', 'المنطقة'],
-  branch_name: ['branch', 'branch_name', 'الفرع'],
-  first_invoice_date: ['first_invoice_date', 'أول شراء', 'اول شراء'],
-  last_invoice_date: ['last_invoice_date', 'آخر شراء', 'اخر شراء'],
-  total_sales: ['total_sales', 'إجمالي المبيعات', 'اجمالي المبيعات'],
-  invoices_count: ['invoices_count', 'عدد الفواتير'],
-  average_invoice: ['average_invoice', 'متوسط الفاتورة'],
+  customer_code: ['customer_code', 'customer code', 'code', 'كود العميل', 'كود', 'الكود', 'رقم العميل'],
+  name: ['name', 'customer_name', 'customer name', 'اسم العميل', 'الاسم', 'اسم', 'العميل'],
+  phone: ['phone', 'mobile', 'customer_phone', 'customer phone', 'رقم التليفون', 'رقم الهاتف', 'التليفون', 'تليفون', 'موبايل', 'الموبايل', 'هاتف'],
+  address: ['address', 'customer_address', 'customer address', 'العنوان', 'عنوان', 'المنطقة', 'العنوان/المنطقة'],
+  branch_name: ['branch', 'branch_name', 'branch name', 'الفرع', 'فرع'],
+  first_invoice_date: ['first_invoice_date', 'first purchase', 'أول شراء', 'اول شراء', 'تاريخ أول شراء'],
+  last_invoice_date: ['last_invoice_date', 'last purchase', 'آخر شراء', 'اخر شراء', 'تاريخ آخر شراء'],
+  total_sales: ['total_sales', 'total sales', 'إجمالي المبيعات', 'اجمالي المبيعات', 'إجمالي', 'اجمالي', 'total'],
+  invoices_count: ['invoices_count', 'invoices count', 'عدد الفواتير', 'فواتير', 'عدد فواتير'],
+  average_invoice: ['average_invoice', 'average invoice', 'متوسط الفاتورة', 'متوسط'],
+}
+
+const ALL_HEADER_ALIASES = Object.values(FIELD_KEYS).flat()
+
+function normalizeKey(value: string) {
+  return String(value || '')
+    .replace(/[\u200E\u200F\u202A-\u202E]/g, '')
+    .replace(/[\s_\-\/\\:؛،,.()\[\]{}]+/g, '')
+    .trim()
+    .toLowerCase()
 }
 
 function first(row: RawRow, keys: string[]) {
+  const normalizedRowKeys = Object.keys(row).map(k => ({ key: k, normalized: normalizeKey(k) }))
   for (const key of keys) {
     const direct = row[key]
     if (direct !== undefined && direct !== null && String(direct).trim() !== '') return String(direct).trim()
-    const foundKey = Object.keys(row).find(k => k.trim().toLowerCase() === key.trim().toLowerCase())
+    const target = normalizeKey(key)
+    const foundKey = normalizedRowKeys.find(k => k.normalized === target || k.normalized.includes(target) || target.includes(k.normalized))?.key
     if (foundKey && row[foundKey] !== undefined && row[foundKey] !== null && String(row[foundKey]).trim() !== '') return String(row[foundKey]).trim()
   }
   return ''
@@ -69,10 +81,39 @@ function normalizeDate(value: string): string | null {
   return null
 }
 
+function rowIsEmpty(row: unknown[]) {
+  return !row.some(cell => String(cell ?? '').trim() !== '')
+}
+
+function headerScore(row: unknown[]) {
+  const normalizedAliases = ALL_HEADER_ALIASES.map(normalizeKey)
+  return row.reduce((score, cell) => {
+    const key = normalizeKey(String(cell ?? ''))
+    if (!key) return score
+    return score + (normalizedAliases.some(alias => key === alias || key.includes(alias) || alias.includes(key)) ? 1 : 0)
+  }, 0)
+}
+
+function rowsFromWorksheet(sheet: any): RawRow[] {
+  const matrix = utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', raw: false, blankrows: false })
+  const headerIndex = matrix.findIndex(row => headerScore(row) >= 2)
+  if (headerIndex >= 0) {
+    const headers = matrix[headerIndex].map((cell, index) => String(cell || `column_${index + 1}`).trim() || `column_${index + 1}`)
+    return matrix.slice(headerIndex + 1)
+      .filter(row => !rowIsEmpty(row))
+      .map((row, rowIndex) => {
+        const obj: RawRow = { __excel_row_number: headerIndex + rowIndex + 2 }
+        headers.forEach((header, index) => { obj[header] = row[index] ?? '' })
+        return obj
+      })
+  }
+  return utils.sheet_to_json<RawRow>(sheet, { defval: '', raw: false }).map((row, index) => ({ ...row, __excel_row_number: index + 2 }))
+}
+
 function mapRow(row: RawRow, index: number): ImportRow {
   const phone = first(row, FIELD_KEYS.phone)
   const mapped: ImportRow = {
-    row_number: index + 2,
+    row_number: Number(row.__excel_row_number || index + 2),
     customer_code: first(row, FIELD_KEYS.customer_code),
     name: first(row, FIELD_KEYS.name),
     phone,
@@ -110,9 +151,11 @@ export default function CustomerImport() {
     const buffer = await file.arrayBuffer()
     const workbook = read(buffer, { type: 'array', cellDates: true })
     const sheet = workbook.Sheets[workbook.SheetNames[0]]
-    const raw = utils.sheet_to_json<RawRow>(sheet, { defval: '' })
-    setRows(raw.map(mapRow))
-    toast.success(`تم قراءة ${raw.length} صف من الملف`)
+    const raw = rowsFromWorksheet(sheet)
+    const mapped = raw.map(mapRow)
+    setRows(mapped)
+    const valid = mapped.filter(row => !row.error).length
+    toast.success(`تم قراءة ${raw.length} صف من الملف — الصالح للحفظ ${valid}`)
   }
 
   async function createBatch() {
