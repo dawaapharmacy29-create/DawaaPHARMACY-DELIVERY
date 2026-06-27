@@ -4,8 +4,10 @@ import { ArrowRight, ExternalLink, RefreshCw, Search, Star, TrendingUp, Users } 
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { displayBranchName } from '../../lib/branchUtils'
+import CycleSelector from '../../components/CycleSelector'
 
 type OrderRow = Record<string, any>
+type RangeMode = 'cycle' | 'quarter' | 'all'
 
 type MonthlyCustomerRow = {
   key: string
@@ -20,19 +22,22 @@ type MonthlyCustomerRow = {
   segment: 'VIP' | 'متكرر' | 'مرة واحدة'
 }
 
-function currentMonthValue() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+function iso(date: Date) {
+  return date.toISOString().slice(0, 10)
 }
 
-function monthRange(month: string) {
-  const [year, monthNumber] = month.split('-').map(Number)
-  const start = new Date(year, monthNumber - 1, 1)
-  const end = new Date(year, monthNumber, 1)
-  return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
-  }
+function currentCycleRange() {
+  const now = new Date()
+  const start = now.getDate() >= 26 ? new Date(now.getFullYear(), now.getMonth(), 26) : new Date(now.getFullYear(), now.getMonth() - 1, 26)
+  const end = new Date(start.getFullYear(), start.getMonth() + 1, 25)
+  return { start: iso(start), end: iso(end) }
+}
+
+function quarterRangeForCycle(cycleStartIso: string) {
+  const start = new Date(`${cycleStartIso}T12:00:00`)
+  const qStart = new Date(start.getFullYear(), start.getMonth() - 2, 26)
+  const qEnd = new Date(start.getFullYear(), start.getMonth() + 1, 25)
+  return { start: iso(qStart), end: iso(qEnd) }
 }
 
 function money(value: number) {
@@ -88,42 +93,49 @@ function mergeOrders(rows: OrderRow[][]) {
 export default function CustomerAnalytics() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [month, setMonth] = useState(searchParams.get('month') || currentMonthValue())
+  const initialCycle = currentCycleRange()
+  const [mode, setMode] = useState<RangeMode>((searchParams.get('mode') as RangeMode) || 'cycle')
+  const [cycleRange, setCycleRange] = useState({ start: searchParams.get('from') || initialCycle.start, end: searchParams.get('to') || initialCycle.end })
   const [orders, setOrders] = useState<OrderRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  void setSearchParams
+
+  const activeRange = useMemo(() => {
+    if (mode === 'quarter') return quarterRangeForCycle(cycleRange.start)
+    if (mode === 'all') return { start: '', end: '' }
+    return cycleRange
+  }, [mode, cycleRange])
+
+  const periodLabel = mode === 'all'
+    ? 'طوال المدة'
+    : mode === 'quarter'
+      ? `آخر 3 دورات: ${activeRange.start} إلى ${activeRange.end}`
+      : `دورة: ${activeRange.start} إلى ${activeRange.end}`
 
   async function load() {
     try {
       setLoading(true)
-      const range = monthRange(month)
+      const makeQuery = (column: string) => {
+        let query = supabase.from('delivery_orders').select('*').order(column, { ascending: false }).limit(50000)
+        if (activeRange.start) query = query.gte(column, activeRange.start)
+        if (activeRange.end) query = query.lte(column, activeRange.end)
+        return query
+      }
       const [workDateResult, deliveryDateResult, viewResult] = await Promise.allSettled([
-        supabase
-          .from('delivery_orders')
-          .select('*')
-          .gte('work_date', range.start)
-          .lt('work_date', range.end)
-          .order('work_date', { ascending: false })
-          .limit(5000),
-        supabase
-          .from('delivery_orders')
-          .select('*')
-          .gte('delivery_date', range.start)
-          .lt('delivery_date', range.end)
-          .order('delivery_date', { ascending: false })
-          .limit(5000),
-        supabase
-          .from('customer_delivery_analytics')
-          .select('*')
-          .limit(1500),
+        makeQuery('work_date'),
+        makeQuery('delivery_date'),
+        supabase.from('customer_delivery_analytics').select('*').limit(5000),
       ])
 
       const workRows = workDateResult.status === 'fulfilled' && !workDateResult.value.error ? workDateResult.value.data || [] : []
       const deliveryRows = deliveryDateResult.status === 'fulfilled' && !deliveryDateResult.value.error ? deliveryDateResult.value.data || [] : []
-      const merged = mergeOrders([workRows as OrderRow[], deliveryRows as OrderRow[]])
+      const merged = mergeOrders([workRows as OrderRow[], deliveryRows as OrderRow[]]).filter(row => {
+        if (!activeRange.start && !activeRange.end) return true
+        const date = orderDate(row)
+        return date >= activeRange.start && date <= activeRange.end
+      })
 
-      if (!merged.length && viewResult.status === 'fulfilled' && !viewResult.value.error) {
+      if (!merged.length && mode === 'all' && viewResult.status === 'fulfilled' && !viewResult.value.error) {
         const viewRows = ((viewResult.value.data || []) as any[]).map(row => ({
           id: row.customer_id || row.customer_code || row.phone,
           customer_code: row.customer_code,
@@ -146,10 +158,37 @@ export default function CustomerAnalytics() {
   }
 
   useEffect(() => {
-    const monthParam = searchParams.get('month')
-    if (monthParam && monthParam !== month) setMonth(monthParam)
-  }, [searchParams, month])
-  useEffect(() => { void load() }, [month])
+    const nextMode = searchParams.get('mode') as RangeMode | null
+    if (nextMode && ['cycle', 'quarter', 'all'].includes(nextMode) && nextMode !== mode) setMode(nextMode)
+    const from = searchParams.get('from')
+    const to = searchParams.get('to')
+    if (from && to && (from !== cycleRange.start || to !== cycleRange.end)) setCycleRange({ start: from, end: to })
+  }, [searchParams])
+  useEffect(() => { void load() }, [mode, activeRange.start, activeRange.end])
+
+  function applyMode(nextMode: RangeMode) {
+    setMode(nextMode)
+    const next = new URLSearchParams(searchParams)
+    next.set('mode', nextMode)
+    if (nextMode !== 'all') {
+      next.set('from', cycleRange.start)
+      next.set('to', cycleRange.end)
+    } else {
+      next.delete('from')
+      next.delete('to')
+    }
+    setSearchParams(next)
+  }
+
+  function applyCycle(from: string, to: string) {
+    setCycleRange({ start: from, end: to })
+    const next = new URLSearchParams(searchParams)
+    next.set('mode', mode === 'all' ? 'cycle' : mode)
+    next.set('from', from)
+    next.set('to', to)
+    if (mode === 'all') setMode('cycle')
+    setSearchParams(next)
+  }
 
   const customers = useMemo<MonthlyCustomerRow[]>(() => {
     const grouped = new Map<string, MonthlyCustomerRow>()
@@ -224,19 +263,27 @@ export default function CustomerAnalytics() {
             <button onClick={() => navigate('/admin')} className="mb-3 inline-flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-2 text-sm font-black text-slate-600">
               <ArrowRight size={16}/> رجوع
             </button>
-            <h1 className="text-3xl font-black text-[#061827]">تحليل العملاء الشهري</h1>
-            <p className="mt-1 text-sm font-bold text-slate-500">تحليل العملاء النشطين من فواتير التوصيل خلال الشهر المختار.</p>
+            <h1 className="text-3xl font-black text-[#061827]">تحليل العملاء</h1>
+            <p className="mt-1 text-sm font-bold text-slate-500">تحليل العملاء النشطين من فواتير التوصيل حسب دورة 26 إلى 25، آخر 3 دورات، أو طوال المدة.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <input type="month" value={month} onChange={event => setMonth(event.target.value)} className="rounded-2xl border bg-slate-50 px-4 py-3 font-black text-slate-700 outline-none focus:border-[#008E92]" />
+            <button onClick={() => applyMode('cycle')} className={`rounded-2xl px-4 py-3 font-black ${mode === 'cycle' ? 'bg-[#008E92] text-white' : 'bg-slate-50 text-slate-700'}`}>دورة واحدة</button>
+            <button onClick={() => applyMode('quarter')} className={`rounded-2xl px-4 py-3 font-black ${mode === 'quarter' ? 'bg-[#008E92] text-white' : 'bg-slate-50 text-slate-700'}`}>آخر 3 دورات</button>
+            <button onClick={() => applyMode('all')} className={`rounded-2xl px-4 py-3 font-black ${mode === 'all' ? 'bg-[#008E92] text-white' : 'bg-slate-50 text-slate-700'}`}>طوال المدة</button>
             <button onClick={load} className="inline-flex items-center gap-2 rounded-3xl bg-[#008E92] px-5 py-3 font-black text-white shadow-sm">
               <RefreshCw size={18}/> تحديث
             </button>
           </div>
         </div>
 
+        {mode !== 'all' && <CycleSelector from={cycleRange.start} to={cycleRange.end} onApply={applyCycle} />}
+
+        <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-black text-emerald-800">
+          الفترة الحالية: {periodLabel}. الدورة المعتمدة في النظام تبدأ من يوم 26 وتنتهي يوم 25.
+        </div>
+
         <div className="grid gap-4 md:grid-cols-4">
-          <Metric label="فواتير الشهر" value={stats.invoices} icon={<Users/>}/>
+          <Metric label={mode === 'all' ? 'فواتير طوال المدة' : mode === 'quarter' ? 'فواتير آخر 3 دورات' : 'فواتير الدورة'} value={stats.invoices} icon={<Users/>}/>
           <Metric label="عملاء نشطين" value={stats.activeCustomers} icon={<Users/>}/>
           <Metric label="إجمالي المبيعات" value={money(stats.totalSales)} icon={<TrendingUp/>}/>
           <Metric label="عملاء VIP" value={stats.vip} icon={<Star/>}/>
@@ -260,7 +307,7 @@ export default function CustomerAnalytics() {
 
         <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
           <div className="border-b p-4 font-black text-slate-700">
-            العملاء النشطون في الشهر {loading ? '— جاري التحميل...' : `— ${filtered.length} عميل`}
+            العملاء النشطون — {loading ? 'جاري التحميل...' : `${filtered.length} عميل`} — {periodLabel}
           </div>
           <div className="max-h-[70vh] overflow-auto">
             <table className="w-full min-w-[1150px] text-sm">
@@ -270,8 +317,8 @@ export default function CustomerAnalytics() {
                   <th className="p-3">اسم العميل</th>
                   <th className="p-3">الهاتف</th>
                   <th className="p-3">الفرع</th>
-                  <th className="p-3">فواتير الشهر</th>
-                  <th className="p-3">قيمة الشهر</th>
+                  <th className="p-3">عدد الفواتير</th>
+                  <th className="p-3">القيمة</th>
                   <th className="p-3">متوسط الفاتورة</th>
                   <th className="p-3">آخر طلب</th>
                   <th className="p-3">التصنيف</th>
@@ -300,7 +347,7 @@ export default function CustomerAnalytics() {
                   </tr>
                 ))}
                 {!loading && !filtered.length ? (
-                  <tr><td colSpan={10} className="p-8 text-center font-black text-slate-400">لا توجد فواتير لهذا الشهر</td></tr>
+                  <tr><td colSpan={10} className="p-8 text-center font-black text-slate-400">لا توجد فواتير في الفترة المختارة</td></tr>
                 ) : null}
               </tbody>
             </table>
