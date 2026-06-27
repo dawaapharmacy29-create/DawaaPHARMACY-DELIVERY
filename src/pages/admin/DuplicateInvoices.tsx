@@ -1,20 +1,37 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, CheckCircle2, XCircle, Search } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Search, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { DeliveryOrder, Rider } from '../../lib/types'
-import { getRiders, approveDuplicateInvoice, rejectDuplicateInvoice } from '../../lib/delivery'
-import { formatTime } from '../../lib/helpers'
+import { approveDuplicateInvoice, getRiders, rejectDuplicateInvoice } from '../../lib/delivery'
+import { formatTime, getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
+import CycleSelector from '../../components/CycleSelector'
+
+function normalizeInvoice(order: any) {
+  return String(order.invoice_number || order.invoice_no || '').trim()
+}
+
+function orderDate(order: any) {
+  return order.delivery_date || order.work_date || order.registered_at || order.created_at
+}
+
+function safeStatus(order: any) {
+  return String(order.duplicate_review_status || (order.is_duplicate_invoice ? 'pending' : 'pending'))
+}
 
 export default function DuplicateInvoices() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const period = useMemo(() => getOperationalPeriod(), [])
   const [orders, setOrders] = useState<DeliveryOrder[]>([])
   const [riders, setRiders] = useState<Rider[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
   const [searchTerm, setSearchTerm] = useState('')
+
+  const selectedFrom = searchParams.get('from') || period.start
+  const selectedTo = searchParams.get('to') || period.end
 
   useEffect(() => {
     const status = searchParams.get('status') as typeof filter | null
@@ -25,22 +42,31 @@ export default function DuplicateInvoices() {
   async function loadAll() {
     try {
       setLoading(true)
-      const today = new Date().toISOString().slice(0, 10)
-      const fromDate = searchParams.get('date') === 'today' ? today : (searchParams.get('from') || searchParams.get('date') || today)
-      const toDate = searchParams.get('date') === 'today' ? today : (searchParams.get('to') || searchParams.get('date') || today)
-      const [ordersData, ridersData] = await Promise.allSettled([
-        supabase.from('delivery_orders').select('*').gte('delivery_date', fromDate).lte('delivery_date', toDate).order('registered_at', { ascending: false }),
-        getRiders()
+      const [byDeliveryDate, byWorkDate, ridersData] = await Promise.allSettled([
+        supabase.from('delivery_orders').select('*').gte('delivery_date', selectedFrom).lte('delivery_date', selectedTo).order('registered_at', { ascending: false }).limit(50000),
+        supabase.from('delivery_orders').select('*').gte('work_date', selectedFrom).lte('work_date', selectedTo).order('registered_at', { ascending: false }).limit(50000),
+        getRiders(),
       ])
-      
-      if (ordersData.status === 'fulfilled') {
-        const result = ordersData.value as any
-        const duplicateOrders = ((result.data || []) as DeliveryOrder[]).filter(o => o.is_duplicate_invoice)
-        setOrders(duplicateOrders)
-      }
-      if (ridersData.status === 'fulfilled') {
-        setRiders(ridersData.value)
-      }
+
+      const rows = [byDeliveryDate, byWorkDate].flatMap((res: any) => res.status === 'fulfilled' && !res.value.error ? (res.value.data || []) : []) as DeliveryOrder[]
+      const unique = new Map<string, DeliveryOrder>()
+      rows.forEach((order, index) => unique.set(String((order as any).id || index), order))
+      const allOrders = Array.from(unique.values())
+
+      const invoiceCounts = new Map<string, number>()
+      allOrders.forEach(order => {
+        const invoice = normalizeInvoice(order)
+        if (!invoice) return
+        invoiceCounts.set(invoice, (invoiceCounts.get(invoice) || 0) + 1)
+      })
+
+      const duplicateOrders = allOrders.filter(order => {
+        const invoice = normalizeInvoice(order)
+        return Boolean((order as any).is_duplicate_invoice || (invoice && (invoiceCounts.get(invoice) || 0) > 1))
+      })
+
+      setOrders(duplicateOrders.sort((a: any, b: any) => String(orderDate(b)).localeCompare(String(orderDate(a)))))
+      if (ridersData.status === 'fulfilled') setRiders(ridersData.value)
     } catch (error) {
       console.error(error)
       toast.error('فشل تحميل بيانات الفواتير المكررة')
@@ -49,16 +75,34 @@ export default function DuplicateInvoices() {
     }
   }
 
+  function applyCycle(from: string, to: string) {
+    const next = new URLSearchParams(searchParams)
+    next.set('from', from)
+    next.set('to', to)
+    setSearchParams(next)
+  }
+
   const riderMap = new Map(riders.map(r => [r.id, r]))
+  const groupedCounts = useMemo(() => {
+    const map = new Map<string, number>()
+    orders.forEach(order => {
+      const invoice = normalizeInvoice(order)
+      if (invoice) map.set(invoice, (map.get(invoice) || 0) + 1)
+    })
+    return map
+  }, [orders])
+
   const filteredOrders = orders.filter(order => {
-    const matchesFilter = filter === 'all' || order.duplicate_review_status === filter
+    const status = safeStatus(order)
+    const matchesFilter = filter === 'all' || status === filter
     const matchesRider = !searchParams.get('rider_id') || order.rider_id === searchParams.get('rider_id')
     const branch = searchParams.get('branch')
-    const matchesBranch = !branch || String((order as any).branch_name || '').includes(branch)
-    const matchesSearch = !searchTerm || 
-      order.invoice_number.includes(searchTerm) ||
+    const rider = riderMap.get(order.rider_id)
+    const matchesBranch = !branch || String((order as any).branch_name || rider?.branch_id || '').includes(branch)
+    const matchesSearch = !searchTerm ||
+      normalizeInvoice(order).includes(searchTerm) ||
       order.customer_name_snapshot?.includes(searchTerm) ||
-      (riderMap.get(order.rider_id)?.name || '').includes(searchTerm)
+      (rider?.name || '').includes(searchTerm)
     return matchesFilter && matchesSearch && matchesRider && matchesBranch
   })
 
@@ -89,12 +133,10 @@ export default function DuplicateInvoices() {
     }
   }
 
-  if (loading) {
-    return <div className="min-h-screen bg-[#F3F7F8] p-8 text-center text-lg font-bold">جاري التحميل...</div>
-  }
+  if (loading) return <div className="min-h-screen bg-[#F3F7F8] p-8 text-center text-lg font-bold">جاري التحميل...</div>
 
   return (
-    <div className="min-h-screen bg-[#F3F7F8] pb-12">
+    <div className="min-h-screen bg-[#F3F7F8] pb-12" dir="rtl">
       <header className="bg-gradient-to-l from-[#061827] to-[#008E92] p-4 text-white">
         <div className="flex items-center gap-4">
           <button onClick={() => navigate('/admin')} className="rounded-full bg-white/20 p-2 hover:bg-white/30">
@@ -102,128 +144,68 @@ export default function DuplicateInvoices() {
           </button>
           <div>
             <h1 className="text-2xl font-black">إدارة الفواتير المكررة</h1>
-            <p className="text-sm text-white/80">مراجعة واعتماد الفواتير المتكررة</p>
+            <p className="text-sm text-white/80">كل الفواتير التي تكررت داخل الدورة المختارة، حتى لو لم تكن معلّمة يدويًا</p>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-7xl space-y-4 p-4">
+        <CycleSelector from={selectedFrom} to={selectedTo} onApply={applyCycle} />
+
+        <div className="rounded-3xl border border-amber-100 bg-amber-50 p-4 text-sm font-bold text-amber-800">
+          الفترة الحالية: <b>{selectedFrom}</b> إلى <b>{selectedTo}</b> — الصفحة تعرض أي رقم فاتورة ظهر أكثر من مرة داخل نفس الفترة، بالإضافة إلى الفواتير المعلّمة كمكررة.
+        </div>
+
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex gap-2">
-            <button
-              onClick={() => setFilter('all')}
-              className={`rounded-full px-4 py-2 text-sm font-black ${
-                filter === 'all' ? 'bg-[#008E92] text-white' : 'bg-white text-slate-700'
-              }`}
-            >
-              الكل ({orders.length})
-            </button>
-            <button
-              onClick={() => setFilter('pending')}
-              className={`rounded-full px-4 py-2 text-sm font-black ${
-                filter === 'pending' ? 'bg-amber-500 text-white' : 'bg-white text-slate-700'
-              }`}
-            >
-              قيد المراجعة ({orders.filter(o => o.duplicate_review_status === 'pending').length})
-            </button>
-            <button
-              onClick={() => setFilter('approved')}
-              className={`rounded-full px-4 py-2 text-sm font-black ${
-                filter === 'approved' ? 'bg-emerald-500 text-white' : 'bg-white text-slate-700'
-              }`}
-            >
-              معتمدة ({orders.filter(o => o.duplicate_review_status === 'approved').length})
-            </button>
-            <button
-              onClick={() => setFilter('rejected')}
-              className={`rounded-full px-4 py-2 text-sm font-black ${
-                filter === 'rejected' ? 'bg-rose-500 text-white' : 'bg-white text-slate-700'
-              }`}
-            >
-              مرفوضة ({orders.filter(o => o.duplicate_review_status === 'rejected').length})
-            </button>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => setFilter('all')} className={`rounded-full px-4 py-2 text-sm font-black ${filter === 'all' ? 'bg-[#008E92] text-white' : 'bg-white text-slate-700'}`}>الكل ({orders.length})</button>
+            <button onClick={() => setFilter('pending')} className={`rounded-full px-4 py-2 text-sm font-black ${filter === 'pending' ? 'bg-amber-500 text-white' : 'bg-white text-slate-700'}`}>قيد المراجعة ({orders.filter(o => safeStatus(o) === 'pending').length})</button>
+            <button onClick={() => setFilter('approved')} className={`rounded-full px-4 py-2 text-sm font-black ${filter === 'approved' ? 'bg-emerald-500 text-white' : 'bg-white text-slate-700'}`}>معتمدة ({orders.filter(o => safeStatus(o) === 'approved').length})</button>
+            <button onClick={() => setFilter('rejected')} className={`rounded-full px-4 py-2 text-sm font-black ${filter === 'rejected' ? 'bg-rose-500 text-white' : 'bg-white text-slate-700'}`}>مرفوضة ({orders.filter(o => safeStatus(o) === 'rejected').length})</button>
           </div>
-          
           <div className="relative">
             <Search className="absolute right-3 top-3 text-slate-400" size={20} />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="بحث برقم الفاتورة أو اسم العميل أو الدليفري"
-              className="dawaa-input pr-10"
-            />
+            <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="بحث برقم الفاتورة أو اسم العميل أو الدليفري" className="dawaa-input pr-10" />
           </div>
         </div>
 
         {filteredOrders.length === 0 ? (
           <div className="rounded-3xl border border-dashed p-8 text-center font-bold text-slate-500">
-            {orders.length === 0 ? 'مفيش فواتير مكررة النهارده' : 'مفيش نتائج مطابقة للبحث'}
+            {orders.length === 0 ? 'مفيش فواتير مكررة في الفترة المختارة' : 'مفيش نتائج مطابقة للبحث'}
           </div>
         ) : (
           <div className="space-y-3">
             {filteredOrders.map((order) => {
               const rider = riderMap.get(order.rider_id)
+              const status = safeStatus(order)
+              const invoice = normalizeInvoice(order)
+              const repeatCount = groupedCounts.get(invoice) || 1
               return (
                 <div key={order.id} className="rounded-2xl bg-white p-4 shadow-sm">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="font-black text-lg">فاتورة {order.invoice_number}</span>
-                        <span className={`rounded-full px-2 py-1 text-xs font-black ${
-                          order.duplicate_review_status === 'approved' ? 'bg-emerald-100 text-emerald-700' :
-                          order.duplicate_review_status === 'rejected' ? 'bg-rose-100 text-rose-700' :
-                          'bg-amber-100 text-amber-700'
-                        }`}>
-                          {order.duplicate_review_status === 'approved' ? 'معتمدة' :
-                           order.duplicate_review_status === 'rejected' ? 'مرفوضة' :
-                           'قيد المراجعة'}
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className="text-lg font-black">فاتورة {invoice || '—'}</span>
+                        <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-black text-slate-700">تكررت {repeatCount} مرة</span>
+                        <span className={`rounded-full px-2 py-1 text-xs font-black ${status === 'approved' ? 'bg-emerald-100 text-emerald-700' : status === 'rejected' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {status === 'approved' ? 'معتمدة' : status === 'rejected' ? 'مرفوضة' : 'قيد المراجعة'}
                         </span>
+                        {!((order as any).is_duplicate_invoice) && <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-black text-blue-700">مكتشفة تلقائيًا</span>}
                       </div>
-                      
-                      <div className="grid grid-cols-2 gap-2 text-sm">
-                        <div>
-                          <p className="text-slate-500">الدليفري</p>
-                          <p className="font-bold">{rider?.name || 'غير محدد'}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500">العميل</p>
-                          <p className="font-bold">{order.customer_name_snapshot || 'غير محدد'}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500">تاريخ التسجيل</p>
-                          <p className="font-bold">{formatTime(order.registered_at)}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500">السبب</p>
-                          <p className="font-bold">{order.duplicate_reason || 'غير محدد'}</p>
-                        </div>
+                      <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
+                        <div><p className="text-slate-500">الدليفري</p><p className="font-bold">{rider?.name || 'غير محدد'}</p></div>
+                        <div><p className="text-slate-500">العميل</p><p className="font-bold">{order.customer_name_snapshot || 'غير محدد'}</p></div>
+                        <div><p className="text-slate-500">تاريخ التسجيل</p><p className="font-bold">{formatTime((order as any).registered_at || orderDate(order))}</p></div>
+                        <div><p className="text-slate-500">قيمة الفاتورة</p><p className="font-bold">{(order as any).invoice_amount || '—'}</p></div>
+                        <div><p className="text-slate-500">سبب التكرار</p><p className="font-bold">{(order as any).duplicate_reason || 'تكرار رقم الفاتورة داخل الدورة'}</p></div>
+                        <div><p className="text-slate-500">كود العميل</p><p className="font-bold">{(order as any).customer_code_snapshot || '—'}</p></div>
                       </div>
-                      
-                      {order.duplicate_note && (
-                        <div className="mt-2 rounded-lg bg-slate-50 p-2 text-sm">
-                          <p className="text-slate-500">ملاحظة التكرار</p>
-                          <p className="font-bold">{order.duplicate_note}</p>
-                        </div>
-                      )}
+                      {(order as any).duplicate_note && <div className="mt-2 rounded-lg bg-slate-50 p-2 text-sm"><p className="text-slate-500">ملاحظة التكرار</p><p className="font-bold">{(order as any).duplicate_note}</p></div>}
                     </div>
-                    
-                    {order.duplicate_review_status === 'pending' && (
+                    {status === 'pending' && (
                       <div className="flex gap-2 sm:flex-col">
-                        <button
-                          onClick={() => handleApprove(order.id)}
-                          className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 font-black text-white hover:bg-emerald-600"
-                        >
-                          <CheckCircle2 size={18} />
-                          اعتماد
-                        </button>
-                        <button
-                          onClick={() => handleReject(order.id)}
-                          className="flex items-center gap-2 rounded-xl bg-rose-100 px-4 py-2 font-black text-rose-700 hover:bg-rose-200"
-                        >
-                          <XCircle size={18} />
-                          رفض
-                        </button>
+                        <button onClick={() => handleApprove(order.id)} className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 font-black text-white hover:bg-emerald-600"><CheckCircle2 size={18} />اعتماد</button>
+                        <button onClick={() => handleReject(order.id)} className="flex items-center gap-2 rounded-xl bg-rose-100 px-4 py-2 font-black text-rose-700 hover:bg-rose-200"><XCircle size={18} />رفض</button>
                       </div>
                     )}
                   </div>
