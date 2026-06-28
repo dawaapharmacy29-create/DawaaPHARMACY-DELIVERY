@@ -34,7 +34,6 @@ const CashFlowDashboard = lazy(() => import('./pages/admin/CashFlowDashboard'))
 const FraudAlerts = lazy(() => import('./pages/admin/FraudAlerts'))
 const InvoiceNotebook = lazy(() => import('./pages/admin/InvoiceNotebook'))
 const RoutePlanner = lazy(() => import('./pages/admin/RoutePlanner'))
-const ReportsCenter = lazy(() => import('./pages/admin/ReportsCenter'))
 const CycleArchiveLite = lazy(() => import('./pages/admin/CycleArchiveLite'))
 
 function PageLoader() {
@@ -90,7 +89,7 @@ function App() {
             <Route path="/admin" element={<AdminRoute pageKey="dashboard"><AdminDashboard /></AdminRoute>} />
             <Route path="/admin/executive" element={<AdminRoute pageKey="dashboard"><ExecutiveDashboard /></AdminRoute>} />
             <Route path="/admin/ops" element={<AdminRoute pageKey="dashboard"><OperationsBoard /></AdminRoute>} />
-            <Route path="/admin/reports" element={<AdminRoute pageKey="dashboard"><ReportsCenter /></AdminRoute>} />
+            <Route path="/admin/reports" element={<AdminRoute pageKey="dashboard"><CycleArchiveLite /></AdminRoute>} />
             <Route path="/admin/cycles" element={<AdminRoute pageKey="dashboard"><CycleArchiveLite /></AdminRoute>} />
 
             <Route path="/admin/riders" element={<AdminRoute pageKey="riders"><Riders /></AdminRoute>} />
