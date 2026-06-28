@@ -13,6 +13,10 @@ export type RiderDeviceStatusRow = {
   last_seen_at?: string | null
   last_sync_at?: string | null
   device_user_agent?: string | null
+  platform?: string | null
+  device_label?: string | null
+  app_version?: string | null
+  app_version_label?: string | null
 }
 
 function ageText(value?: string | null) {
@@ -51,7 +55,7 @@ export default function RiderDeviceStatusTable({
       <div className="mb-4 flex items-center justify-between gap-2">
         <div>
           <h2 className="text-xl font-black text-[#061827]">{title}</h2>
-          <p className="text-xs font-bold text-slate-500">البطارية · حالة الشاحن · آخر ظهور · حالة الاتصال</p>
+          <p className="text-xs font-bold text-slate-500">البطارية · حالة الشاحن · آخر ظهور · حالة الاتصال · نسخة التطبيق</p>
         </div>
         {onRefresh && (
           <button onClick={onRefresh} className="rounded-2xl bg-slate-100 p-2 text-slate-600">
@@ -74,6 +78,8 @@ export default function RiderDeviceStatusTable({
                 <th className="p-3">الشاحن</th>
                 <th className="p-3">الاتصال</th>
                 <th className="p-3">آخر ظهور</th>
+                <th className="p-3">آخر جهاز</th>
+                <th className="p-3">نسخة التطبيق</th>
                 <th className="p-3">الحالة</th>{onNotify && <th className="p-3">تنبيه</th>}
               </tr>
             </thead>
@@ -105,6 +111,12 @@ export default function RiderDeviceStatusTable({
                       </span>
                     </td>
                     <td className="p-3 text-xs font-bold text-slate-500">{ageText(row.last_seen_at)}</td>
+                    <td className="max-w-[220px] truncate p-3 text-xs font-bold text-slate-500" title={row.device_user_agent || ''}>{row.device_label || row.platform || row.device_user_agent || '—'}</td>
+                    <td className="p-3">
+                      <span className={`rounded-full px-3 py-1 text-xs font-black ${row.app_version ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                        {row.app_version || 'غير معروفة'}
+                      </span>
+                    </td>
                     <td className="p-3 text-xs font-black text-slate-600">{warning}</td>
                     {onNotify && (
                       <td className="p-3">

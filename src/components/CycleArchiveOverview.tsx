@@ -11,7 +11,6 @@ type CycleRow = { key: string; start: string; end: string; orders: number; deliv
 function d(value?: string | null) { return String(value || '').slice(0, 10) }
 function orderDate(o: OrderRow) { return d(o.work_date || o.delivery_date || o.registered_at || o.created_at) }
 function tripDate(t: TripRow) { return d(t.work_date || t.trip_date || t.registered_at || t.created_at) }
-function cycleKey(date: string) { const p = getOperationalPeriod(new Date(`${date}T12:00:00`)); return `${p.start} → ${p.end}` }
 function ok(o: OrderRow) { return o.status === 'delivered' || Boolean(o.delivered_at) }
 function bad(o: OrderRow) { return o.status === 'failed' || Boolean(o.failed_reason) }
 function money(value: number) { return `${Math.round(value).toLocaleString('ar-EG')} ج` }

@@ -56,6 +56,7 @@ export default function CycleArchiveLite() {
   return (
     <div className="min-h-screen bg-[#F3F7F8] p-4" dir="rtl">
       <div className="mx-auto max-w-7xl space-y-4">
+        {loading && <div className="rounded-2xl bg-white p-3 text-center text-sm font-black text-slate-500 shadow-sm">جاري تحميل أرشيف الدورة...</div>}
         <div className="rounded-[32px] border border-slate-100 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">

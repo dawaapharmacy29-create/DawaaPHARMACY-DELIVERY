@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { supabase } from '../lib/supabase'
+import { APP_VERSION, APP_VERSION_LABEL } from '../lib/appVersion'
+import { getDeviceLabel } from '../lib/deviceBinding'
 
 type Props = {
   riderId?: string | null
@@ -75,6 +77,9 @@ export default function RiderDeviceMonitor({ riderId, riderName, branchId, branc
         last_seen_at: new Date().toISOString(),
         last_sync_at: new Date().toISOString(),
         device_user_agent: navigator.userAgent || null,
+        device_label: getDeviceLabel(),
+        app_version: APP_VERSION,
+        app_version_label: APP_VERSION_LABEL,
         platform: navigator.platform || null,
         warning_level: next.warning_level,
         updated_at: new Date().toISOString(),

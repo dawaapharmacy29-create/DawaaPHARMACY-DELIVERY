@@ -90,7 +90,7 @@ function rowIsEmpty(row: unknown[]) {
 
 function headerScore(row: unknown[]) {
   const normalizedAliases = ALL_HEADER_ALIASES.map(normalizeKey)
-  return row.reduce((score, cell) => {
+  return row.reduce<number>((score, cell) => {
     const key = normalizeKey(String(cell ?? ''))
     if (!key) return score
     return score + (normalizedAliases.some(alias => key === alias || key.includes(alias) || alias.includes(key)) ? 1 : 0)

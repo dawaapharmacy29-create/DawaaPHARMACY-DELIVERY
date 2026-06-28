@@ -29,6 +29,7 @@ import OrderTimelineBadge from "../../components/OrderTimelineBadge";
 import { enqueueOfflineMutation } from "../../lib/offlineQueue";
 import { useRealtimeSync } from "../../lib/useRealtimeSync";
 import { LiveEarningsBar, NavigateButton, SmartCustomerCard } from "../../components/rider/RiderIntelligence";
+import { APP_VERSION } from "../../lib/appVersion";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type ModalName =
@@ -2097,6 +2098,9 @@ export default function RiderDashboard() {
               })}
             </span>
           </div>
+          <p className="relative mt-2 text-center text-[11px] font-black text-teal-50/80">
+            نسخة التطبيق: {APP_VERSION}
+          </p>
         </header>
 
         <main className="relative z-10 mx-auto -mt-8 max-w-[980px] space-y-5 px-4 pb-24">

@@ -109,6 +109,14 @@ export default function DuplicateInvoices() {
   })
 
   async function handleApprove(orderId: string) {
+    const order = orders.find(o => o.id === orderId)
+    const duplicateReason = String((order as any)?.duplicate_reason || '').trim()
+    const duplicateNote = String((order as any)?.duplicate_note || (order as any)?.notes || '').trim()
+    const doctorName = String((order as any)?.preparing_doctor_name || (order as any)?.receipt_extracted_doctor_name || '').trim()
+    if (!duplicateReason || duplicateNote.length < 8 || !doctorName) {
+      toast.error('لا يمكن اعتماد الفاتورة المكررة قبل وجود سبب التكرار، ملاحظة واضحة، واسم الدكتور/المحضر')
+      return
+    }
     try {
       await approveDuplicateInvoice(orderId)
       toast.success('تم اعتماد الفاتورة المكررة')
@@ -183,9 +191,9 @@ export default function DuplicateInvoices() {
               const invoice = normalizeInvoice(order)
               const repeatCount = groupedCounts.get(invoice) || 1
               const doctorName = (order as any).preparing_doctor_name || (order as any).receipt_extracted_doctor_name || 'غير مسجل'
-              const duplicateReason = (order as any).duplicate_reason || 'تكرار رقم الفاتورة داخل الدورة'
+              const duplicateReason = (order as any).duplicate_reason || ''
               const duplicateNote = (order as any).duplicate_note || (order as any).notes || ''
-              const missingAuditInfo = status === 'pending' && (!duplicateNote || doctorName === 'غير مسجل')
+              const missingAuditInfo = status === 'pending' && (!duplicateReason || duplicateNote.length < 8 || doctorName === 'غير مسجل')
               return (
                 <div key={order.id} className="rounded-2xl bg-white p-4 shadow-sm">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -204,7 +212,7 @@ export default function DuplicateInvoices() {
                         <div><p className="text-slate-500">العميل</p><p className="font-bold">{order.customer_name_snapshot || 'غير محدد'}</p></div>
                         <div><p className="text-slate-500">تاريخ التسجيل</p><p className="font-bold">{formatTime((order as any).registered_at || orderDate(order))}</p></div>
                         <div><p className="text-slate-500">قيمة الفاتورة</p><p className="font-bold">{(order as any).invoice_amount || '—'}</p></div>
-                        <div><p className="text-slate-500">سبب التكرار</p><p className="font-bold">{duplicateReason}</p></div>
+                        <div><p className="text-slate-500">سبب التكرار</p><p className="font-bold">{duplicateReason || '—'}</p></div>
                         <div><p className="text-slate-500">الدكتور/المحضّر</p><p className="font-bold">{doctorName}</p></div>
                         <div><p className="text-slate-500">كود العميل</p><p className="font-bold">{(order as any).customer_code_snapshot || '—'}</p></div>
                         <div><p className="text-slate-500">ملاحظة الدليفري</p><p className="font-bold">{duplicateNote || '—'}</p></div>
