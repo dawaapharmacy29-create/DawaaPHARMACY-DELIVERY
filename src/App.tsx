@@ -23,6 +23,7 @@ const Trips = lazy(() => import('./pages/admin/Trips'))
 const TripsWithoutInvoice = lazy(() => import('./pages/admin/TripsWithoutInvoice'))
 const RiderAccounts = lazy(() => import('./pages/admin/RiderAccounts'))
 const RiderActions = lazy(() => import('./pages/admin/RiderActions'))
+const RiderMonthlyReports = lazy(() => import('./pages/admin/RiderMonthlyReports'))
 const RiderImpersonationPreview = lazy(() => import('./pages/admin/RiderImpersonationPreview'))
 const BranchManagerDashboard = lazy(() => import('./pages/admin/BranchManagerDashboard'))
 const CustomerImport = lazy(() => import('./pages/admin/CustomerImport'))
@@ -98,6 +99,7 @@ function App() {
             <Route path="/admin/rider-schedules" element={<AdminRoute pageKey="rider_schedules"><RiderSchedules /></AdminRoute>} />
             <Route path="/admin/rider-accounts" element={<AdminRoute pageKey="rider_accounts"><RiderAccounts /></AdminRoute>} />
             <Route path="/admin/rider-actions" element={<AdminRoute pageKey="rider_actions"><RiderActions /></AdminRoute>} />
+            <Route path="/admin/rider-monthly-reports" element={<AdminRoute pageKey="performance"><RiderMonthlyReports /></AdminRoute>} />
             <Route path="/admin/rider-preview" element={<ProtectedRoute pageKey="riders"><RiderImpersonationPreview /></ProtectedRoute>} />
 
             <Route path="/admin/reconciliation" element={<AdminRoute pageKey="reconciliation"><Reconciliation /></AdminRoute>} />
