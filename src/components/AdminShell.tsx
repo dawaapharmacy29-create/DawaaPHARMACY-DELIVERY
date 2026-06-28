@@ -36,6 +36,7 @@ const groups: AdminNavGroup[] = [
       { to: '/admin/rider-schedules', label: 'مواعيد المناديب' },
       { to: '/admin/rider-accounts', label: 'حسابات وأجهزة الدخول' },
       { to: '/admin/performance', label: 'تحليل أداء المناديب' },
+      { to: '/admin/rider-monthly-reports', label: 'تقارير وحوافز الدليفري' },
       { to: '/admin/rider-actions', label: 'إجراءات وملاحظات' },
     ],
   },
