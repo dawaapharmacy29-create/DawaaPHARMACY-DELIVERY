@@ -194,6 +194,34 @@ function shiftIsoDate(dateIso: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+function normalizeDateOnly(value: unknown): string {
+  return String(value ?? "").trim().slice(0, 10);
+}
+
+function isCurrentShiftOrder(
+  order: { attendance_id?: unknown; work_date?: unknown; delivery_date?: unknown },
+  activeAttendanceId: string | null,
+  activeWorkDate: string,
+): boolean {
+  return (
+    order?.attendance_id === activeAttendanceId ||
+    normalizeDateOnly(order?.work_date) === activeWorkDate ||
+    normalizeDateOnly(order?.delivery_date) === activeWorkDate
+  );
+}
+
+function isCurrentShiftTrip(
+  trip: { attendance_id?: unknown; work_date?: unknown; trip_date?: unknown },
+  activeAttendanceId: string | null,
+  activeWorkDate: string,
+): boolean {
+  return (
+    trip?.attendance_id === activeAttendanceId ||
+    normalizeDateOnly(trip?.work_date) === activeWorkDate ||
+    normalizeDateOnly(trip?.trip_date) === activeWorkDate
+  );
+}
+
 type RiderGpsFix = {
   lat: number;
   lng: number;
@@ -477,6 +505,7 @@ export default function RiderDashboard() {
   const oldestOpenMinutes = openOrderRows.length ? Math.max(...openOrderRows.map((o: any) => Math.max(0, Math.floor((Date.now() - new Date(o.registered_at || o.created_at).getTime()) / 60000)))) : 0;
 
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shiftNoticeShownRef = useRef(false);
   const activeWorkDate = (attendance as any)?.work_date || (attendance as any)?.shift_date || todayIso();
   const activeAttendanceId = (attendance as any)?.id || null;
   const isShiftOpen = Boolean((attendance as any)?.check_in_at && !(attendance as any)?.check_out_at);
@@ -580,20 +609,78 @@ export default function RiderDashboard() {
             });
           const dash = getRpcResult<any>(dashboardData);
           if (!dashboardError && dash?.success) {
+            const dashAttendance = dash.attendance as Attendance | null;
+            const dashActiveWorkDate =
+              (dashAttendance as any)?.work_date ||
+              (dashAttendance as any)?.shift_date ||
+              todayIso();
+            const dashActiveAttendanceId = (dashAttendance as any)?.id || null;
+            const dashTodayOrders = (
+              ((dash.orders?.today ?? []) as DeliveryOrder[]).filter(Boolean)
+            );
+            const dashCycleOrders = (
+              ((dash.orders?.cycle ?? []) as DeliveryOrder[]).filter(Boolean)
+            );
+            const dashOrderSupplement = dashCycleOrders.filter(
+              (order) =>
+                isCurrentShiftOrder(
+                  order,
+                  dashActiveAttendanceId,
+                  dashActiveWorkDate,
+                ) &&
+                !dashTodayOrders.some((todayOrder) => todayOrder.id === order.id),
+            );
+            const dashTodayTrips = (
+              ((dash.trips?.today ?? []) as InternalTrip[]).filter(Boolean)
+            );
+            const dashCycleTrips = (
+              ((dash.trips?.cycle ?? []) as InternalTrip[]).filter(Boolean)
+            );
+            const dashTripSupplement = dashCycleTrips.filter(
+              (trip) =>
+                isCurrentShiftTrip(
+                  trip,
+                  dashActiveAttendanceId,
+                  dashActiveWorkDate,
+                ) &&
+                !dashTodayTrips.some((todayTrip) => todayTrip.id === trip.id),
+            );
+            const dashOrders = dashTodayOrders.length || dashOrderSupplement.length
+              ? [...dashTodayOrders, ...dashOrderSupplement]
+              : dashCycleOrders.filter((order) =>
+                  isCurrentShiftOrder(
+                    order,
+                    dashActiveAttendanceId,
+                    dashActiveWorkDate,
+                  ),
+                );
+            const dashTrips = dashTodayTrips.length || dashTripSupplement.length
+              ? [...dashTodayTrips, ...dashTripSupplement]
+              : dashCycleTrips.filter((trip) =>
+                  isCurrentShiftTrip(
+                    trip,
+                    dashActiveAttendanceId,
+                    dashActiveWorkDate,
+                  ),
+                );
             if (dash.rider) setRider(dash.rider as Rider);
-            if (dash.attendance) setAttendance(dash.attendance as Attendance);
-            setOrders(
-              ((dash.orders?.today ?? []) as DeliveryOrder[]).filter(Boolean),
-            );
-            setCycleOrders(
-              ((dash.orders?.cycle ?? []) as DeliveryOrder[]).filter(Boolean),
-            );
-            setTrips(
-              ((dash.trips?.today ?? []) as InternalTrip[]).filter(Boolean),
-            );
-            setCycleTrips(
-              ((dash.trips?.cycle ?? []) as InternalTrip[]).filter(Boolean),
-            );
+            if (dashAttendance) setAttendance(dashAttendance as Attendance);
+            setOrders(dashOrders);
+            setCycleOrders(dashCycleOrders);
+            setTrips(dashTrips);
+            setCycleTrips(dashCycleTrips);
+            if (
+              dashAttendance &&
+              (dashAttendance as any)?.check_in_at &&
+              !(dashAttendance as any)?.check_out_at &&
+              dashActiveWorkDate !== todayIso() &&
+              !shiftNoticeShownRef.current
+            ) {
+              toast.info(
+                "الشيفت الحالي محسوب على يوم بداية الشيفت حتى بعد 12 بالليل",
+              );
+              shiftNoticeShownRef.current = true;
+            }
             if (Array.isArray(dash.notifications))
               setRiderNotifications(dash.notifications);
             // Keep loading non-critical legacy tables for actions/permissions only.
@@ -703,6 +790,7 @@ export default function RiderDashboard() {
         ]);
 
         let effectiveDailyWorkDates = new Set<string>([today]);
+        let currentShiftAttendanceId: string | null = null;
         if (attRes.status === "fulfilled" && !attRes.value.error) {
           const rows = (attRes.value.data ?? []) as Attendance[];
           const normalizedRows = rows.map((r: any) => ({
@@ -719,13 +807,35 @@ export default function RiderDashboard() {
           const openShiftWorkDate = (best as any)?.check_in_at && !(best as any)?.check_out_at
             ? String((best as any)?.work_date || (best as any)?.shift_date || today)
             : today;
+          currentShiftAttendanceId = (best as any)?.id || null;
           effectiveDailyWorkDates = new Set([today, openShiftWorkDate].filter(Boolean));
           setAttendance(best);
+          if (
+            best &&
+            (best as any)?.check_in_at &&
+            !(best as any)?.check_out_at &&
+            openShiftWorkDate !== today &&
+            !shiftNoticeShownRef.current
+          ) {
+            toast.info(
+              "الشيفت الحالي محسوب على يوم بداية الشيفت حتى بعد 12 بالليل",
+            );
+            shiftNoticeShownRef.current = true;
+          }
         }
         if (ordRes.status === "fulfilled")
-          setOrders(((ordRes.value.data ?? []) as DeliveryOrder[]).filter((order: any) => effectiveDailyWorkDates.has(String(order.work_date || order.delivery_date || "").slice(0, 10))));
+          setOrders(((ordRes.value.data ?? []) as DeliveryOrder[]).filter((order: any) =>
+            effectiveDailyWorkDates.has(
+              String(order.work_date || order.delivery_date || "").slice(0, 10),
+            ) || order.attendance_id === currentShiftAttendanceId,
+          ));
         if (tripRes.status === "fulfilled")
-          setTrips(((tripRes.value.data ?? []) as InternalTrip[]).filter((trip: any) => effectiveDailyWorkDates.has(String(trip.work_date || trip.trip_date || "").slice(0, 10))));
+          setTrips(((tripRes.value.data ?? []) as InternalTrip[]).filter((trip: any) =>
+            trip.attendance_id === currentShiftAttendanceId ||
+            effectiveDailyWorkDates.has(
+              String(trip.work_date || trip.trip_date || "").slice(0, 10),
+            ),
+          ));
         if (cycleOrdRes.status === "fulfilled")
           setCycleOrders((cycleOrdRes.value.data ?? []) as DeliveryOrder[]);
         if (cycleTripRes.status === "fulfilled")
