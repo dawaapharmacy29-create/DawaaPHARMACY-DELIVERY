@@ -260,6 +260,103 @@ export async function updateOrderStatus(orderId: string, status: 'delivered' | '
   return data as DeliveryOrder
 }
 
+export type DeliveryTripReviewCandidate = {
+  id: string
+  rider_id: string
+  branch_id?: string | null
+  status?: string | null
+  started_at?: string | null
+  ended_at?: string | null
+  start_lat?: number | null
+  start_lng?: number | null
+  start_accuracy?: number | null
+  return_lat?: number | null
+  return_lng?: number | null
+  return_accuracy?: number | null
+  needs_review?: boolean | null
+  review_reason?: string | null
+  manual_return_reason?: string | null
+  total_orders_count?: number | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export async function findStaleTripForReview(riderId: string, thresholdHours = 12): Promise<DeliveryTripReviewCandidate | null> {
+  const cutoff = new Date(Date.now() - thresholdHours * 60 * 60 * 1000).toISOString()
+  const { data, error } = await supabase
+    .from('delivery_trips')
+    .select('id, rider_id, branch_id, status, started_at, ended_at, start_lat, start_lng, start_accuracy, return_lat, return_lng, return_accuracy, needs_review, review_reason, manual_return_reason, total_orders_count, created_at, updated_at')
+    .eq('rider_id', riderId)
+    .eq('status', 'active')
+    .is('ended_at', null)
+    .lt('started_at', cutoff)
+    .order('started_at', { ascending: false })
+    .limit(5)
+
+  if (error) {
+    devLog('Error finding stale trip:', error)
+    return null
+  }
+
+  return ((data ?? [])[0] as DeliveryTripReviewCandidate | null) ?? null
+}
+
+export async function reviewTripAsStale(tripId: string, _reason = 'stale_open_trip', manualReason?: string) {
+  const nowIso = new Date().toISOString()
+  const { data: currentTrip, error: fetchError } = await supabase
+    .from('delivery_trips')
+    .select('review_reason, manual_return_reason, ended_at, updated_at, created_at')
+    .eq('id', tripId)
+    .maybeSingle()
+
+  if (fetchError) throw fetchError
+
+  const existingReviewReason = String((currentTrip as any)?.review_reason || '').trim()
+  const resolvedReviewReason = existingReviewReason || 'مشوار مفتوح قديم يحتاج مراجعة إدارية'
+  const resolvedManualReason = String((currentTrip as any)?.manual_return_reason || '').trim() || manualReason || 'تم تحويل المشوار للمراجعة لأنه ظل مفتوحًا أكثر من 12 ساعة'
+  const resolvedEndedAt = String((currentTrip as any)?.ended_at || (currentTrip as any)?.updated_at || (currentTrip as any)?.created_at || nowIso)
+
+  const { data, error } = await supabase
+    .from('delivery_trips')
+    .update({
+      status: 'review',
+      ended_at: resolvedEndedAt,
+      needs_review: true,
+      review_reason: resolvedReviewReason,
+      manual_return_reason: resolvedManualReason,
+      updated_at: nowIso,
+    })
+    .eq('id', tripId)
+    .select('*')
+    .single()
+
+  if (error) {
+    devLog('Error reviewing stale trip:', error)
+    throw error
+  }
+
+  return data as DeliveryTripReviewCandidate
+}
+
+export async function logOrderEdit(params: {
+  orderId: string
+  riderId: string
+  reason: string
+  patch: Record<string, unknown>
+}) {
+  try {
+    await supabase.from('delivery_order_edit_logs').insert({
+      order_id: params.orderId,
+      rider_id: params.riderId,
+      edit_reason: params.reason,
+      patch: params.patch,
+      created_at: new Date().toISOString(),
+    })
+  } catch (error) {
+    devLog('Error logging order edit:', error)
+  }
+}
+
 export async function getNotifications(riderId?: string, profileId?: string) {
   let query = supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(30)
   if (riderId && profileId) query = query.or(`rider_id.eq.${riderId},recipient_profile_id.eq.${profileId}`)
@@ -645,6 +742,7 @@ export async function approveTrip(tripId: string, note?: string) {
     .from('internal_trips')
     .update({
       status: 'approved',
+      review_status: 'approved',
       approved_at: new Date().toISOString(),
       needs_review: false,
       review_reason: null,
@@ -662,6 +760,7 @@ export async function rejectTrip(tripId: string, reason: string) {
     .from('internal_trips')
     .update({
       status: 'rejected',
+      review_status: 'rejected',
       rejection_reason: reason,
       needs_review: false,
       review_reason: null

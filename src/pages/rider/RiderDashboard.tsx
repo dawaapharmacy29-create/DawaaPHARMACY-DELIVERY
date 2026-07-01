@@ -30,6 +30,7 @@ import { enqueueOfflineMutation } from "../../lib/offlineQueue";
 import { useRealtimeSync } from "../../lib/useRealtimeSync";
 import { LiveEarningsBar, NavigateButton, SmartCustomerCard } from "../../components/rider/RiderIntelligence";
 import { APP_VERSION } from "../../lib/appVersion";
+import { findStaleTripForReview, reviewTripAsStale, logOrderEdit } from "../../lib/delivery";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type ModalName =
@@ -1665,6 +1666,28 @@ export default function RiderDashboard() {
     if (!rider) return;
     const finalToLabel =
       toLabel === "custom" ? customToLabel.trim() : toLabel.trim();
+
+    const staleTrip = await findStaleTripForReview(rider.id);
+    if (staleTrip) {
+      const staleReason = String(
+        (staleTrip as any).review_reason ||
+        (staleTrip as any).manual_return_reason ||
+        "بدون سبب"
+      ).trim();
+      const confirm = window.confirm(
+        `يوجد مشوار قديم مفتوح (${staleReason}) ولم يتم إنهاؤه. هل تريد تحويله للمراجعة وبدء مشوار جديد؟`,
+      );
+      if (!confirm) {
+        toast.info("تم إلغاء حفظ المشوار الجديد حتى يتم مراجعة المشوار القديم.");
+        return;
+      }
+      await reviewTripAsStale(
+        staleTrip.id,
+        "مشوار مفتوح قديم يحتاج مراجعة إدارية",
+        "تم تحويل المشوار للمراجعة لأنه ظل مفتوحًا أكثر من 12 ساعة",
+      );
+      toast.warning("تم تحويل المشوار القديم للمراجعة بنجاح وبدأت عملية حفظ المشوار الجديد.");
+    }
     const finalFromLabel = fromLabel.trim();
 
     if (!finalFromLabel || !finalToLabel) {
@@ -1868,11 +1891,13 @@ export default function RiderDashboard() {
   }
 
   async function handleSaveEditOrder() {
-    if (!editOrder || !editDraft || !editDraft.invoice_number.trim()) return toast.error("رقم الفاتورة مطلوب");
+    if (!editOrder || !editDraft || !editDraft.invoice_number.trim() || !rider) return toast.error("رقم الفاتورة مطلوب");
     setSaving(true);
     try {
       const token = getStoredRiderToken(); if (!token) throw new Error("انتهت الجلسة");
-      const { data, error } = await supabase.rpc("rider_update_order_before_delivery", { p_token: token, p_order_id: String(editOrder.id), p_patch: { ...editDraft, invoice_amount: Number(editDraft.invoice_amount || 0), receipt_upload_status: editReceiptState }, p_edit_reason: editReason || "تعديل من تطبيق الدليفري" });
+      const patch = { ...editDraft, invoice_amount: Number(editDraft.invoice_amount || 0), receipt_upload_status: editReceiptState };
+      const { data, error } = await supabase.rpc("rider_update_order_before_delivery", { p_token: token, p_order_id: String(editOrder.id), p_patch: patch, p_edit_reason: editReason || "تعديل من تطبيق الدليفري" });
+      await logOrderEdit({ orderId: String(editOrder.id), riderId: rider.id, reason: editReason || "تعديل من تطبيق الدليفري", patch });
       const result = getRpcResult<any>(data); if (error || !result?.success) throw new Error(error?.message || result?.message || "تعذر تعديل الأوردر");
       const updated = result.order as DeliveryOrder; setOrders(v => v.map(o => o.id === editOrder.id ? updated : o)); setCycleOrders(v => v.map(o => o.id === editOrder.id ? updated : o)); toast.success("تم تعديل الأوردر بنجاح"); setActiveModal("orders"); setEditOrder(null); setEditDraft(null);
     } catch (e: any) { toast.error(e?.message || "تعذر تعديل الأوردر"); } finally { setSaving(false); }
