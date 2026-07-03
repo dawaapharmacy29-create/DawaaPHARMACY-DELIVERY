@@ -17,6 +17,7 @@ const ExecutiveDashboard = lazy(() => import('./pages/admin/ExecutiveDashboard')
 const RiderSchedules = lazy(() => import('./pages/admin/RiderSchedules'))
 const Riders = lazy(() => import('./pages/admin/Riders'))
 const Performance = lazy(() => import('./pages/admin/Performance'))
+const HourlyDeliveryAnalytics = lazy(() => import('./pages/admin/HourlyDeliveryAnalytics'))
 const DuplicateInvoices = lazy(() => import('./pages/admin/DuplicateInvoices'))
 const Reconciliation = lazy(() => import('./pages/admin/Reconciliation'))
 const Trips = lazy(() => import('./pages/admin/Trips'))
@@ -94,6 +95,7 @@ function App() {
 
             <Route path="/admin/riders" element={<AdminRoute pageKey="riders"><Riders /></AdminRoute>} />
             <Route path="/admin/performance" element={<AdminRoute pageKey="performance"><Performance /></AdminRoute>} />
+            <Route path="/admin/hourly-analytics" element={<AdminRoute pageKey="performance"><HourlyDeliveryAnalytics /></AdminRoute>} />
             <Route path="/admin/riders/:riderId/performance" element={<AdminRoute pageKey="performance"><RiderPerformanceDetail /></AdminRoute>} />
             <Route path="/admin/rider-schedules" element={<AdminRoute pageKey="rider_schedules"><RiderSchedules /></AdminRoute>} />
             <Route path="/admin/rider-accounts" element={<AdminRoute pageKey="rider_accounts"><RiderAccounts /></AdminRoute>} />
