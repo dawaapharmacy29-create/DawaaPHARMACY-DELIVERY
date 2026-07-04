@@ -459,7 +459,8 @@ export default function RiderDashboard() {
 
   const hasTripProofUpload =
     Boolean(tripProofUploadInfo) && tripProofUploadState === "uploaded";
-  const needsTripProofException = !hasTripProofUpload;
+  const hasTripProofEvidence = hasTripProofUpload || Boolean(relatedInvoice.trim());
+  const needsTripProofException = !hasTripProofEvidence;
 
   // Fail reason
   const [failOrderId, setFailOrderId] = useState<string | null>(null);
@@ -1719,11 +1720,12 @@ export default function RiderDashboard() {
       }
 
       const hasProofUpload = Boolean(tripProofUpload?.url || tripProofUpload?.path);
-      const needsProofException = !hasProofUpload;
+      const hasProofEvidence = hasProofUpload || Boolean(relatedInvoice.trim());
+      const needsProofException = !hasProofEvidence;
       const isTripProofException = needsProofException && allowTripProofException;
 
       if (needsProofException && !allowTripProofException) {
-        toast.error("لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح لعدم وجود الصورة");
+        toast.error("لا يمكن تسجيل مشوار بدون صورة أو مرجع فاتورة إلا بعد كتابة سبب واضح لعدم وجود الصورة");
         return;
       }
       if (isTripProofException && exceptionReason.length < 10) {
