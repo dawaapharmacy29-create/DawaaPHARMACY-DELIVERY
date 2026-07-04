@@ -451,7 +451,7 @@ export default function RiderDashboard() {
     useState<ReceiptUploadInfo | null>(null);
   const [tripProofUploadState, setTripProofUploadState] =
     useState<ReceiptUploadState>("not_uploaded");
-  const [tripProofUploadError, setTripProofUploadError] = useState("");
+  const [, setTripProofUploadError] = useState("");
   const [tripProofCapturedAt, setTripProofCapturedAt] = useState("");
   const [allowTripProofException, setAllowTripProofException] = useState(false);
   const [tripProofExceptionReason, setTripProofExceptionReason] = useState("");
@@ -1710,25 +1710,30 @@ export default function RiderDashboard() {
       return;
     }
     const exceptionReason = tripProofExceptionReason.trim();
-    const hasProofUpload = tripProofUploadInfo && tripProofUploadState === "uploaded";
-    const needsProofException = !hasProofUpload;
-    const isTripProofException = allowTripProofException && needsProofException;
-
-    if (needsProofException && !allowTripProofException) {
-      toast.error("لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح لعدم وجود الصورة");
-      return;
-    }
-    if (isTripProofException && exceptionReason.length < 10) {
-      toast.error("لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح لعدم وجود الصورة");
-      return;
-    }
 
     try {
       setSaving(true);
-      const tripProofUpload = isTripProofException ? null : await uploadTripProofPhoto();
-      if (!isTripProofException && !tripProofUpload) {
-        throw new Error(tripProofUploadError || "تعذر رفع صورة إثبات المشوار. حاول التصوير مرة أخرى.");
+      let tripProofUpload = tripProofUploadInfo;
+      if (!tripProofUpload && tripProofFile) {
+        tripProofUpload = await uploadTripProofPhoto();
       }
+
+      const hasProofUpload = Boolean(tripProofUpload?.url || tripProofUpload?.path);
+      const needsProofException = !hasProofUpload;
+      const isTripProofException = needsProofException && allowTripProofException;
+
+      if (needsProofException && !allowTripProofException) {
+        toast.error("لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح لعدم وجود الصورة");
+        return;
+      }
+      if (isTripProofException && exceptionReason.length < 10) {
+        toast.error("لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح لعدم وجود الصورة");
+        return;
+      }
+      if (tripProofFile && !hasProofUpload && !isTripProofException) {
+        throw new Error("تعذر رفع صورة إثبات المشوار. تأكد من الإنترنت وحاول مرة أخرى.");
+      }
+
       const nowIso = new Date().toISOString();
       const proofCapturedAt = tripProofCapturedAt || nowIso;
       const tripRate = rider.trip_rate ?? 10;
