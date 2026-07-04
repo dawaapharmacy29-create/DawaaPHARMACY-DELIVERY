@@ -77,8 +77,8 @@ function isOldWithoutProof(trip: TripAuditRow) {
 function tripAuditBadges(trip: TripAuditRow) {
   const badges: { label: string; cls: string }[] = []
   if (proofUrl(trip)) badges.push({ label: 'صورة كاميرا', cls: 'bg-emerald-50 text-emerald-700' })
-  if (!proofUrl(trip)) badges.push({ label: 'بدون صورة', cls: 'bg-rose-50 text-rose-700' })
-  if (trip.proof_exception_status === 'pending') badges.push({ label: 'استثناء للمراجعة', cls: 'bg-amber-50 text-amber-700' })
+  if (!proofUrl(trip) && trip.proof_exception_status !== 'pending') badges.push({ label: 'بدون صورة', cls: 'bg-rose-50 text-rose-700' })
+  if (trip.proof_exception_status === 'pending') badges.push({ label: 'بدون صورة - يحتاج مراجعة', cls: 'bg-amber-50 text-amber-700' })
   if (isOldWithoutProof(trip)) badges.push({ label: 'قديم بلا إثبات', cls: 'bg-slate-100 text-slate-600' })
   if (trip.audit_status === 'photo_without_capture_time') badges.push({ label: 'صورة بدون توقيت', cls: 'bg-orange-50 text-orange-700' })
   if (!trip.has_invoice_reference && !trip.related_invoice_number) badges.push({ label: 'بدون فاتورة', cls: 'bg-blue-50 text-blue-700' })

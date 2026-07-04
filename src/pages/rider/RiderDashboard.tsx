@@ -457,6 +457,10 @@ export default function RiderDashboard() {
   const [tripProofExceptionReason, setTripProofExceptionReason] = useState("");
   const tripProofCameraInputRef = useRef<HTMLInputElement | null>(null);
 
+  const hasTripProofUpload =
+    Boolean(tripProofUploadInfo) && tripProofUploadState === "uploaded";
+  const needsTripProofException = !hasTripProofUpload;
+
   // Fail reason
   const [failOrderId, setFailOrderId] = useState<string | null>(null);
   const [failReason, setFailReason] = useState("");
@@ -1706,19 +1710,23 @@ export default function RiderDashboard() {
       return;
     }
     const exceptionReason = tripProofExceptionReason.trim();
-    if (!allowTripProofException && !tripProofFile && !tripProofUploadInfo) {
-      toast.error("لا يمكن حفظ المشوار بدون تصوير إثبات. لو لم تجد الصنف اختر استثناء واكتب السبب.");
+    const hasProofUpload = tripProofUploadInfo && tripProofUploadState === "uploaded";
+    const needsProofException = !hasProofUpload;
+    const isTripProofException = allowTripProofException && needsProofException;
+
+    if (needsProofException && !allowTripProofException) {
+      toast.error("لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح لعدم وجود الصورة");
       return;
     }
-    if (allowTripProofException && exceptionReason.length < 8) {
-      toast.error("اكتب سبب الاستثناء بوضوح، مثال: دورت على الصنف ومش موجود.");
+    if (isTripProofException && exceptionReason.length < 10) {
+      toast.error("لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح لعدم وجود الصورة");
       return;
     }
 
     try {
       setSaving(true);
-      const tripProofUpload = allowTripProofException ? null : await uploadTripProofPhoto();
-      if (!allowTripProofException && !tripProofUpload) {
+      const tripProofUpload = isTripProofException ? null : await uploadTripProofPhoto();
+      if (!isTripProofException && !tripProofUpload) {
         throw new Error(tripProofUploadError || "تعذر رفع صورة إثبات المشوار. حاول التصوير مرة أخرى.");
       }
       const nowIso = new Date().toISOString();
@@ -1744,20 +1752,21 @@ export default function RiderDashboard() {
           : tripProofUpload ? "trip_photo" : "exception",
         evidence_note: tripProofNote.trim() || null,
         evidence_status: tripProofUpload ? "pending_admin_review" : "exception_review",
-        proof_required: !allowTripProofException,
+        proof_required: true,
         proof_image_url: tripProofUpload?.url ?? null,
         proof_note: tripProofNote.trim() || null,
         proof_captured_at: tripProofUpload ? proofCapturedAt : null,
         proof_uploaded_at: tripProofUpload ? nowIso : null,
         proof_source: tripProofUpload ? "camera" : "exception",
         proof_review_status: tripProofUpload ? "pending" : "exception_review",
-        proof_exception_status: allowTripProofException ? "pending" : "none",
-        proof_exception_reason: allowTripProofException ? exceptionReason : null,
-        needs_review: !isShiftOpen || allowTripProofException,
-        review_reason: !isShiftOpen ? "missing_shift" : allowTripProofException ? "trip_proof_exception" : null,
+        proof_exception_status: isTripProofException ? "pending" : "none",
+        proof_exception_reason: isTripProofException ? exceptionReason : null,
+        needs_review: !isShiftOpen || isTripProofException,
+        review_reason: !isShiftOpen ? "missing_shift" : isTripProofException ? "missing_trip_proof" : null,
         review_status: relatedInvoice.trim()
           ? "pending_evidence_review"
-          : !isShiftOpen ? "missing_shift" : allowTripProofException ? "exception_review" : "pending",
+          : isTripProofException ? "exception_review"
+          : !isShiftOpen ? "missing_shift" : "pending",
         notes: `نوع المشوار: ${TRIP_TYPE_LABELS[tripType] ?? tripType}${tripRequesterName.trim() ? ` | طالب المشوار: ${tripRequesterName.trim()}` : ""}${tripReason.trim() ? ` | السبب: ${tripReason.trim()}` : ""}${relatedInvoice.trim() ? ` | فاتورة/إذن: ${relatedInvoice.trim()}` : ""}${tripProofNote.trim() ? ` | ملاحظة: ${tripProofNote.trim()}` : ""}`,
         status: "pending_approval",
         registered_at: new Date().toISOString(),
@@ -3413,15 +3422,18 @@ export default function RiderDashboard() {
           </div>
 
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
-            <label className="flex items-center gap-3 text-sm font-black text-amber-900">
-              <input
-                type="checkbox"
-                checked={allowTripProofException}
-                onChange={(e) => setAllowTripProofException(e.target.checked)}
-                className="h-5 w-5"
-              />
-              استثناء بدون صورة: دورت على صنف أو مشوار ولم أجد المطلوب
-            </label>
+            <p className="mb-2 font-black text-amber-900">الصورة مطلوبة لإثبات المشوار. في حالة عدم وجود صورة يجب كتابة سبب واضح وسيتم إرسال المشوار للمراجعة.</p>
+            {(needsTripProofException || allowTripProofException) && (
+              <label className="flex items-center gap-3 text-sm font-black text-amber-900">
+                <input
+                  type="checkbox"
+                  checked={allowTripProofException}
+                  onChange={(e) => setAllowTripProofException(e.target.checked)}
+                  className="h-5 w-5"
+                />
+                استثناء بدون صورة: دورت على صنف أو مشوار ولم أجد المطلوب
+              </label>
+            )}
             {allowTripProofException && (
               <textarea
                 value={tripProofExceptionReason}
