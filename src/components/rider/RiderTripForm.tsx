@@ -65,6 +65,8 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
   const [relatedInvoice, setRelatedInvoice] = useState('')
   const [requestedBy, setRequestedBy] = useState('')
   const [proofNote, setProofNote] = useState('')
+  const [allowTripProofException, setAllowTripProofException] = useState(false)
+  const [tripProofExceptionReason, setTripProofExceptionReason] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -100,6 +102,8 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
     setRelatedInvoice('')
     setRequestedBy('')
     setProofNote('')
+    setAllowTripProofException(false)
+    setTripProofExceptionReason('')
   }
 
   async function saveTrip() {
@@ -111,6 +115,20 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
     }
     if (tripType === 'branch_to_branch' && finalFrom === finalTo) {
       toast.error('اختار فرعين مختلفين')
+      return
+    }
+
+    const exceptionReason = tripProofExceptionReason.trim()
+    const hasProofImage = false
+    const needsProofException = !hasProofImage
+    const isTripProofException = needsProofException && allowTripProofException
+
+    if (needsProofException && !allowTripProofException) {
+      toast.error('لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح لعدم وجود الصورة')
+      return
+    }
+    if (isTripProofException && exceptionReason.length < 10) {
+      toast.error('لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح لعدم وجود الصورة')
       return
     }
 
@@ -132,13 +150,21 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
         related_invoice_number: relatedInvoice.trim() || null,
         has_invoice_reference: Boolean(relatedInvoice.trim()),
         requested_by_name: requestedBy.trim() || null,
-        evidence_type: relatedInvoice.trim() ? 'invoice' : 'none',
+        evidence_type: relatedInvoice.trim() ? 'invoice' : 'exception',
         evidence_note: proofNote.trim() || null,
-        evidence_status: relatedInvoice.trim() ? 'pending_admin_review' : 'not_required',
-        proof_required: false,
-        needs_review: !shiftOpen,
-        review_reason: !shiftOpen ? 'missing_shift' : null,
-        review_status: relatedInvoice.trim() ? 'pending_evidence_review' : !shiftOpen ? 'missing_shift' : 'pending',
+        evidence_status: relatedInvoice.trim() ? 'pending_admin_review' : 'exception_review',
+        proof_required: true,
+        proof_image_url: null,
+        proof_note: proofNote.trim() || null,
+        proof_captured_at: null,
+        proof_uploaded_at: null,
+        proof_source: 'exception',
+        proof_review_status: 'exception_review',
+        proof_exception_status: isTripProofException ? 'pending' : 'none',
+        proof_exception_reason: isTripProofException ? exceptionReason : null,
+        needs_review: true,
+        review_reason: isTripProofException ? 'missing_trip_proof' : !shiftOpen ? 'missing_shift' : null,
+        review_status: relatedInvoice.trim() ? 'pending_evidence_review' : 'exception_review',
         notes: `نوع المشوار: ${TRIP_TYPES.find((t) => t.value === tripType)?.label || tripType}${requestedBy.trim() ? ` | طالب المشوار: ${requestedBy.trim()}` : ''}${reason.trim() ? ` | السبب: ${reason.trim()}` : ''}${relatedInvoice.trim() ? ` | فاتورة/إذن: ${relatedInvoice.trim()}` : ''}${proofNote.trim() ? ` | ملاحظة: ${proofNote.trim()}` : ''}`,
         status: 'pending_approval',
         registered_at: new Date().toISOString(),
@@ -240,6 +266,31 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
             <Field label="ملاحظة إثبات">
               <input value={proofNote} onChange={(e) => setProofNote(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" />
             </Field>
+
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
+              <p className="mb-2 font-black text-amber-900">الصورة مطلوبة لإثبات المشوار. في حالة عدم وجود صورة يجب كتابة سبب واضح وسيتم إرسال المشوار للمراجعة.</p>
+              <label className="flex items-center gap-3 text-sm font-black text-amber-900">
+                <input
+                  type="checkbox"
+                  checked={allowTripProofException}
+                  onChange={(e) => setAllowTripProofException(e.target.checked)}
+                  className="h-5 w-5"
+                />
+                استثناء بدون صورة: دورت على صنف أو مشوار ولم أجد المطلوب
+              </label>
+              {allowTripProofException && (
+                <textarea
+                  value={tripProofExceptionReason}
+                  onChange={(e) => setTripProofExceptionReason(e.target.value)}
+                  rows={2}
+                  className="mt-2 w-full rounded-xl border border-amber-200 bg-white p-2 text-right text-sm"
+                  placeholder="اكتب السبب بوضوح، مثال: دورت على الصنف في المخزن ولم أجده"
+                />
+              )}
+              <p className="mt-2 text-xs font-bold text-amber-800">
+                الاستثناء سيتم عرضه للإدارة يوميًا للمراجعة ولا يتم اعتماده تلقائيًا.
+              </p>
+            </div>
 
             {!shiftOpen ? <p className="rounded-2xl bg-amber-50 p-3 text-xs font-black text-amber-700">تنبيه: الشيفت غير مفتوح، المشوار سيتسجل لكن يحتاج مراجعة.</p> : null}
 
