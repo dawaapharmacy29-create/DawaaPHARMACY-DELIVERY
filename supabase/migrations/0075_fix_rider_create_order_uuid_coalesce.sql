@@ -1,5 +1,5 @@
--- 0073_require_duplicate_invoice_reason.sql
--- Enforce duplicate invoice reason and ensure rider_create_order saves duplicate metadata.
+-- 0075_fix_rider_create_order_uuid_coalesce.sql
+-- Fix uuid/text COALESCE mismatch in rider_create_order.
 
 create or replace function public.rider_create_order(
   p_token text,
@@ -189,34 +189,3 @@ end;
 $$;
 
 grant execute on function public.rider_create_order(text, uuid, text, text, text, text, text, numeric, numeric, text, boolean, text, text, text, uuid, double precision, double precision, int, text, text, jsonb) to anon, authenticated;
-
-create or replace function public.delivery_orders_require_duplicate_invoice_reason()
-returns trigger
-language plpgsql
-security definer
-as $$
-begin
-  if coalesce(trim(new.invoice_number), '') <> '' then
-    if exists(
-      select 1 from public.delivery_orders
-      where coalesce(invoice_number, '') = trim(new.invoice_number)
-        and id is distinct from new.id
-    ) then
-      if new.is_duplicate_invoice is not true
-        or coalesce(trim(new.duplicate_reason), '') = ''
-        or coalesce(trim(new.duplicate_note), '') = '' then
-        raise exception 'لا يمكن تسجيل فاتورة مكررة بدون كتابة سبب التكرار وملاحظة واضحة';
-      end if;
-      if coalesce(trim(new.preparing_doctor_name), '') = '' then
-        raise exception 'لا يمكن تسجيل فاتورة مكررة بدون كتابة سبب التكرار وملاحظة واضحة';
-      end if;
-    end if;
-  end if;
-  return new;
-end;
-$$;
-
-drop trigger if exists trg_delivery_orders_require_duplicate_invoice_reason on public.delivery_orders;
-create trigger trg_delivery_orders_require_duplicate_invoice_reason
-  before insert or update on public.delivery_orders
-  for each row execute function public.delivery_orders_require_duplicate_invoice_reason();
