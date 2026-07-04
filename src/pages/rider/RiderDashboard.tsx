@@ -1383,13 +1383,15 @@ export default function RiderDashboard() {
 
       // Check duplicate (if not already confirmed)
       if (!isDup && navigator.onLine) {
-        const { data: existing } = await supabase
+        const { data: existingRows } = await supabase
           .from("delivery_orders")
           .select(
             "id, invoice_number, registered_at, rider_name, customer_name_snapshot, preparing_doctor_name",
           )
           .eq("invoice_number", invoiceNumber.trim())
-          .maybeSingle();
+          .order("registered_at", { ascending: true })
+          .limit(1);
+        const existing = Array.isArray(existingRows) ? existingRows[0] : null;
         if (existing) {
           setDupWarning(existing as unknown as DeliveryOrder);
           setActiveModal("duplicate");
@@ -1538,6 +1540,11 @@ export default function RiderDashboard() {
           p_invoice_amount: invoiceAmount ? Number(invoiceAmount) : 0,
           p_order_multiplier: multiplier,
           p_notes: orderNotes || null,
+          p_is_duplicate_invoice: isDup,
+          p_duplicate_reason: isDup ? dupReason : null,
+          p_duplicate_note: isDup ? dupNote.trim() : null,
+          p_preparing_doctor_name: isDup ? dupDoctorName.trim() : null,
+          p_original_order_id: isDup ? (dupWarning?.id ?? null) : null,
           p_gps_lat: gps.lat,
           p_gps_lng: gps.lng,
           p_gps_accuracy_m: gps.accuracy,

@@ -590,10 +590,18 @@ export default function HourlyDeliveryAnalytics() {
                       <div className="flex flex-wrap gap-1">
                         {order.analytics_is_late && <span className="rounded-full bg-rose-50 px-2 py-1 text-[11px] font-black text-rose-700">متأخر</span>}
                         {order.analytics_is_duplicate && <span className="rounded-full bg-orange-50 px-2 py-1 text-[11px] font-black text-orange-700">مكرر</span>}
+                        {order.analytics_is_duplicate && !order.duplicate_reason && !order.duplicate_note && <span className="rounded-full bg-red-50 px-2 py-1 text-[11px] font-black text-red-700">مكرر بدون سبب - يحتاج مراجعة</span>}
                         {order.analytics_has_edit && <span className="rounded-full bg-sky-50 px-2 py-1 text-[11px] font-black text-sky-700">تم تعديله</span>}
                         {order.needs_review && <span className="rounded-full bg-purple-50 px-2 py-1 text-[11px] font-black text-purple-700">مراجعة</span>}
                         {!order.analytics_is_late && !order.analytics_is_duplicate && !order.analytics_has_edit && !order.needs_review && <span className="text-xs font-bold text-slate-400">—</span>}
                       </div>
+                      {(order.duplicate_reason || order.duplicate_note || order.preparing_doctor_name) && (
+                        <div className="mt-2 space-y-1 text-xs text-slate-500">
+                          {order.duplicate_reason && <div><strong>سبب التكرار:</strong> {order.duplicate_reason}</div>}
+                          {order.duplicate_note && <div><strong>ملاحظة التكرار:</strong> {order.duplicate_note}</div>}
+                          {order.preparing_doctor_name && <div><strong>دكتور التحضير:</strong> {order.preparing_doctor_name}</div>}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}

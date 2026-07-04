@@ -109,20 +109,18 @@ export async function searchCustomers(term: string) {
   return (data ?? []) as Customer[]
 }
 
-export async function checkDuplicateInvoice(invoiceNumber: string, riderId: string): Promise<DeliveryOrder | null> {
+export async function checkDuplicateInvoice(invoiceNumber: string, _riderId: string): Promise<DeliveryOrder | null> {
   const { data, error } = await supabase
     .from('delivery_orders')
     .select('*')
     .eq('invoice_number', invoiceNumber.trim())
-    .eq('rider_id', riderId)
     .order('registered_at', { ascending: true })
     .limit(1)
-    .maybeSingle()
   if (error) {
     devLog('Error checking duplicate invoice:', error)
     return null
   }
-  return data as DeliveryOrder | null
+  return Array.isArray(data) ? (data[0] as DeliveryOrder | null) : null
 }
 
 export async function createDeliveryOrder(params: {
