@@ -453,6 +453,8 @@ export default function RiderDashboard() {
     useState<ReceiptUploadState>("not_uploaded");
   const [tripProofUploadError, setTripProofUploadError] = useState("");
   const [tripProofCapturedAt, setTripProofCapturedAt] = useState("");
+  const [tripProofOriginalSize, setTripProofOriginalSize] = useState<number | null>(null);
+  const [tripProofCompressedSize, setTripProofCompressedSize] = useState<number | null>(null);
   const [allowTripProofException, setAllowTripProofException] = useState(false);
   const [tripProofExceptionReason, setTripProofExceptionReason] = useState("");
   const [cameraPermissionStatus, setCameraPermissionStatus] =
@@ -1265,6 +1267,85 @@ export default function RiderDashboard() {
     tripProofGalleryInputRef.current?.click();
   }
 
+  function bytesToHuman(size: number): string {
+    if (size < 1024) return `${size} B`;
+    const kb = size / 1024;
+    if (kb < 1024) return `${kb.toFixed(1)} KB`;
+    return `${(kb / 1024).toFixed(1)} MB`;
+  }
+
+  function sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function compressImageForUpload(file: File): Promise<File> {
+    if (!file.type.startsWith("image/")) return file;
+    if (typeof document === "undefined") return file;
+
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          resolve(img);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("تعذر قراءة صورة الفاتورة"));
+        };
+        img.src = url;
+      });
+
+      const maxDimension = 1280;
+      const ratio = Math.min(
+        maxDimension / image.naturalWidth,
+        maxDimension / image.naturalHeight,
+        1,
+      );
+      const width = Math.round(image.naturalWidth * ratio);
+      const height = Math.round(image.naturalHeight * ratio);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) return file;
+
+      context.drawImage(image, 0, 0, width, height);
+      const quality = 0.72;
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, "image/jpeg", quality),
+      );
+      if (!blob) return file;
+
+      const nameWithoutExtension = file.name.replace(/\.[^.]+$/, "");
+      return new File([blob], `${nameWithoutExtension}-compressed.jpg`, {
+        type: "image/jpeg",
+      });
+    } catch (error) {
+      return file;
+    }
+  }
+
+  async function uploadWithTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+  ): Promise<T> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]) as T;
+    } finally {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
+
   function handleTripProofPhotoChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] || null;
     if (!file) {
@@ -1276,6 +1357,8 @@ export default function RiderDashboard() {
     setTripProofUploadState("not_uploaded");
     setTripProofUploadError("");
     setTripProofCapturedAt(new Date().toISOString());
+    setTripProofOriginalSize(file.size);
+    setTripProofCompressedSize(null);
     if (tripProofPreviewUrl) URL.revokeObjectURL(tripProofPreviewUrl);
     setTripProofPreviewUrl(URL.createObjectURL(file));
     e.target.value = "";
@@ -1288,35 +1371,90 @@ export default function RiderDashboard() {
     setTripProofUploadState("uploading");
     setTripProofUploadError("");
 
-    const ext = tripProofFile.name.split(".").pop()?.toLowerCase() || "jpg";
-    const safeType = String(tripType || "trip").replace(/[^a-zA-Z0-9_.-]/g, "_");
-    const path = `trips/${rider.id}/${activeWorkDate}/${Date.now()}-${safeType}.${ext}`;
-
-    const { error } = await supabase.storage
-      .from("delivery-receipts")
-      .upload(path, tripProofFile, { cacheControl: "3600", upsert: false });
-
-    if (error) {
-      setTripProofUploadState(navigator.onLine ? "failed" : "pending_retry");
-      setTripProofUploadError(error.message);
-      return null;
+    const compressedFile = await compressImageForUpload(tripProofFile);
+    if (compressedFile.size && compressedFile.size !== tripProofFile.size) {
+      setTripProofCompressedSize(compressedFile.size);
     }
 
-    const { data } = supabase.storage
-      .from("delivery-receipts")
-      .getPublicUrl(path);
+    const uploadFile = compressedFile || tripProofFile;
+    const ext = uploadFile.name.split(".").pop()?.toLowerCase() || "jpg";
+    const safeType = String(tripType || "trip").replace(/[^a-zA-Z0-9_.-]/g, "_");
+    const path = `trips/${rider.id}/${activeWorkDate}/${Date.now()}-${safeType}.${ext}`;
+    const timeoutMs = 60000;
+    const maxAttempts = 3;
+    let finalError: Error | null = null;
 
-    const info = {
-      path,
-      url: data.publicUrl,
-      fileName: tripProofFile.name || "camera-proof.jpg",
-      fileSize: tripProofFile.size,
-      mimeType: tripProofFile.type || "image/jpeg",
-    };
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const { error } = await uploadWithTimeout(
+          supabase.storage
+            .from("delivery-receipts")
+            .upload(path, uploadFile, { cacheControl: "3600", upsert: false }),
+          timeoutMs,
+        );
 
-    setTripProofUploadInfo(info);
-    setTripProofUploadState("uploaded");
-    return info;
+        if (error) {
+          throw error;
+        }
+
+        const { data } = await supabase.storage
+          .from("delivery-receipts")
+          .getPublicUrl(path);
+
+        const info = {
+          path,
+          url: data.publicUrl,
+          fileName: uploadFile.name || "camera-proof.jpg",
+          fileSize: uploadFile.size,
+          mimeType: uploadFile.type || "image/jpeg",
+        };
+
+        setTripProofUploadInfo(info);
+        setTripProofUploadState("uploaded");
+        setTripProofUploadError("");
+
+        if (import.meta.env.DEV) {
+          console.debug("uploadTripProofPhoto success", {
+            originalSize: tripProofOriginalSize,
+            compressedSize: tripProofCompressedSize,
+            attempt,
+            uploadUrl: info.url,
+          });
+        }
+
+        return info;
+      } catch (error: any) {
+        finalError = error;
+
+        if (import.meta.env.DEV) {
+          console.debug("uploadTripProofPhoto failed", {
+            originalSize: tripProofOriginalSize,
+            compressedSize: tripProofCompressedSize,
+            attempt,
+            error: error?.message || error,
+            network: navigator.onLine,
+            state: tripProofUploadState,
+            hasPreview: Boolean(tripProofPreviewUrl),
+            hasUploadUrl: Boolean((tripProofUploadInfo as any)?.url),
+          });
+        }
+
+        if (attempt < maxAttempts) {
+          await sleep(1500);
+          continue;
+        }
+
+        break;
+      }
+    }
+
+    const failedMessage = finalError?.message === "timeout"
+      ? "انتهى وقت رفع الصورة. تأكد من الاتصال وحاول إعادة الرفع."
+      : `فشل رفع الصورة: ${finalError?.message || "خطأ شبكة"}`;
+
+    setTripProofUploadState(navigator.onLine ? "failed" : "pending_retry");
+    setTripProofUploadError(failedMessage);
+    return null;
   }
 
   function applyReceiptOcrData(extracted: ReceiptOcrExtract) {
@@ -1781,6 +1919,17 @@ export default function RiderDashboard() {
       const isTripProofException = needsProofException && allowTripProofException;
 
       if (needsProofException && !allowTripProofException) {
+        if (
+          tripProofFile &&
+          !hasProofUpload &&
+          (tripProofUploadState === "failed" || tripProofUploadState === "pending_retry")
+        ) {
+          toast.error(
+            "الصورة موجودة ولكن لم تُرفع بسبب ضعف الشبكة. اضغط إعادة رفع الصورة قبل الحفظ.",
+          );
+          return;
+        }
+
         toast.error("لا يمكن تسجيل مشوار بدون صورة أو مرجع فاتورة إلا بعد كتابة سبب واضح لعدم وجود الصورة");
         return;
       }
@@ -3501,9 +3650,14 @@ export default function RiderDashboard() {
                 يفضل فتح التطبيق من Chrome أو Safari وليس من داخل واتساب/فيسبوك.
               </p>
             )}
+            {tripProofOriginalSize && (
+              <p className="mt-2 text-xs text-slate-500">
+                يتم ضغط الصورة لتناسب النت الضعيف. الحجم قبل: {bytesToHuman(tripProofOriginalSize)}{tripProofCompressedSize ? `، بعد الضغط: ${bytesToHuman(tripProofCompressedSize)}` : ""}.
+              </p>
+            )}
             {tripProofUploadState === "uploading" && (
               <p className="mt-2 rounded-xl bg-sky-50 p-2 text-xs font-black text-sky-700">
-                جاري رفع صورة الفاتورة، انتظر حتى يكتمل الرفع
+                جاري ضغط ورفع صورة الفاتورة، انتظر حتى يكتمل الرفع
               </p>
             )}
             {tripProofUploadState === "uploaded" && (
@@ -3513,8 +3667,17 @@ export default function RiderDashboard() {
             )}
             {(tripProofUploadState === "failed" || tripProofUploadState === "pending_retry") && (
               <div className="mt-2 space-y-2 rounded-xl bg-rose-50 p-2 text-xs font-black text-rose-700">
-                <p>فشل رفع صورة المشوار. حاول التصوير أو اختيار صورة مرة أخرى قبل الحفظ.</p>
+                <p>الصورة موجودة ولكن لم تُرفع بسبب ضعف الشبكة. اضغط إعادة رفع الصورة قبل الحفظ.</p>
                 {tripProofUploadError && <p className="text-rose-800">{tripProofUploadError}</p>}
+                {tripProofFile && (
+                  <button
+                    type="button"
+                    onClick={uploadTripProofPhoto}
+                    className="mt-2 rounded-2xl bg-white border border-rose-500 px-4 py-2 text-xs font-black text-rose-700"
+                  >
+                    إعادة رفع نفس الصورة
+                  </button>
+                )}
               </div>
             )}
             {tripProofPreviewUrl && (
@@ -3533,13 +3696,6 @@ export default function RiderDashboard() {
                   </p>
                 </div>
               </div>
-            )}
-            {tripProofUploadState === "uploading" && <p className="mt-2 rounded-xl bg-sky-50 p-2 text-xs font-black text-sky-700">جاري رفع إثبات المشوار...</p>}
-            {tripProofUploadState === "uploaded" && <p className="mt-2 rounded-xl bg-white p-2 text-xs font-black text-emerald-700">تم رفع إثبات المشوار بنجاح ✅</p>}
-            {(tripProofUploadState === "failed" || tripProofUploadState === "pending_retry") && (
-              <p className="mt-2 rounded-xl bg-rose-50 p-2 text-xs font-black text-rose-700">
-                تعذر رفع صورة المشوار. حاول التصوير مرة أخرى قبل الحفظ.
-              </p>
             )}
           </div>
 
