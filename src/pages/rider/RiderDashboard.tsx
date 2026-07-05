@@ -451,11 +451,15 @@ export default function RiderDashboard() {
     useState<ReceiptUploadInfo | null>(null);
   const [tripProofUploadState, setTripProofUploadState] =
     useState<ReceiptUploadState>("not_uploaded");
-  const [, setTripProofUploadError] = useState("");
+  const [tripProofUploadError, setTripProofUploadError] = useState("");
   const [tripProofCapturedAt, setTripProofCapturedAt] = useState("");
   const [allowTripProofException, setAllowTripProofException] = useState(false);
   const [tripProofExceptionReason, setTripProofExceptionReason] = useState("");
+  const [cameraPermissionStatus, setCameraPermissionStatus] =
+    useState<"granted" | "denied" | "prompt" | "unsupported" | null>(null);
+  const [isInAppBrowser, setIsInAppBrowser] = useState(false);
   const tripProofCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const tripProofGalleryInputRef = useRef<HTMLInputElement | null>(null);
 
   const hasTripProofUpload =
     Boolean(tripProofUploadInfo) && tripProofUploadState === "uploaded";
@@ -1213,16 +1217,68 @@ export default function RiderDashboard() {
     return info;
   }
 
+  function detectInAppBrowser(userAgent: string) {
+    return /WhatsApp|FBAN|FBAV|Messenger|Instagram|Line|Viber|Twitter|Snapchat|Pinterest/i.test(
+      userAgent,
+    );
+  }
+
+  async function updateCameraPermissionStatus() {
+    if (typeof navigator === "undefined" || !navigator.permissions) {
+      setCameraPermissionStatus("unsupported");
+      return;
+    }
+
+    try {
+      const status = await navigator.permissions.query({
+        name: "camera" as PermissionName,
+      });
+      setCameraPermissionStatus(
+        status.state === "granted" || status.state === "denied" || status.state === "prompt"
+          ? status.state
+          : "unsupported",
+      );
+      status.onchange = () => {
+        setCameraPermissionStatus(
+          status.state === "granted" || status.state === "denied" || status.state === "prompt"
+            ? status.state
+            : "unsupported",
+        );
+      };
+    } catch {
+      setCameraPermissionStatus("unsupported");
+    }
+  }
+
+  useEffect(() => {
+    if (typeof navigator === "undefined") return;
+    setIsInAppBrowser(detectInAppBrowser(navigator.userAgent || ""));
+    void updateCameraPermissionStatus();
+  }, []);
+
+  function handleOpenTripProofCamera() {
+    void updateCameraPermissionStatus();
+    tripProofCameraInputRef.current?.click();
+  }
+
+  function handleOpenTripProofGallery() {
+    tripProofGalleryInputRef.current?.click();
+  }
+
   function handleTripProofPhotoChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] || null;
+    if (!file) {
+      return;
+    }
+
     setTripProofFile(file);
     setTripProofUploadInfo(null);
-    setTripProofUploadState(file ? "not_uploaded" : "not_uploaded");
+    setTripProofUploadState("not_uploaded");
     setTripProofUploadError("");
-    const capturedAt = new Date().toISOString();
-    setTripProofCapturedAt(file ? capturedAt : "");
+    setTripProofCapturedAt(new Date().toISOString());
     if (tripProofPreviewUrl) URL.revokeObjectURL(tripProofPreviewUrl);
-    setTripProofPreviewUrl(file ? URL.createObjectURL(file) : "");
+    setTripProofPreviewUrl(URL.createObjectURL(file));
+    e.target.value = "";
   }
 
   async function uploadTripProofPhoto(): Promise<ReceiptUploadInfo | null> {
@@ -3387,21 +3443,80 @@ export default function RiderDashboard() {
 
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
             <p className="mb-2 font-black text-emerald-900">تصوير إثبات المشوار 📸</p>
-            <button
-              type="button"
-              onClick={() => tripProofCameraInputRef.current?.click()}
-              className="w-full rounded-2xl bg-[#008E92] py-3 font-black text-white shadow-sm"
-            >
-              فتح الكاميرا وتصوير الفاتورة أو الكيسة
-            </button>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={handleOpenTripProofCamera}
+                className="w-full rounded-2xl bg-[#008E92] py-3 font-black text-white shadow-sm"
+              >
+                فتح الكاميرا وتصوير الفاتورة أو الكيسة
+              </button>
+              <button
+                type="button"
+                onClick={handleOpenTripProofGallery}
+                className="w-full rounded-2xl border border-slate-200 bg-white py-3 font-black text-slate-700 shadow-sm"
+              >
+                اختيار صورة من المعرض
+              </button>
+            </div>
             <input
               ref={tripProofCameraInputRef}
               type="file"
               accept="image/*"
               capture="environment"
               onChange={handleTripProofPhotoChange}
-              className="hidden"
+              style={{
+                position: "absolute",
+                width: 0,
+                height: 0,
+                opacity: 0,
+                overflow: "hidden",
+                pointerEvents: "none",
+              }}
             />
+            <input
+              ref={tripProofGalleryInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleTripProofPhotoChange}
+              style={{
+                position: "absolute",
+                width: 0,
+                height: 0,
+                opacity: 0,
+                overflow: "hidden",
+                pointerEvents: "none",
+              }}
+            />
+            <p className="mt-3 text-xs text-slate-500">
+              لو الكاميرا لم تفتح، تأكد من السماح للكاميرا من إعدادات المتصفح أو اختر صورة من المعرض.
+            </p>
+            {cameraPermissionStatus === "denied" && (
+              <p className="mt-2 rounded-xl bg-amber-50 p-2 text-xs font-black text-amber-900">
+                الكاميرا مقفلة للتطبيق. افتح إعدادات الموقع واسمح بالكاميرا.
+              </p>
+            )}
+            {isInAppBrowser && (
+              <p className="mt-2 rounded-xl bg-yellow-50 p-2 text-xs font-black text-yellow-900">
+                يفضل فتح التطبيق من Chrome أو Safari وليس من داخل واتساب/فيسبوك.
+              </p>
+            )}
+            {tripProofUploadState === "uploading" && (
+              <p className="mt-2 rounded-xl bg-sky-50 p-2 text-xs font-black text-sky-700">
+                جاري رفع صورة الفاتورة، انتظر حتى يكتمل الرفع
+              </p>
+            )}
+            {tripProofUploadState === "uploaded" && (
+              <p className="mt-2 rounded-xl bg-white p-2 text-xs font-black text-emerald-700">
+                تم رفع صورة الفاتورة بنجاح ✅
+              </p>
+            )}
+            {(tripProofUploadState === "failed" || tripProofUploadState === "pending_retry") && (
+              <div className="mt-2 space-y-2 rounded-xl bg-rose-50 p-2 text-xs font-black text-rose-700">
+                <p>فشل رفع صورة المشوار. حاول التصوير أو اختيار صورة مرة أخرى قبل الحفظ.</p>
+                {tripProofUploadError && <p className="text-rose-800">{tripProofUploadError}</p>}
+              </div>
+            )}
             {tripProofPreviewUrl && (
               <div className="mt-3 grid gap-2 sm:grid-cols-[140px_1fr]">
                 <img src={tripProofPreviewUrl} alt="إثبات المشوار" className="h-32 w-full rounded-2xl border border-emerald-200 object-cover" />
@@ -3466,7 +3581,7 @@ export default function RiderDashboard() {
           </Field>
           <button
             onClick={handleSaveTrip}
-            disabled={saving}
+            disabled={saving || tripProofUploadState === "uploading"}
             className="w-full rounded-2xl bg-[#008E92] py-4 text-lg font-black text-white disabled:opacity-60"
           >
             {saving ? "⏳" : "تسجيل المشوار 🗺️"}
