@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { AlertCircle, ArrowRight, Gift, Search, TrendingDown, TrendingUp, X } from 'lucide-react'
+import { AlertCircle, ArrowRight, CheckCircle2, Clock, Gift, Repeat, Search, ShieldClose, Timer, TrendingDown, TrendingUp, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { getCurrentSession } from '../../lib/auth'
@@ -25,9 +25,9 @@ type PenaltyIncentiveForm = {
   type: 'penalty' | 'reward'
   amount: number
   reason: string
-  approve: boolean
   sourceName: string
   sourceRole: 'customer' | 'doctor' | 'admin' | 'other'
+  approve?: boolean
 }
 
 type AdjustmentRecord = {
@@ -41,12 +41,48 @@ type AdjustmentRecord = {
   reason: string
   source_person_name: string | null
   source_person_role: string | null
-  status: 'pending' | 'approved' | 'rejected'
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'deferred'
+  reviewed_by: string | null
   reviewed_at: string | null
   created_at: string
   cycle_start: string
   cycle_end: string
 }
+
+type FilterKey = 'all' | 'pending' | 'approved' | 'rejected' | 'deferred' | 'deductions' | 'rewards'
+
+type ReviewAction = 'approve' | 'edit' | 'double' | 'cancel' | 'defer' | 'reopen'
+
+const penaltyReasons = [
+  'تأخر عن ميعاد الحضور بدون تبليغ مدير الفرع',
+  'انصراف قبل الميعاد بدون إذن',
+  'عدم تسجيل الأوردر في التطبيق',
+  'عدم رفع صورة الريسيت',
+  'تسجيل فاتورة خطأ',
+  'تأخير تسليم أوردر بدون سبب واضح',
+  'عدم الالتزام بخط السير',
+  'سوء تعامل مع العميل',
+  'عدم الرد على اتصال الإدارة',
+  'مخالفة تعليمات مدير الفرع',
+  'إهمال في تسليم الطلب',
+  'عدم تحديث حالة الأوردر',
+  'تكرار نفس الخطأ أكثر من مرة',
+  'غياب بدون إذن',
+  'رفض تنفيذ مشوار بدون سبب مقبول',
+]
+
+const rewardReasons = [
+  'التزام كامل بالمواعيد',
+  'تسليم عدد أوردرات عالي',
+  'مساعدة فرع آخر وقت الضغط',
+  'حل مشكلة عميل بشكل ممتاز',
+  'الالتزام بتسجيل كل الأوردرات بدقة',
+  'تغطية شيفت إضافي',
+  'أداء مميز خلال الشهر',
+  'عدم وجود أي أخطاء خلال الفترة',
+  'سرعة استجابة ممتازة',
+  'تعاون مميز مع الفريق',
+]
 
 const num = (value: unknown) => Number(value || 0) || 0
 const formatMoney = (val: number) => `${num(val).toFixed(2)} ج.م`
@@ -61,20 +97,32 @@ export default function PenaltyIncentiveManagement() {
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(quick)
   const [search, setSearch] = useState('')
+  const [staffSearch, setStaffSearch] = useState('')
   const [staffList, setStaffList] = useState<Staff[]>([])
   const [records, setRecords] = useState<AdjustmentRecord[]>([])
+  const [filter, setFilter] = useState<FilterKey>('all')
+  const [branchFilter, setBranchFilter] = useState<'all' | 'alshamy' | 'shukri'>('all')
+  const [reviewModalOpen, setReviewModalOpen] = useState(false)
+  const [selectedRecord, setSelectedRecord] = useState<AdjustmentRecord | null>(null)
+  const [reviewAction, setReviewAction] = useState<ReviewAction | null>(null)
+  const [actionType, setActionType] = useState<'penalty' | 'reward'>('penalty')
+  const [actionAmount, setActionAmount] = useState(0)
+  const [actionReason, setActionReason] = useState('')
+  const [actionSourceRole, setActionSourceRole] = useState<'customer' | 'doctor' | 'admin' | 'other'>('admin')
+  const [actionSourceName, setActionSourceName] = useState('')
+  const [managerNote, setManagerNote] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
   const [form, setForm] = useState<PenaltyIncentiveForm>({
     employeeId: staffIdParam || '',
     type: 'penalty',
     amount: 0,
     reason: '',
-    approve: false,
     sourceName: '',
     sourceRole: 'admin',
   })
 
-  const [submitting, setSubmitting] = useState(false)
+  const [actionSaving, setActionSaving] = useState(false)
 
   const canManage = useMemo(() => {
     if (!profile) return false
@@ -165,7 +213,7 @@ export default function PenaltyIncentiveManagement() {
   }, [quick])
 
   const filteredStaff = staffList.filter(s =>
-    s.searchText?.includes(search.toLowerCase())
+    s.searchText?.includes(staffSearch.toLowerCase())
   )
 
   async function handleSubmit(e: React.FormEvent) {
@@ -199,28 +247,20 @@ export default function PenaltyIncentiveManagement() {
         reason: form.reason,
         source_person_name: form.sourceName.trim() || null,
         source_person_role: form.sourceRole || null,
-        status: shouldAutoApprove || form.approve ? 'approved' : 'pending',
+        status: 'pending',
         created_by: profile?.id,
-        reviewed_by: shouldAutoApprove || form.approve ? profile?.id : null,
-        reviewed_at: shouldAutoApprove || form.approve ? new Date().toISOString() : null,
       }
 
       const { error } = await supabase.from('rider_adjustments').insert(payload)
-
       if (error) throw error
 
-      const statusText = payload.status === 'approved'
-        ? `${form.type === 'penalty' ? 'خصم' : 'مكافأة'} معتمد بنجاح`
-        : `${form.type === 'penalty' ? 'خصم' : 'مكافأة'} مرسل للمراجعة`
-
-      toast.success(statusText)
+      toast.success('تم إرسال الطلب للمراجعة')
 
       setForm({
         employeeId: '',
         type: 'penalty',
         amount: 0,
         reason: '',
-        approve: false,
         sourceName: '',
         sourceRole: 'admin',
       })
@@ -233,6 +273,148 @@ export default function PenaltyIncentiveManagement() {
       setSubmitting(false)
     }
   }
+
+  function initializeReviewState(record: AdjustmentRecord) {
+    setActionType(record.adjustment_type)
+    setActionAmount(Math.abs(Number(record.amount ?? record.final_amount ?? 0)))
+    setActionReason(record.reason || '')
+    setActionSourceRole((record.source_person_role as any) || 'admin')
+    setActionSourceName(record.source_person_name || '')
+    setManagerNote('')
+  }
+
+  function openReviewModal(record: AdjustmentRecord, action: ReviewAction) {
+    setSelectedRecord(record)
+    setReviewAction(action)
+    initializeReviewState(record)
+    setReviewModalOpen(true)
+  }
+
+  function closeReviewModal() {
+    setReviewModalOpen(false)
+    setSelectedRecord(null)
+    setReviewAction(null)
+  }
+
+  async function updateAdjustment(payload: Record<string, unknown>) {
+    const { error } = await supabase.from('rider_adjustments').update(payload).eq('id', selectedRecord?.id)
+    return error
+  }
+
+  async function handleReviewSubmit() {
+    if (!selectedRecord || !reviewAction) return
+
+    const requiresNote = ['double', 'cancel', 'defer'].includes(reviewAction)
+    if (requiresNote && !managerNote.trim()) {
+      toast.error('اكتب ملاحظة المدير العام')
+      return
+    }
+
+    if (reviewAction === 'edit' && (actionAmount <= 0 || !actionReason.trim())) {
+      toast.error('تأكد من صحة النوع والمبلغ والسبب')
+      return
+    }
+
+    setActionSaving(true)
+    try {
+      const payload: Record<string, unknown> = {
+        reviewed_by: profile?.id,
+        reviewed_at: new Date().toISOString(),
+      }
+
+      if (managerNote.trim()) {
+        payload.review_note = managerNote.trim()
+        payload.manager_note = managerNote.trim()
+      }
+
+      switch (reviewAction) {
+        case 'approve':
+          payload.status = 'approved'
+          break
+        case 'edit':
+          payload.status = 'approved'
+          payload.adjustment_type = actionType
+          payload.amount = actionAmount
+          payload.reason = actionReason.trim()
+          payload.source_person_role = actionSourceRole
+          payload.source_person_name = actionSourceName.trim() || null
+          break
+        case 'double':
+          payload.status = 'approved'
+          payload.amount = Math.abs(Number(selectedRecord.amount ?? selectedRecord.final_amount ?? 0)) * 2
+          break
+        case 'cancel':
+          payload.status = 'cancelled'
+          break
+        case 'defer':
+          payload.status = 'deferred'
+          break
+        case 'reopen':
+          payload.status = 'pending'
+          break
+      }
+
+      const error = await updateAdjustment(payload)
+      if (error) throw error
+
+      const successMessage = reviewAction === 'approve'
+        ? 'تم اعتماد السجل'
+        : reviewAction === 'edit'
+          ? 'تم تعديل السجل واعتماده'
+          : reviewAction === 'double'
+            ? 'تم مضاعفة المبلغ واعتماده'
+            : reviewAction === 'cancel'
+              ? 'تم إلغاء السجل'
+              : reviewAction === 'defer'
+                ? 'تم تأجيل السجل'
+                : 'أعيد السجل للمراجعة'
+
+      toast.success(successMessage)
+      closeReviewModal()
+      await loadData()
+    } catch (error: any) {
+      toast.error(error?.message || 'فشل حفظ قرار المراجعة')
+    } finally {
+      setActionSaving(false)
+    }
+  }
+
+  const summary = useMemo(() => ({
+    pending: records.filter(r => r.status === 'pending').length,
+    approved: records.filter(r => r.status === 'approved').length,
+    rejected: records.filter(r => ['rejected', 'cancelled'].includes(r.status || '')).length,
+    deferred: records.filter(r => r.status === 'deferred').length,
+    penaltiesApprovedTotal: records.filter(r => r.status === 'approved' && r.adjustment_type === 'penalty').reduce((sum, r) => sum + Math.abs(Number((r.final_amount ?? r.amount) || 0)), 0),
+    rewardsApprovedTotal: records.filter(r => r.status === 'approved' && r.adjustment_type === 'reward').reduce((sum, r) => sum + Math.abs(Number((r.final_amount ?? r.amount) || 0)), 0),
+  }), [records])
+
+  const filteredRecords = records.filter((record) => {
+    const normalizedStatus = String(record.status || '').toLowerCase()
+    const matchesStatus =
+      filter === 'all' ||
+      (filter === 'pending' && normalizedStatus === 'pending') ||
+      (filter === 'approved' && normalizedStatus === 'approved') ||
+      (filter === 'rejected' && ['rejected', 'cancelled'].includes(normalizedStatus)) ||
+      (filter === 'deferred' && normalizedStatus === 'deferred') ||
+      (filter === 'deductions' && record.adjustment_type === 'penalty') ||
+      (filter === 'rewards' && record.adjustment_type === 'reward')
+
+    const branchName = (record.branch_name || '').toLowerCase()
+    const matchesBranch =
+      branchFilter === 'all' ||
+      (branchFilter === 'alshamy' && branchName.includes('الشامي')) ||
+      (branchFilter === 'shukri' && branchName.includes('شكري'))
+
+    const q = search.trim().toLowerCase()
+    const matchesSearch =
+      !q ||
+      (record.rider_name || '').toLowerCase().includes(q) ||
+      (record.source_person_name || '').toLowerCase().includes(q) ||
+      (record.source_person_role || '').toLowerCase().includes(q) ||
+      (record.reason || '').toLowerCase().includes(q)
+
+    return matchesStatus && matchesBranch && matchesSearch
+  })
 
   if (loading) {
     return (
@@ -256,7 +438,8 @@ export default function PenaltyIncentiveManagement() {
               <ArrowRight size={16} /> رجوع
             </button>
             <p className="text-sm font-black text-purple-600">إدارة الجزاءات والمكافآت</p>
-            <h1 className="mt-1 text-3xl font-black text-[#061827]">خصم / مكافأة سريع</h1>
+            <h1 className="mt-1 text-3xl font-black text-[#061827]">سجل مراجعة الخصومات والمكافآت</h1>
+            <p className="mt-1 text-sm font-bold text-slate-500">كل سجل يُسجل بوضعية "قيد المراجعة" حتى يتم اتخاذ قرار من الإدارة.</p>
           </div>
           <button
             onClick={() => setShowModal(true)}
@@ -271,13 +454,11 @@ export default function PenaltyIncentiveManagement() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-2xl">
               <div className="mb-6 flex items-center justify-between">
-                <h2 className="text-2xl font-black text-[#061827]">إضافة خصم أو مكافأة</h2>
-                <button
-                  onClick={() => setShowModal(false)}
-                  className="rounded-lg p-2 hover:bg-slate-100"
-                >
-                  <X size={20} />
-                </button>
+                <div>
+                  <h2 className="text-2xl font-black text-[#061827]">إضافة خصم أو مكافأة</h2>
+                  <p className="mt-1 text-sm text-slate-500">سجل خصم أو مكافأة جديدة لتدخل في سير المراجعة.</p>
+                </div>
+                <button onClick={() => setShowModal(false)} className="rounded-lg p-2 hover:bg-slate-100"><X size={20} /></button>
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-4">
@@ -288,12 +469,12 @@ export default function PenaltyIncentiveManagement() {
                     <input
                       type="text"
                       placeholder="ابحث باسم الموظف..."
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
+                      value={staffSearch}
+                      onChange={(e) => setStaffSearch(e.target.value)}
                       className="w-full rounded-2xl border border-slate-200 bg-white py-3 pr-11 font-bold outline-none focus:border-purple-300"
                     />
                   </div>
-                  {search && (
+                  {staffSearch && (
                     <div className="mt-2 max-h-48 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50">
                       {filteredStaff.length ? (
                         filteredStaff.map((staff) => (
@@ -302,7 +483,7 @@ export default function PenaltyIncentiveManagement() {
                             type="button"
                             onClick={() => {
                               setForm({ ...form, employeeId: staff.id })
-                              setSearch('')
+                              setStaffSearch('')
                             }}
                             className="block w-full border-b p-3 text-right hover:bg-purple-50"
                           >
@@ -332,7 +513,7 @@ export default function PenaltyIncentiveManagement() {
                       name="type"
                       value="penalty"
                       checked={form.type === 'penalty'}
-                      onChange={(e) => setForm({ ...form, type: 'penalty' })}
+                      onChange={() => setForm({ ...form, type: 'penalty' })}
                     />
                     <div>
                       <TrendingDown size={18} className="text-rose-600" />
@@ -348,7 +529,7 @@ export default function PenaltyIncentiveManagement() {
                       name="type"
                       value="reward"
                       checked={form.type === 'reward'}
-                      onChange={(e) => setForm({ ...form, type: 'reward' })}
+                      onChange={() => setForm({ ...form, type: 'reward' })}
                     />
                     <div>
                       <TrendingUp size={18} className="text-emerald-600" />
@@ -411,29 +592,11 @@ export default function PenaltyIncentiveManagement() {
                   />
                 </div>
 
-                {canManage && shouldAutoApprove && (
-                  <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <input
-                      type="checkbox"
-                      checked={form.approve}
-                      onChange={(e) => setForm({ ...form, approve: e.target.checked })}
-                      className="h-5 w-5"
-                    />
-                    <div>
-                      <p className="text-sm font-black text-[#061827]">معتمد مباشرة</p>
-                      <p className="text-xs text-slate-500">تطبيق الخصم أو المكافأة فوراً بدون انتظار</p>
-                    </div>
-                  </label>
-                )}
-
-                {!shouldAutoApprove && (
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                    <p className="flex items-center gap-2 text-sm font-bold text-amber-800">
-                      <AlertCircle size={16} />
-                      سيتم إرسال الطلب لمراجعة المدير العام
-                    </p>
-                  </div>
-                )}
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="flex items-center gap-2 text-sm font-bold text-amber-800">
+                    <AlertCircle size={16} /> سيتم إرسال الطلب لمراجعة المدير العام
+                  </p>
+                </div>
 
                 <div className="flex gap-3">
                   <button
@@ -456,28 +619,89 @@ export default function PenaltyIncentiveManagement() {
           </div>
         )}
 
+        <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
+          <StatCard title="قيد المراجعة" value={summary.pending} tone="amber" icon={<Clock size={20} />} />
+          <StatCard title="معتمد" value={summary.approved} tone="emerald" icon={<CheckCircle2 size={20} />} />
+          <StatCard title="مرفوض / ملغي" value={summary.rejected} tone="rose" icon={<ShieldClose size={20} />} />
+          <StatCard title="مؤجل" value={summary.deferred} tone="slate" icon={<Timer size={20} />} />
+          <StatCard title="إجمالي الخصومات المعتمدة" value={formatMoney(summary.penaltiesApprovedTotal)} tone="rose" icon={<TrendingDown size={20} />} />
+          <StatCard title="إجمالي المكافآت المعتمدة" value={formatMoney(summary.rewardsApprovedTotal)} tone="emerald" icon={<TrendingUp size={20} />} />
+        </div>
+
         <section className="rounded-3xl border bg-white p-5 shadow-sm">
-          <div className="mb-4">
-            <h2 className="text-xl font-black text-[#061827]">السجلات الأخيرة</h2>
-            <p className="mt-1 text-xs font-bold text-slate-400">آخر 50 خصم أو مكافأة مسجلة</p>
+          <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr] xl:grid-cols-[1.2fr_0.8fr]">
+            <div className="space-y-3">
+              <div className="relative">
+                <Search className="absolute right-4 top-3 text-slate-400" size={18} />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="بحث باسم المناديب أو منشئ القرار أو السبب"
+                  className="w-full rounded-2xl border border-slate-200 bg-white py-3 pr-11 font-bold outline-none focus:border-purple-300"
+                />
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <select value={filter} onChange={(e) => setFilter(e.target.value as FilterKey)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 font-black outline-none focus:border-purple-300">
+                  <option value="all">الكل</option>
+                  <option value="pending">قيد المراجعة</option>
+                  <option value="approved">معتمد</option>
+                  <option value="rejected">مرفوض / ملغي</option>
+                  <option value="deferred">مؤجل</option>
+                  <option value="deductions">خصومات فقط</option>
+                  <option value="rewards">مكافآت فقط</option>
+                </select>
+                <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value as any)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 font-black outline-none focus:border-purple-300">
+                  <option value="all">كل الفروع</option>
+                  <option value="alshamy">فرع الشامي</option>
+                  <option value="shukri">فرع شكري</option>
+                </select>
+                <button type="button" onClick={() => { setSearch(''); setFilter('all'); setBranchFilter('all') }} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-black text-slate-700 hover:bg-slate-100">مسح الفلاتر</button>
+              </div>
+            </div>
+            <div className="grid gap-3 rounded-3xl border border-purple-100 bg-purple-50 p-4">
+              <div className="rounded-3xl bg-white p-4 shadow-sm">
+                <p className="text-xs font-black text-slate-500">ملاحظات مهمة</p>
+                <ul className="mt-3 space-y-2 text-sm text-slate-600">
+                  <li>كل سجل جديد يُسجل بوضعية "قيد المراجعة".</li>
+                  <li>يمكنك اعتماد السجل أو تعديله ثم اعتماده أو تأجيله أو إلغاءه.</li>
+                  <li>لا يتم إجراء اعتماد مباشر أثناء الإنشاء.</li>
+                </ul>
+              </div>
+              <div className="rounded-3xl bg-white p-4 shadow-sm">
+                <p className="text-xs font-black text-slate-500">البحث والتصفية</p>
+                <p className="mt-2 text-sm text-slate-600">ابحث باسم الدليفري أو المصدر أو السبب، ثم اختر حالة أو فرع لتضييق النتائج.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border bg-white p-5 shadow-sm">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-black text-[#061827]">السجلات</h2>
+              <p className="mt-1 text-xs font-bold text-slate-400">آخر 50 سجلًا من جدول rider_adjustments</p>
+            </div>
+            <button onClick={() => void loadData()} className="inline-flex items-center gap-2 rounded-2xl bg-slate-100 px-4 py-3 font-black text-slate-700 hover:bg-slate-200">تحديث السجلات</button>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-sm">
+            <table className="w-full min-w-[1000px] text-sm">
               <thead className="bg-slate-50 text-xs font-black text-slate-500">
                 <tr>
                   <th className="p-3 text-right">الموظف</th>
+                  <th className="p-3 text-right">الفرع</th>
                   <th className="p-3 text-right">النوع</th>
                   <th className="p-3 text-right">المبلغ</th>
-                  <th className="p-3 text-right">السبب</th>
                   <th className="p-3 text-right">المصدر</th>
                   <th className="p-3 text-right">الحالة</th>
                   <th className="p-3 text-right">التاريخ</th>
+                  <th className="p-3 text-right">الإجراءات</th>
                 </tr>
               </thead>
               <tbody>
-                {records.length ? records.map((record) => (
+                {filteredRecords.length ? filteredRecords.map((record) => (
                   <tr key={record.id} className="border-t hover:bg-slate-50">
                     <td className="p-3 font-black text-[#061827]">{record.rider_name || 'غير معروف'}</td>
+                    <td className="p-3 text-slate-700">{record.branch_name || '—'}</td>
                     <td className="p-3">
                       <span className={`rounded-full px-3 py-1 text-xs font-black ${record.adjustment_type === 'penalty' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
                         {record.adjustment_type === 'penalty' ? 'خصم' : 'مكافأة'}
@@ -486,20 +710,31 @@ export default function PenaltyIncentiveManagement() {
                     <td className={`p-3 font-black ${record.adjustment_type === 'penalty' ? 'text-rose-700' : 'text-emerald-700'}`}>
                       {record.adjustment_type === 'penalty' ? '−' : '+'}{formatMoney(Math.abs(record.final_amount))}
                     </td>
-                    <td className="p-3 text-slate-600">{record.reason || '—'}</td>
                     <td className="p-3 text-xs text-slate-500">{record.source_person_role || '—'}{record.source_person_name ? ` (${record.source_person_name})` : ''}</td>
                     <td className="p-3">
-                      <span className={`rounded-full px-3 py-1 text-xs font-black ${record.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : record.status === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-700'}`}>
-                        {record.status === 'approved' ? 'معتمد' : record.status === 'pending' ? 'مستني' : 'مرفوض'}
+                      <span className={`rounded-full px-3 py-1 text-xs font-black ${record.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : record.status === 'pending' ? 'bg-amber-100 text-amber-700' : record.status === 'rejected' ? 'bg-rose-100 text-rose-700' : record.status === 'cancelled' ? 'bg-slate-100 text-slate-600' : record.status === 'deferred' ? 'bg-slate-200 text-slate-700' : 'bg-slate-100 text-slate-600'}`}>
+                        {record.status === 'approved' ? 'معتمد' : record.status === 'pending' ? 'قيد المراجعة' : record.status === 'rejected' ? 'مرفوض' : record.status === 'cancelled' ? 'ملغي' : record.status === 'deferred' ? 'مؤجل' : record.status}
                       </span>
                     </td>
                     <td className="p-3 text-slate-500">{new Date(record.created_at).toLocaleDateString('ar-EG')}</td>
+                    <td className="p-3 space-y-2">
+                      {canManage ? (
+                        <div className="grid gap-2">
+                          <button type="button" onClick={() => openReviewModal(record, 'approve')} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">اعتماد</button>
+                          <button type="button" onClick={() => openReviewModal(record, 'edit')} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700">تعديل واعتماد</button>
+                          <button type="button" onClick={() => openReviewModal(record, 'double')} className="rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700">مضاعفة</button>
+                          <button type="button" onClick={() => openReviewModal(record, 'cancel')} className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-black text-rose-700">إلغاء</button>
+                          <button type="button" onClick={() => openReviewModal(record, 'defer')} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700">تأجيل</button>
+                          <button type="button" onClick={() => openReviewModal(record, 'reopen')} className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-700">إعادة للمراجعة</button>
+                        </div>
+                      ) : (
+                        <span className="text-xs font-black text-slate-400">غير مسموح</span>
+                      )}
+                    </td>
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-slate-500">
-                      لا توجد سجلات
-                    </td>
+                    <td colSpan={8} className="p-8 text-center text-slate-500">لا توجد سجلات</td>
                   </tr>
                 )}
               </tbody>
@@ -507,6 +742,115 @@ export default function PenaltyIncentiveManagement() {
           </div>
         </section>
       </div>
+
+      {reviewModalOpen && selectedRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-black text-[#061827]">قرار المراجعة</h2>
+                <p className="mt-1 text-sm text-slate-500">{reviewAction === 'approve' ? 'اعتماد السجل' : reviewAction === 'edit' ? 'تعديل واعتماد' : reviewAction === 'double' ? 'مضاعفة المبلغ' : reviewAction === 'cancel' ? 'إلغاء السجل' : reviewAction === 'defer' ? 'تأجيل السجل' : 'إعادة للمراجعة'}</p>
+              </div>
+              <button onClick={closeReviewModal} className="rounded-lg p-2 hover:bg-slate-100"><X size={20} /></button>
+            </div>
+
+            <div className="grid gap-4 rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div><span className="font-black">اسم الموظف:</span> {selectedRecord.rider_name || 'غير معروف'}</div>
+                <div><span className="font-black">الفرع:</span> {selectedRecord.branch_name || 'غير محدد'}</div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div><span className="font-black">النوع:</span> {selectedRecord.adjustment_type === 'penalty' ? 'خصم' : 'مكافأة'}</div>
+                <div><span className="font-black">المبلغ الحالي:</span> {formatMoney(Math.abs(selectedRecord.final_amount))}</div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div><span className="font-black">السبب:</span> {selectedRecord.reason || '—'}</div>
+                <div><span className="font-black">المصدر:</span> {(selectedRecord.source_person_role || '—') + (selectedRecord.source_person_name ? ` (${selectedRecord.source_person_name})` : '')}</div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div><span className="font-black">من أنشأ القرار:</span> {selectedRecord.source_person_name || 'غير معروف'}</div>
+                <div><span className="font-black">تاريخ الإنشاء:</span> {new Date(selectedRecord.created_at).toLocaleString('ar-EG')}</div>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              {reviewAction === 'edit' && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-sm font-bold text-slate-700">النوع</label>
+                    <select value={actionType} onChange={(e) => setActionType(e.target.value as any)} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold outline-none focus:border-purple-300">
+                      <option value="penalty">خصم</option>
+                      <option value="reward">مكافأة</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-bold text-slate-700">المبلغ</label>
+                    <input type="number" step="0.01" min="0" value={actionAmount || ''} onChange={(e) => setActionAmount(Number(e.target.value) || 0)} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold outline-none focus:border-purple-300" />
+                  </div>
+                </div>
+              )}
+
+              {reviewAction === 'double' && (
+                <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
+                  <p className="font-black">سيتم مضاعفة المبلغ من {formatMoney(Math.abs(selectedRecord.final_amount))} إلى {formatMoney(Math.abs(selectedRecord.final_amount) * 2)}</p>
+                </div>
+              )}
+
+              {(reviewAction === 'edit' || reviewAction === 'approve' || reviewAction === 'double') && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-sm font-bold text-slate-700">مصدر الطلب</label>
+                    <select value={actionSourceRole} onChange={(e) => setActionSourceRole(e.target.value as any)} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold outline-none focus:border-purple-300">
+                      <option value="admin">إدارة</option>
+                      <option value="customer">عميل</option>
+                      <option value="doctor">دكتور</option>
+                      <option value="other">أخرى</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-bold text-slate-700">اسم المصدر</label>
+                    <input type="text" value={actionSourceName} onChange={(e) => setActionSourceName(e.target.value)} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold outline-none focus:border-purple-300" placeholder="اسم العميل أو الدكتور" />
+                  </div>
+                </div>
+              )}
+
+              {(reviewAction === 'edit' || reviewAction === 'approve') && (
+                <div>
+                  <label className="mb-2 block text-sm font-bold text-slate-700">السبب</label>
+                  <textarea value={actionReason} onChange={(e) => setActionReason(e.target.value)} rows={3} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold outline-none focus:border-purple-300" />
+                </div>
+              )}
+
+              <div>
+                <label className="mb-2 block text-sm font-bold text-slate-700">ملاحظة المدير</label>
+                <textarea value={managerNote} onChange={(e) => setManagerNote(e.target.value)} rows={3} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold outline-none focus:border-purple-300" placeholder="اكتب ملاحظة القرار" />
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <button type="button" onClick={handleReviewSubmit} disabled={actionSaving} className="rounded-2xl bg-purple-600 px-4 py-3 font-black text-white shadow-sm disabled:opacity-60">
+                  {actionSaving ? 'جاري الحفظ...' : 'حفظ القرار'}
+                </button>
+                <button type="button" onClick={closeReviewModal} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 font-black text-slate-600">
+                  إلغاء
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StatCard({ title, value, tone, icon }: { title: string; value: number | string; tone: 'emerald' | 'amber' | 'rose' | 'slate'; icon: ReactNode }) {
+  const toneClass = tone === 'emerald' ? 'bg-emerald-50 text-emerald-700' : tone === 'amber' ? 'bg-amber-50 text-amber-700' : tone === 'rose' ? 'bg-rose-50 text-rose-700' : 'bg-slate-50 text-slate-700'
+  return (
+    <div className={`rounded-[28px] border p-5 ${toneClass}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-xs font-black uppercase tracking-[0.08em] opacity-80">{title}</div>
+        <div className="rounded-2xl bg-white p-2 text-[#061827]">{icon}</div>
+      </div>
+      <p className="mt-4 text-3xl font-black">{value}</p>
     </div>
   )
 }

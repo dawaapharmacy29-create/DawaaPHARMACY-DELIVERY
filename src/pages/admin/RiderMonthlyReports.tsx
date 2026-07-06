@@ -100,8 +100,8 @@ export default function RiderMonthlyReports() {
     const normalOrdersValue = normalOrders.reduce((sum, o) => sum + Number(o.order_earning ?? orderRate), 0)
     const multiplierOrdersValue = multiplierOrders.reduce((sum, o) => sum + Number(o.order_earning ?? orderRate * orderMultiplier(o)), 0)
     const tripsValue = approvedTrips.reduce((sum, t) => sum + Number(t.trip_earning ?? tripRate), 0)
-    const rewardsTotal = adjustments.filter(a => a.adjustment_type === 'reward' && a.status !== 'rejected').reduce((sum, a) => sum + Math.abs(Number(a.final_amount ?? a.amount ?? 0)), 0)
-    const penaltiesTotal = adjustments.filter(a => a.adjustment_type === 'penalty' && a.status !== 'rejected').reduce((sum, a) => sum + Math.abs(Number(a.final_amount ?? a.amount ?? 0)), 0)
+    const rewardsTotal = adjustments.filter(a => a.adjustment_type === 'reward' && String(a.status || '').toLowerCase() === 'approved').reduce((sum, a) => sum + Math.abs(Number(a.final_amount ?? a.amount ?? 0)), 0)
+    const penaltiesTotal = adjustments.filter(a => a.adjustment_type === 'penalty' && String(a.status || '').toLowerCase() === 'approved').reduce((sum, a) => sum + Math.abs(Number(a.final_amount ?? a.amount ?? 0)), 0)
     const gross = normalOrdersValue + multiplierOrdersValue + tripsValue + rewardsTotal
     return {
       normalOrdersCount: normalOrders.length,
