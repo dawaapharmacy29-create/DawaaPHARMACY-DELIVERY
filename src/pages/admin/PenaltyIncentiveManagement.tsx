@@ -8,8 +8,16 @@ import type { UserProfile } from '../../lib/types'
 
 type Staff = {
   id: string
+  rider_id?: string
+  person_name?: string
   display_name: string
+  username?: string
+  role?: string
+  branch_id?: string
   branch_name?: string
+  account_status?: string
+  rider_status?: string
+  searchText?: string
 }
 
 type PenaltyIncentiveForm = {
@@ -96,20 +104,29 @@ export default function PenaltyIncentiveManagement() {
 
       setProfile(userProfile as UserProfile)
 
-      const { data: adjustmentData } = await supabase
-        .from('rider_adjustments')
-        .select('rider_id, rider_name, branch_name')
-        .distinct()
+      // Get all active staff from staff_accounts_full_view
+      const { data: staffData, error: staffError } = await supabase
+        .from('staff_accounts_full_view')
+        .select('account_id, rider_id, person_name, display_name, username, role, branch_id, branch_name, account_status, rider_status')
+        .eq('account_status', 'active')
+        .in('role', ['rider', 'branch_manager', 'branches_manager', 'general_manager', 'operations_manager'])
+        .order('person_name', { ascending: true })
 
-      if (adjustmentData) {
-        const uniqueStaff = Array.from(
-          new Map(adjustmentData.map(s => [s.rider_id, {
-            id: s.rider_id,
-            display_name: s.rider_name || 'غير معروف',
-            branch_name: s.branch_name || 'بدون فرع'
-          }])).values()
-        )
-        setStaffList(uniqueStaff as Staff[])
+      if (staffData) {
+        const processedStaff = staffData.map(s => ({
+          id: s.account_id,
+          rider_id: s.rider_id,
+          person_name: s.person_name,
+          display_name: s.display_name,
+          username: s.username,
+          role: s.role,
+          branch_id: s.branch_id,
+          branch_name: s.branch_name || 'بدون فرع',
+          account_status: s.account_status,
+          rider_status: s.rider_status,
+          searchText: `${s.person_name || ''} ${s.display_name || ''} ${s.username || ''} ${s.branch_name || ''}`.toLowerCase()
+        }))
+        setStaffList(processedStaff as Staff[])
       }
 
       const cycleStart = new Date()
@@ -148,8 +165,7 @@ export default function PenaltyIncentiveManagement() {
   }, [quick])
 
   const filteredStaff = staffList.filter(s =>
-    s.display_name.toLowerCase().includes(search.toLowerCase()) ||
-    s.branch_name?.toLowerCase().includes(search.toLowerCase())
+    s.searchText?.includes(search.toLowerCase())
   )
 
   async function handleSubmit(e: React.FormEvent) {
@@ -173,8 +189,8 @@ export default function PenaltyIncentiveManagement() {
       const selectedStaff = staffList.find(s => s.id === form.employeeId)
 
       const payload = {
-        rider_id: form.employeeId,
-        rider_name: selectedStaff?.display_name || null,
+        rider_id: selectedStaff?.rider_id || form.employeeId,
+        rider_name: selectedStaff ? (selectedStaff.person_name || selectedStaff.display_name || selectedStaff.username) : null,
         branch_name: selectedStaff?.branch_name || null,
         cycle_start: cycleStartStr,
         cycle_end: cycleEndStr,
@@ -290,8 +306,8 @@ export default function PenaltyIncentiveManagement() {
                             }}
                             className="block w-full border-b p-3 text-right hover:bg-purple-50"
                           >
-                            <p className="font-bold text-[#061827]">{staff.display_name}</p>
-                            <p className="text-xs text-slate-500">{staff.branch_name}</p>
+                            <p className="font-bold text-[#061827]">{staff.person_name || staff.display_name || staff.username}</p>
+                            <p className="text-xs text-slate-500">{staff.branch_name} • {staff.role}</p>
                           </button>
                         ))
                       ) : (
@@ -304,8 +320,8 @@ export default function PenaltyIncentiveManagement() {
                 {selectedStaff && (
                   <div className="rounded-2xl bg-purple-50 p-4">
                     <p className="text-sm font-black text-slate-600">الموظف المختار:</p>
-                    <p className="mt-1 text-lg font-black text-[#061827]">{selectedStaff.display_name}</p>
-                    <p className="mt-1 text-xs text-slate-500">{selectedStaff.branch_name}</p>
+                    <p className="mt-1 text-lg font-black text-[#061827]">{selectedStaff.person_name || selectedStaff.display_name || selectedStaff.username}</p>
+                    <p className="mt-1 text-xs text-slate-500">{selectedStaff.branch_name} • {selectedStaff.role}</p>
                   </div>
                 )}
 
