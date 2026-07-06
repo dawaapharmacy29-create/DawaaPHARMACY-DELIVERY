@@ -275,7 +275,7 @@ export default function BranchManagerDashboard() {
         <Card title="لم تخرج بعد" value={timelineKpi.pendingDispatch} icon={<AlertTriangle/>} tone="amber"/>
         <Card title="متوسط التسليم" value={timelineKpi.avgDelivery ? formatMinutes(timelineKpi.avgDelivery) : '—'} icon={<RefreshCw/>} tone="purple"/>
       </section>
-      <button onClick={() => navigate('/penalty-incentive?quick=1')} type="button" className="w-full rounded-3xl border border-purple-200 bg-gradient-to-l from-purple-50 to-purple-100/50 p-5 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg">
+      <button onClick={() => navigate('/admin/penalty-incentive?quick=1')} type="button" className="w-full rounded-3xl border border-purple-200 bg-gradient-to-l from-purple-50 to-purple-100/50 p-5 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg">
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-xs font-black text-purple-600">إدارة الموارد البشرية</p>

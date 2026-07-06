@@ -117,7 +117,7 @@ function App() {
             <Route path="/admin/fraud-alerts" element={<AdminRoute pageKey="dashboard"><FraudAlerts /></AdminRoute>} />
             <Route path="/admin/cash-flow" element={<AdminRoute pageKey="dashboard"><CashFlowDashboard /></AdminRoute>} />
             <Route path="/admin/branch" element={<AdminRoute pageKey="branch_dashboard"><BranchManagerDashboard /></AdminRoute>} />
-            <Route path="/penalty-incentive" element={<ProtectedRoute pageKey="dashboard"><PenaltyIncentiveManagement /></ProtectedRoute>} />
+            <Route path="/admin/penalty-incentive" element={<AdminRoute pageKey="dashboard"><PenaltyIncentiveManagement /></AdminRoute>} />
 
             <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>

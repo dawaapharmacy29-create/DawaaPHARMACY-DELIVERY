@@ -206,7 +206,7 @@ export default function ExecutiveDashboard() {
           <StatCard label="صافي التسويات" value={formatMoney(summary.positives - summary.deductions)} sub={`مكافآت ${formatMoney(summary.positives)} • خصومات ${formatMoney(summary.deductions)}`} icon={<Wallet/>} tone="purple" onClick={() => navigate('/admin/cash-flow?source=delivery_adjustments')}/>
         </section>
 
-        <button onClick={() => navigate('/penalty-incentive?quick=1')} type="button" className="w-full rounded-3xl border border-purple-200 bg-gradient-to-l from-purple-50 to-purple-100/50 p-6 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg">
+        <button onClick={() => navigate('/admin/penalty-incentive?quick=1')} type="button" className="w-full rounded-3xl border border-purple-200 bg-gradient-to-l from-purple-50 to-purple-100/50 p-6 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg">
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-xs font-black text-purple-600">إدارة الموارد البشرية</p>
