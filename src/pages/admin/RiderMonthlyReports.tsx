@@ -152,7 +152,7 @@ export default function RiderMonthlyReports() {
     }
     const finalAmount = Number((data as any)?.final_amount ?? (adjustmentType === 'penalty' ? -Math.abs(value) * mult : Math.abs(value) * mult))
     const title = adjustmentType === 'reward' ? 'تم تسجيل مكافأة' : 'تم تسجيل خصم'
-    const body = `${adjustmentType === 'reward' ? 'مكافأة' : 'خصم'} بقيمة ${money(Math.abs(finalAmount))} جنيه. السبب: ${reason.trim()}. سيتم مراجعة واعتماد التفاصيل من الإدارة.`
+    const body = `${adjustmentType === 'reward' ? 'مكافأة' : 'خصم'} بقيمة ${money(Math.abs(finalAmount))} ج.م. السبب: ${reason.trim()}. سيتم مراجعة واعتماد التفاصيل من الإدارة.`
     try {
       await supabase.from('rider_notifications').insert({ rider_id: riderId, title, message: body, body, created_at: new Date().toISOString() })
     } catch {}
@@ -222,8 +222,8 @@ export default function RiderMonthlyReports() {
           <div className="text-left"><p className="text-xl font-black text-[#061827]">{rider?.name || rider?.username || '—'}</p><p className="mt-1 text-sm font-bold text-slate-500">{rider?.branch_name || 'بدون فرع'}</p></div>
         </div>
         <div className="grid gap-3 md:grid-cols-4">
-          <Metric label="أوردرات ×1" value={summary.normalOrdersCount} sub={`${money(summary.normalOrdersValue)} جنيه`} />
-          <Metric label="أوردرات ×1.5" value={summary.multiplierOrdersCount} sub={`${money(summary.multiplierOrdersValue)} جنيه`} />
+          <Metric label="أوردرات ×1" value={summary.normalOrdersCount} sub={`${money(summary.normalOrdersValue)} ج.م`} />
+          <Metric label="أوردرات ×1.5" value={summary.multiplierOrdersCount} sub={`${money(summary.multiplierOrdersValue)} ج.م`} />
           <Metric label="المشاوير" value={summary.tripsCount} sub={`المعتمد ${summary.approvedTripsCount} · المعلق ${summary.pendingTripsCount}`} />
           <Metric label="فواتير فاشلة" value={summary.failedOrdersCount} sub="للمراجعة" />
           <Metric label="مكافآت" value={money(summary.rewardsTotal)} sub="بعد الاعتماد" tone="green" />

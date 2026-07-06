@@ -49,7 +49,7 @@ type AdjustmentRecord = {
 }
 
 const num = (value: unknown) => Number(value || 0) || 0
-const formatMoney = (val: number) => `${num(val).toFixed(2)} ر.ع`
+const formatMoney = (val: number) => `${num(val).toFixed(2)} ج.م`
 
 export default function PenaltyIncentiveManagement() {
   const navigate = useNavigate()
@@ -361,7 +361,7 @@ export default function PenaltyIncentiveManagement() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-bold text-slate-700">المبلغ (ر.ع)</label>
+                  <label className="mb-2 block text-sm font-bold text-slate-700">المبلغ (ج.م)</label>
                   <input
                     type="number"
                     step="0.01"
@@ -493,7 +493,7 @@ export default function PenaltyIncentiveManagement() {
                         {record.status === 'approved' ? 'معتمد' : record.status === 'pending' ? 'مستني' : 'مرفوض'}
                       </span>
                     </td>
-                    <td className="p-3 text-slate-500">{new Date(record.created_at).toLocaleDateString('ar-OM')}</td>
+                    <td className="p-3 text-slate-500">{new Date(record.created_at).toLocaleDateString('ar-EG')}</td>
                   </tr>
                 )) : (
                   <tr>
