@@ -17,6 +17,7 @@ type TripAuditRow = InternalTrip & {
   proof_uploaded_at?: string | null
   proof_source?: string | null
   proof_review_status?: string | null
+  evidence_status?: string | null
   proof_exception_status?: string | null
   proof_exception_reason?: string | null
   audit_status?: string | null
@@ -51,6 +52,7 @@ const auditLabels: Record<string, string> = {
   with_photo: 'بصورة كاميرا',
   without_photo: 'بدون صورة',
   exception: 'استثناء بدون صورة',
+  pending_upload: 'إثبات صورة معلق',
   old_without_proof: 'قديم بلا إثبات',
   pending_approval: 'مستني اعتماد',
   missing_required_photo: 'صورة مطلوبة ومفقودة',
@@ -77,6 +79,7 @@ function isOldWithoutProof(trip: TripAuditRow) {
 function tripAuditBadges(trip: TripAuditRow) {
   const badges: { label: string; cls: string }[] = []
   if (proofUrl(trip)) badges.push({ label: 'صورة كاميرا', cls: 'bg-emerald-50 text-emerald-700' })
+  if (trip.proof_review_status === 'pending_upload' || trip.evidence_status === 'pending_upload') badges.push({ label: 'إثبات صورة معلق', cls: 'bg-amber-50 text-amber-700' })
   if (!proofUrl(trip) && trip.proof_exception_status !== 'pending') badges.push({ label: 'بدون صورة', cls: 'bg-rose-50 text-rose-700' })
   if (trip.proof_exception_status === 'pending') badges.push({ label: 'بدون صورة - يحتاج مراجعة', cls: 'bg-amber-50 text-amber-700' })
   if (isOldWithoutProof(trip)) badges.push({ label: 'قديم بلا إثبات', cls: 'bg-slate-100 text-slate-600' })
@@ -90,6 +93,7 @@ function matchesAuditFilter(trip: TripAuditRow, filter: AuditFilter) {
   if (filter === 'with_photo') return Boolean(proofUrl(trip))
   if (filter === 'without_photo') return !proofUrl(trip)
   if (filter === 'exception') return trip.proof_exception_status === 'pending'
+  if (filter === 'pending_upload') return trip.proof_review_status === 'pending_upload' || trip.evidence_status === 'pending_upload'
   if (filter === 'old_without_proof') return isOldWithoutProof(trip)
   if (filter === 'pending_approval') return trip.status === 'pending_approval' || trip.audit_status === 'pending_approval'
   return trip.audit_status === filter
@@ -152,6 +156,7 @@ export default function Trips() {
     with_photo: trips.filter(t => Boolean(proofUrl(t))).length,
     without_photo: trips.filter(t => !proofUrl(t)).length,
     exception: trips.filter(t => t.proof_exception_status === 'pending').length,
+    pending_upload: trips.filter(t => t.proof_review_status === 'pending_upload' || t.evidence_status === 'pending_upload').length,
     old_without_proof: trips.filter(isOldWithoutProof).length,
     pending_approval: trips.filter(t => t.status === 'pending_approval' || t.audit_status === 'pending_approval').length,
     missing_required_photo: trips.filter(t => t.audit_status === 'missing_required_photo').length,
@@ -229,16 +234,17 @@ export default function Trips() {
           <img src="/logo.png" className="h-10 w-10 rounded-xl bg-white object-contain p-1" alt="دواء" />
           <div>
             <h1 className="text-xl font-black">إدارة ورقابة المشاوير</h1>
-            <p className="text-xs text-teal-100">الدورة {period.start} → {period.end} · {counts.pending_approval} مشوار مستني اعتماد · {counts.exception} استثناء بدون صورة</p>
+            <p className="text-xs text-teal-100">الدورة {period.start} → {period.end} · {counts.pending_approval} مشوار مستني اعتماد · {counts.pending_upload} إثبات صورة معلق</p>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-7xl p-4 space-y-4">
-        <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
           <StatButton label="كل المشاوير" value={counts.all} active={auditFilter === 'all'} onClick={() => setAuditFilter('all')} />
           <StatButton label="بصورة" value={counts.with_photo} active={auditFilter === 'with_photo'} onClick={() => setAuditFilter('with_photo')} tone="emerald" />
           <StatButton label="بدون صورة" value={counts.without_photo} active={auditFilter === 'without_photo'} onClick={() => setAuditFilter('without_photo')} tone="rose" />
+          <StatButton label="إثبات معلق" value={counts.pending_upload} active={auditFilter === 'pending_upload'} onClick={() => setAuditFilter('pending_upload')} tone="amber" />
           <StatButton label="استثناء" value={counts.exception} active={auditFilter === 'exception'} onClick={() => setAuditFilter('exception')} tone="amber" />
           <StatButton label="قديم بلا إثبات" value={counts.old_without_proof} active={auditFilter === 'old_without_proof'} onClick={() => setAuditFilter('old_without_proof')} tone="slate" />
           <StatButton label="مستني اعتماد" value={counts.pending_approval} active={auditFilter === 'pending_approval'} onClick={() => setAuditFilter('pending_approval')} tone="sky" />

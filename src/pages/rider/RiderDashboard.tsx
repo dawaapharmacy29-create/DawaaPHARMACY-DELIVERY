@@ -72,7 +72,85 @@ type ReceiptUploadInfo = {
   mimeType: string;
 };
 type ReceiptUploadState = "not_uploaded" | "uploading" | "uploaded" | "failed" | "pending_retry";
+type PendingTripProofRecord = {
+  id: string;
+  tripId?: string | null;
+  riderId: string;
+  blob: Blob;
+  fileName: string;
+  mimeType: string;
+  capturedAt: string;
+  createdAt: string;
+  uploadPath?: string | null;
+  retryCount: number;
+  lastError?: string | null;
+};
+type PendingTripProofMeta = Omit<PendingTripProofRecord, "blob"> & { hasBlob: boolean };
 type EditOrderDraft = { invoice_number: string; customer_name: string; customer_code: string; customer_phone: string; customer_address: string; invoice_amount: string; order_multiplier: number; multiplier_reason: string; notes: string; receipt_image_url?: string | null; receipt_image_path?: string | null; receipt_upload_status?: string };
+
+const TRIP_PROOF_DB_NAME = "dawaa-trip-proof-cache";
+const TRIP_PROOF_STORE = "pendingTripProofs";
+
+function createLocalId(prefix = "trip-proof") {
+  try { return `${prefix}-${crypto.randomUUID()}`; }
+  catch { return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+}
+
+function createClientTripId() {
+  try { return crypto.randomUUID(); }
+  catch { return `${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+}
+
+function openTripProofDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") return reject(new Error("indexeddb_unavailable"));
+    const request = indexedDB.open(TRIP_PROOF_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(TRIP_PROOF_STORE)) {
+        const store = db.createObjectStore(TRIP_PROOF_STORE, { keyPath: "id" });
+        store.createIndex("tripId", "tripId", { unique: false });
+        store.createIndex("riderId", "riderId", { unique: false });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("indexeddb_open_failed"));
+  });
+}
+
+async function withTripProofStore<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T> | void): Promise<T | undefined> {
+  const db = await openTripProofDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(TRIP_PROOF_STORE, mode);
+    const request = fn(tx.objectStore(TRIP_PROOF_STORE));
+    let result: T | undefined;
+    if (request) {
+      request.onsuccess = () => { result = request.result; };
+      request.onerror = () => reject(request.error);
+    }
+    tx.oncomplete = () => { db.close(); resolve(result); };
+    tx.onerror = () => { db.close(); reject(tx.error || new Error("indexeddb_transaction_failed")); };
+  });
+}
+
+async function savePendingTripProof(record: PendingTripProofRecord) {
+  await withTripProofStore("readwrite", store => store.put(record));
+}
+
+async function getPendingTripProof(id: string) {
+  return await withTripProofStore<PendingTripProofRecord>("readonly", store => store.get(id));
+}
+
+async function deletePendingTripProof(id: string) {
+  await withTripProofStore("readwrite", store => store.delete(id));
+}
+
+async function listPendingTripProofs(riderId?: string | null): Promise<PendingTripProofMeta[]> {
+  const rows = await withTripProofStore<PendingTripProofRecord[]>("readonly", store => store.getAll());
+  return (rows || [])
+    .filter(row => !riderId || row.riderId === riderId)
+    .map(({ blob, ...row }) => ({ ...row, hasBlob: Boolean(blob) }));
+}
 
 type ReceiptOcrExtract = {
   invoice_number?: string | null;
@@ -455,6 +533,11 @@ export default function RiderDashboard() {
   const [tripProofCapturedAt, setTripProofCapturedAt] = useState("");
   const [tripProofOriginalSize, setTripProofOriginalSize] = useState<number | null>(null);
   const [tripProofCompressedSize, setTripProofCompressedSize] = useState<number | null>(null);
+  const [tripProofLocalId, setTripProofLocalId] = useState("");
+  const [tripProofStoragePath, setTripProofStoragePath] = useState("");
+  const [tripProofRetryCount, setTripProofRetryCount] = useState(0);
+  const [pendingTripProofs, setPendingTripProofs] = useState<PendingTripProofMeta[]>([]);
+  const [proofRetryingTripId, setProofRetryingTripId] = useState<string | null>(null);
   const [allowTripProofException, setAllowTripProofException] = useState(false);
   const [tripProofExceptionReason, setTripProofExceptionReason] = useState("");
   const [cameraPermissionStatus, setCameraPermissionStatus] =
@@ -465,7 +548,7 @@ export default function RiderDashboard() {
 
   const hasTripProofUpload =
     Boolean(tripProofUploadInfo) && tripProofUploadState === "uploaded";
-  const hasTripProofEvidence = hasTripProofUpload || Boolean(relatedInvoice.trim());
+  const hasTripProofEvidence = hasTripProofUpload || Boolean(tripProofFile || tripProofPreviewUrl || tripProofLocalId);
   const needsTripProofException = !hasTripProofEvidence;
 
   // Fail reason
@@ -534,6 +617,86 @@ export default function RiderDashboard() {
     setTripViewMode(mode);
     setTripViewTitle(title);
     setActiveModal("trips");
+  }
+
+  async function refreshPendingTripProofs() {
+    try {
+      const rows = await listPendingTripProofs(rider?.id || getRiderSession().rider_id);
+      setPendingTripProofs(rows);
+    } catch (error: any) {
+      if (import.meta.env.DEV) console.debug("pending trip proof cache unavailable", error?.message || error);
+    }
+  }
+
+  async function retryPendingTripProof(recordId: string) {
+    const record = await getPendingTripProof(recordId);
+    if (!record?.blob) {
+      toast.error("لا توجد صورة محفوظة محليًا لهذا المشوار");
+      await refreshPendingTripProofs();
+      return;
+    }
+    if (!record.tripId) {
+      toast.error("المشوار لم يحصل على رقم حفظ من السيرفر بعد. افتح الإنترنت ثم حدث الصفحة.");
+      return;
+    }
+    if (!navigator.onLine) {
+      toast.error("لا يوجد اتصال إنترنت الآن. سيتم إعادة المحاولة عند عودة الشبكة.");
+      return;
+    }
+    setProofRetryingTripId(record.tripId);
+    try {
+      const ext = record.fileName.split(".").pop()?.toLowerCase() || "jpg";
+      const path = record.uploadPath || `trips/${record.riderId}/${activeWorkDate}/${record.tripId}-${Date.now()}.${ext}`;
+      const { error } = await uploadWithTimeout(
+        supabase.storage.from("delivery-receipts").upload(path, record.blob, { cacheControl: "3600", upsert: true }),
+        60000,
+      );
+      if (error) throw error;
+      const { data } = supabase.storage.from("delivery-receipts").getPublicUrl(path);
+      const nowIso = new Date().toISOString();
+      const patch = {
+        proof_image_url: data.publicUrl,
+        proof_image_path: path,
+        proof_uploaded_at: nowIso,
+        proof_captured_at: record.capturedAt || nowIso,
+        proof_source: "camera_retry",
+        proof_review_status: "pending",
+        evidence_status: "pending_admin_review",
+        proof_exception_status: "none",
+        proof_exception_reason: null,
+        review_status: "pending_evidence_review",
+        updated_at: nowIso,
+      };
+      const { data: updatedTrip, error: updateError } = await supabase
+        .from("internal_trips")
+        .update(patch)
+        .eq("id", record.tripId)
+        .select("*")
+        .single();
+      if (updateError) throw updateError;
+      await deletePendingTripProof(record.id);
+      setTrips(prev => prev.map(t => t.id === record.tripId ? (updatedTrip as InternalTrip) : t));
+      setCycleTrips(prev => prev.map(t => t.id === record.tripId ? (updatedTrip as InternalTrip) : t));
+      await refreshPendingTripProofs();
+      toast.success("تم رفع صورة الإثبات بنجاح ✅");
+    } catch (error: any) {
+      const message = error?.message || "فشل رفع صورة الإثبات";
+      await savePendingTripProof({ ...record, retryCount: (record.retryCount || 0) + 1, lastError: message });
+      await refreshPendingTripProofs();
+      if (import.meta.env.DEV) console.debug("retryPendingTripProof failed", { tripId: record.tripId, retryCount: (record.retryCount || 0) + 1, error });
+      toast.error("تعذر رفع صورة الإثبات الآن. المشوار محفوظ وسنحاول مرة أخرى.");
+    } finally {
+      setProofRetryingTripId(null);
+    }
+  }
+
+  async function retryPendingTripProofForTrip(tripId: string) {
+    const record = pendingTripProofs.find(row => row.tripId === tripId);
+    if (!record) {
+      toast.error("لا توجد صورة محلية محفوظة لهذا المشوار على هذا الجهاز");
+      return;
+    }
+    await retryPendingTripProof(record.id);
   }
 
   const notDispatchedOrders = orders.filter(
@@ -903,6 +1066,29 @@ export default function RiderDashboard() {
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    void refreshPendingTripProofs();
+  }, [rider?.id]);
+
+  useEffect(() => {
+    const run = async () => {
+      const rows = await listPendingTripProofs(rider?.id || getRiderSession().rider_id);
+      setPendingTripProofs(rows);
+      if (!navigator.onLine) return;
+      for (const row of rows.filter(item => item.tripId)) {
+        await retryPendingTripProof(row.id);
+      }
+    };
+    const onOnline = () => { void run(); };
+    window.addEventListener("online", onOnline);
+    const timer = window.setInterval(onOnline, 45000);
+    void run();
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.clearInterval(timer);
+    };
+  }, [rider?.id]);
 
   useEffect(() => {
     if (!openOrderRows.length || oldestOpenMinutes < 45) return;
@@ -1352,15 +1538,33 @@ export default function RiderDashboard() {
       return;
     }
 
+    const localId = createLocalId();
+    const capturedAt = new Date().toISOString();
     setTripProofFile(file);
     setTripProofUploadInfo(null);
     setTripProofUploadState("not_uploaded");
     setTripProofUploadError("");
-    setTripProofCapturedAt(new Date().toISOString());
+    setTripProofCapturedAt(capturedAt);
     setTripProofOriginalSize(file.size);
     setTripProofCompressedSize(null);
+    setTripProofLocalId(localId);
+    setTripProofStoragePath("");
+    setTripProofRetryCount(0);
     if (tripProofPreviewUrl) URL.revokeObjectURL(tripProofPreviewUrl);
     setTripProofPreviewUrl(URL.createObjectURL(file));
+    void savePendingTripProof({
+      id: localId,
+      riderId: rider?.id || getRiderSession().rider_id || "unknown",
+      blob: file,
+      fileName: file.name || "trip-proof.jpg",
+      mimeType: file.type || "image/jpeg",
+      capturedAt,
+      createdAt: new Date().toISOString(),
+      retryCount: 0,
+      lastError: null,
+    }).then(refreshPendingTripProofs).catch(error => {
+      if (import.meta.env.DEV) console.debug("failed to cache trip proof locally", error?.message || error);
+    });
     e.target.value = "";
   }
 
@@ -1380,11 +1584,27 @@ export default function RiderDashboard() {
     const ext = uploadFile.name.split(".").pop()?.toLowerCase() || "jpg";
     const safeType = String(tripType || "trip").replace(/[^a-zA-Z0-9_.-]/g, "_");
     const path = `trips/${rider.id}/${activeWorkDate}/${Date.now()}-${safeType}.${ext}`;
+    setTripProofStoragePath(path);
+    if (tripProofLocalId) {
+      void savePendingTripProof({
+        id: tripProofLocalId,
+        riderId: rider.id,
+        blob: uploadFile,
+        fileName: uploadFile.name || "trip-proof.jpg",
+        mimeType: uploadFile.type || "image/jpeg",
+        capturedAt: tripProofCapturedAt || new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        uploadPath: path,
+        retryCount: tripProofRetryCount,
+        lastError: null,
+      }).then(refreshPendingTripProofs).catch(() => {});
+    }
     const timeoutMs = 60000;
     const maxAttempts = 3;
     let finalError: Error | null = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      setTripProofRetryCount(attempt - 1);
       try {
         const { error } = await uploadWithTimeout(
           supabase.storage
@@ -1412,6 +1632,9 @@ export default function RiderDashboard() {
         setTripProofUploadInfo(info);
         setTripProofUploadState("uploaded");
         setTripProofUploadError("");
+        if (tripProofLocalId) {
+          void deletePendingTripProof(tripProofLocalId).then(refreshPendingTripProofs).catch(() => {});
+        }
 
         if (import.meta.env.DEV) {
           console.debug("uploadTripProofPhoto success", {
@@ -1454,6 +1677,21 @@ export default function RiderDashboard() {
 
     setTripProofUploadState(navigator.onLine ? "failed" : "pending_retry");
     setTripProofUploadError(failedMessage);
+    setTripProofRetryCount(maxAttempts);
+    if (tripProofLocalId && tripProofFile) {
+      void savePendingTripProof({
+        id: tripProofLocalId,
+        riderId: rider.id,
+        blob: tripProofFile,
+        fileName: tripProofFile.name || "trip-proof.jpg",
+        mimeType: tripProofFile.type || "image/jpeg",
+        capturedAt: tripProofCapturedAt || new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        uploadPath: path,
+        retryCount: maxAttempts,
+        lastError: failedMessage,
+      }).then(refreshPendingTripProofs).catch(() => {});
+    }
     return null;
   }
 
@@ -1828,6 +2066,9 @@ export default function RiderDashboard() {
     setTripProofUploadState("not_uploaded");
     setTripProofUploadError("");
     setTripProofCapturedAt("");
+    setTripProofLocalId("");
+    setTripProofStoragePath("");
+    setTripProofRetryCount(0);
     setAllowTripProofException(false);
     setTripProofExceptionReason("");
     if (tripProofPreviewUrl) URL.revokeObjectURL(tripProofPreviewUrl);
@@ -1914,37 +2155,31 @@ export default function RiderDashboard() {
       }
 
       const hasProofUpload = Boolean(tripProofUpload?.url || tripProofUpload?.path);
-      const hasProofEvidence = hasProofUpload || Boolean(relatedInvoice.trim());
-      const needsProofException = !hasProofEvidence;
+      const hasLocalProof = Boolean(tripProofFile || tripProofPreviewUrl || tripProofLocalId);
+      const isPendingProofUpload = hasLocalProof && !hasProofUpload;
+      const needsProofException = !hasProofUpload && !isPendingProofUpload;
       const isTripProofException = needsProofException && allowTripProofException;
 
       if (needsProofException && !allowTripProofException) {
-        if (
-          tripProofFile &&
-          !hasProofUpload &&
-          (tripProofUploadState === "failed" || tripProofUploadState === "pending_retry")
-        ) {
-          toast.error(
-            "الصورة موجودة ولكن لم تُرفع بسبب ضعف الشبكة. اضغط إعادة رفع الصورة قبل الحفظ.",
-          );
-          return;
-        }
-
-        toast.error("لا يمكن تسجيل مشوار بدون صورة أو مرجع فاتورة إلا بعد كتابة سبب واضح لعدم وجود الصورة");
+        toast.error("لا يمكن تسجيل مشوار بدون صورة إثبات. إذا لا توجد صورة اكتب سبب استثناء واضح للمراجعة.");
         return;
       }
       if (isTripProofException && exceptionReason.length < 10) {
-        toast.error("لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح لعدم وجود الصورة");
+        toast.error("لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح للمراجعة.");
         return;
-      }
-      if (tripProofFile && !hasProofUpload && !isTripProofException) {
-        throw new Error("تعذر رفع صورة إثبات المشوار. تأكد من الإنترنت وحاول مرة أخرى.");
       }
 
       const nowIso = new Date().toISOString();
       const proofCapturedAt = tripProofCapturedAt || nowIso;
       const tripRate = rider.trip_rate ?? 10;
+      const clientTripId = createClientTripId();
+      const pendingProofReason = "الصورة موجودة محليًا وفشل رفعها بسبب الشبكة";
+      const proofNote = [
+        tripProofNote.trim(),
+        isPendingProofUpload ? pendingProofReason : "",
+      ].filter(Boolean).join(" | ") || null;
       const payload = {
+        id: clientTripId,
         rider_id: rider.id,
         rider_name: rider.name,
         branch_id: rider.branch_id,
@@ -1959,27 +2194,29 @@ export default function RiderDashboard() {
         related_invoice_number: relatedInvoice || null,
         has_invoice_reference: Boolean(relatedInvoice.trim()),
         requested_by_name: tripRequesterName.trim() || null,
-        evidence_type: relatedInvoice.trim()
-          ? (tripProofUpload ? "invoice_photo" : "invoice")
-          : tripProofUpload ? "trip_photo" : "exception",
-        evidence_note: tripProofNote.trim() || null,
-        evidence_status: tripProofUpload ? "pending_admin_review" : "exception_review",
+        evidence_type: hasProofUpload
+          ? (relatedInvoice.trim() ? "invoice_photo" : "trip_photo")
+          : isPendingProofUpload ? "trip_photo_pending_upload" : "exception",
+        evidence_note: proofNote,
+        evidence_status: hasProofUpload ? "pending_admin_review" : isPendingProofUpload ? "pending_upload" : "exception_review",
         proof_required: true,
         proof_image_url: tripProofUpload?.url ?? null,
-        proof_note: tripProofNote.trim() || null,
-        proof_captured_at: tripProofUpload ? proofCapturedAt : null,
-        proof_uploaded_at: tripProofUpload ? nowIso : null,
-        proof_source: tripProofUpload ? "camera" : "exception",
-        proof_review_status: tripProofUpload ? "pending" : "exception_review",
-        proof_exception_status: isTripProofException ? "pending" : "none",
-        proof_exception_reason: isTripProofException ? exceptionReason : null,
-        needs_review: !isShiftOpen || isTripProofException,
-        review_reason: !isShiftOpen ? "missing_shift" : isTripProofException ? "missing_trip_proof" : null,
-        review_status: relatedInvoice.trim()
+        proof_note: proofNote,
+        proof_captured_at: hasProofUpload || isPendingProofUpload ? proofCapturedAt : null,
+        proof_uploaded_at: hasProofUpload ? nowIso : null,
+        proof_source: hasProofUpload ? "camera" : isPendingProofUpload ? "local_pending" : "exception",
+        proof_review_status: hasProofUpload ? "pending" : isPendingProofUpload ? "pending_upload" : "exception_review",
+        proof_exception_status: isTripProofException || isPendingProofUpload ? "pending" : "none",
+        proof_exception_reason: isTripProofException ? exceptionReason : isPendingProofUpload ? pendingProofReason : null,
+        needs_review: !isShiftOpen || isTripProofException || isPendingProofUpload,
+        review_reason: !isShiftOpen ? "missing_shift" : isPendingProofUpload ? "trip_proof_pending_upload" : isTripProofException ? "missing_trip_proof" : null,
+        review_status: isPendingProofUpload
+          ? "pending_upload"
+          : relatedInvoice.trim()
           ? "pending_evidence_review"
           : isTripProofException ? "exception_review"
           : !isShiftOpen ? "missing_shift" : "pending",
-        notes: `نوع المشوار: ${TRIP_TYPE_LABELS[tripType] ?? tripType}${tripRequesterName.trim() ? ` | طالب المشوار: ${tripRequesterName.trim()}` : ""}${tripReason.trim() ? ` | السبب: ${tripReason.trim()}` : ""}${relatedInvoice.trim() ? ` | فاتورة/إذن: ${relatedInvoice.trim()}` : ""}${tripProofNote.trim() ? ` | ملاحظة: ${tripProofNote.trim()}` : ""}`,
+        notes: `نوع المشوار: ${TRIP_TYPE_LABELS[tripType] ?? tripType}${tripRequesterName.trim() ? ` | طالب المشوار: ${tripRequesterName.trim()}` : ""}${tripReason.trim() ? ` | السبب: ${tripReason.trim()}` : ""}${relatedInvoice.trim() ? ` | فاتورة/إذن: ${relatedInvoice.trim()}` : ""}${tripProofNote.trim() ? ` | ملاحظة: ${tripProofNote.trim()}` : ""}${isPendingProofUpload ? ` | ${pendingProofReason}` : ""}`,
         status: "pending_approval",
         registered_at: new Date().toISOString(),
         trip_rate: tripRate,
@@ -1988,7 +2225,7 @@ export default function RiderDashboard() {
       };
 
       if (!navigator.onLine) {
-        const offline = enqueueOfflineMutation({
+        enqueueOfflineMutation({
           table: "internal_trips",
           action: "insert",
           payload: {
@@ -1998,10 +2235,25 @@ export default function RiderDashboard() {
           },
           label: `مشوار ${finalFromLabel} إلى ${finalToLabel}`,
         });
+        if (isPendingProofUpload && tripProofLocalId && tripProofFile) {
+          await savePendingTripProof({
+            id: tripProofLocalId,
+            tripId: clientTripId,
+            riderId: rider.id,
+            blob: tripProofFile,
+            fileName: tripProofFile.name || "trip-proof.jpg",
+            mimeType: tripProofFile.type || "image/jpeg",
+            capturedAt: proofCapturedAt,
+            createdAt: new Date().toISOString(),
+            uploadPath: tripProofStoragePath || null,
+            retryCount: tripProofRetryCount,
+            lastError: tripProofUploadError || pendingProofReason,
+          });
+          await refreshPendingTripProofs();
+        }
         setTrips((prev) => [
           {
             ...(payload as any),
-            id: offline.id,
             offline_sync_status: "pending",
           } as InternalTrip,
           ...prev,
@@ -2020,8 +2272,24 @@ export default function RiderDashboard() {
         .select("*")
         .single();
       if (error) throw error;
+      if (isPendingProofUpload && tripProofLocalId && tripProofFile) {
+        await savePendingTripProof({
+          id: tripProofLocalId,
+          tripId: data.id,
+          riderId: rider.id,
+          blob: tripProofFile,
+          fileName: tripProofFile.name || "trip-proof.jpg",
+          mimeType: tripProofFile.type || "image/jpeg",
+          capturedAt: proofCapturedAt,
+          createdAt: new Date().toISOString(),
+          uploadPath: tripProofStoragePath || null,
+          retryCount: tripProofRetryCount,
+          lastError: tripProofUploadError || pendingProofReason,
+        });
+        await refreshPendingTripProofs();
+      }
       setTrips((prev) => [data as InternalTrip, ...prev]);
-      toast.success("تم تسجيل المشوار وهو بانتظار الاعتماد");
+      toast.success(isPendingProofUpload ? "تم حفظ المشوار، جاري رفع صورة الإثبات عند تحسن الشبكة" : "تم تسجيل المشوار وهو بانتظار الاعتماد");
       setActiveModal(null);
       resetTripForm();
     } catch (e: any) {
@@ -2358,6 +2626,27 @@ export default function RiderDashboard() {
 
         <main className="relative z-10 mx-auto -mt-8 max-w-[980px] space-y-5 px-4 pb-24">
           <ConnectivitySyncBanner />
+          {pendingTripProofs.some(item => item.tripId) && (
+            <section className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-right shadow-sm">
+              <p className="text-sm font-black text-amber-900">المشوار محفوظ لكن إثبات الصورة لم يكتمل</p>
+              <p className="mt-1 text-xs font-bold text-amber-800">
+                يوجد {pendingTripProofs.filter(item => item.tripId).length} صورة إثبات محفوظة على هذا الجهاز وتنتظر الرفع.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {pendingTripProofs.filter(item => item.tripId).slice(0, 3).map(item => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => void retryPendingTripProof(item.id)}
+                    disabled={proofRetryingTripId === item.tripId}
+                    className="rounded-2xl bg-[#008E92] px-4 py-2 text-xs font-black text-white disabled:opacity-60"
+                  >
+                    {proofRetryingTripId === item.tripId ? "جاري إعادة الرفع..." : "إعادة رفع صورة الإثبات"}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
           <LiveEarningsBar
             deliveredCount={delivered}
             orderRate={Number(rider.order_rate || 0)}
@@ -3667,7 +3956,7 @@ export default function RiderDashboard() {
             )}
             {(tripProofUploadState === "failed" || tripProofUploadState === "pending_retry") && (
               <div className="mt-2 space-y-2 rounded-xl bg-rose-50 p-2 text-xs font-black text-rose-700">
-                <p>الصورة موجودة ولكن لم تُرفع بسبب ضعف الشبكة. اضغط إعادة رفع الصورة قبل الحفظ.</p>
+                <p>الصورة موجودة على الجهاز لكن الرفع لم يكتمل. يمكنك حفظ المشوار الآن، وسيظهر كإثبات معلق حتى يتم رفع الصورة.</p>
                 {tripProofUploadError && <p className="text-rose-800">{tripProofUploadError}</p>}
                 {tripProofFile && (
                   <button
@@ -3678,6 +3967,21 @@ export default function RiderDashboard() {
                     إعادة رفع نفس الصورة
                   </button>
                 )}
+              </div>
+            )}
+            {import.meta.env.DEV && (
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 text-left text-[11px] font-mono text-slate-600" dir="ltr">
+                <p>tripProofUploadState: {tripProofUploadState}</p>
+                <p>hasTripProofFile: {String(Boolean(tripProofFile))}</p>
+                <p>hasPreview: {String(Boolean(tripProofPreviewUrl))}</p>
+                <p>hasUploadUrl: {String(Boolean(tripProofUploadInfo?.url))}</p>
+                <p>uploadError: {tripProofUploadError || "-"}</p>
+                <p>proof_status: {tripProofUploadInfo?.url ? "uploaded" : tripProofFile || tripProofLocalId ? "pending_upload_candidate" : allowTripProofException ? "exception" : "missing"}</p>
+                <p>currentTripId: pending after save</p>
+                <p>storagePath: {tripProofStoragePath || tripProofUploadInfo?.path || "-"}</p>
+                <p>retryCount: {tripProofRetryCount}</p>
+                <p>online: {String(navigator.onLine)}</p>
+                <p>localId: {tripProofLocalId || "-"}</p>
               </div>
             )}
             {tripProofPreviewUrl && (
@@ -3906,8 +4210,18 @@ export default function RiderDashboard() {
                 </p>
                 <p className="text-sm text-slate-500">{t.reason}</p>
                 <p className="text-xs font-black text-slate-500">
-                  {(t as any).proof_image_url ? "صورة إثبات موجودة ✅" : (t as any).proof_exception_status === "pending" ? "استثناء بدون صورة تحت المراجعة ⚠️" : "بدون صورة إثبات ❌"}
+                  {(t as any).proof_image_url ? "صورة إثبات موجودة ✅" : (t as any).proof_review_status === "pending_upload" || (t as any).evidence_status === "pending_upload" ? "المشوار محفوظ لكن إثبات الصورة لم يكتمل ⚠️" : (t as any).proof_exception_status === "pending" ? "استثناء بدون صورة تحت المراجعة ⚠️" : "بدون صورة إثبات ❌"}
                 </p>
+                {((t as any).proof_review_status === "pending_upload" || (t as any).evidence_status === "pending_upload") && (
+                  <button
+                    type="button"
+                    onClick={() => void retryPendingTripProofForTrip(t.id)}
+                    disabled={proofRetryingTripId === t.id}
+                    className="mt-2 rounded-2xl bg-[#008E92] px-4 py-2 text-xs font-black text-white disabled:opacity-60"
+                  >
+                    {proofRetryingTripId === t.id ? "جاري إعادة الرفع..." : "إعادة رفع صورة الإثبات"}
+                  </button>
+                )}
                 {(t as any).proof_image_url && (
                   <img src={(t as any).proof_image_url} alt="إثبات المشوار" className="mt-2 h-32 w-full rounded-2xl object-cover border" />
                 )}

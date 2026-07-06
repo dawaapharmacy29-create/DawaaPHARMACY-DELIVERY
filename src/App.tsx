@@ -36,6 +36,7 @@ const FraudAlerts = lazy(() => import('./pages/admin/FraudAlerts'))
 const InvoiceNotebook = lazy(() => import('./pages/admin/InvoiceNotebook'))
 const RoutePlanner = lazy(() => import('./pages/admin/RoutePlanner'))
 const CycleArchiveLite = lazy(() => import('./pages/admin/CycleArchiveLite'))
+const PenaltyIncentiveManagement = lazy(() => import('./pages/admin/PenaltyIncentiveManagement'))
 
 function PageLoader() {
   return (
@@ -116,6 +117,7 @@ function App() {
             <Route path="/admin/fraud-alerts" element={<AdminRoute pageKey="dashboard"><FraudAlerts /></AdminRoute>} />
             <Route path="/admin/cash-flow" element={<AdminRoute pageKey="dashboard"><CashFlowDashboard /></AdminRoute>} />
             <Route path="/admin/branch" element={<AdminRoute pageKey="branch_dashboard"><BranchManagerDashboard /></AdminRoute>} />
+            <Route path="/penalty-incentive" element={<ProtectedRoute pageKey="dashboard"><PenaltyIncentiveManagement /></ProtectedRoute>} />
 
             <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>

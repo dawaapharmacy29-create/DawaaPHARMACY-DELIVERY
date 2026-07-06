@@ -275,6 +275,18 @@ export default function BranchManagerDashboard() {
         <Card title="لم تخرج بعد" value={timelineKpi.pendingDispatch} icon={<AlertTriangle/>} tone="amber"/>
         <Card title="متوسط التسليم" value={timelineKpi.avgDelivery ? formatMinutes(timelineKpi.avgDelivery) : '—'} icon={<RefreshCw/>} tone="purple"/>
       </section>
+      <button onClick={() => navigate('/penalty-incentive?quick=1')} type="button" className="w-full rounded-3xl border border-purple-200 bg-gradient-to-l from-purple-50 to-purple-100/50 p-5 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-black text-purple-600">إدارة الموارد البشرية</p>
+            <h3 className="mt-1 text-lg font-black text-[#061827]">إضافة خصم أو مكافأة</h3>
+            <p className="mt-1 text-sm font-bold text-slate-600">تسجيل خصم أو مكافأة لموظف أو دليفري</p>
+          </div>
+          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-purple-200">
+            <Gift className="text-purple-700" size={24} />
+          </div>
+        </div>
+      </button>
       <section className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm">
         <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div><h2 className="text-xl font-black">مركز تحكم الفرع</h2><p className="text-sm font-bold text-slate-500">كل إجراء يتم باسم مدير الفرع ويظل ظاهرًا في سجل المراجعة.</p></div>

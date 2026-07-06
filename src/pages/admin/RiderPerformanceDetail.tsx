@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Download, X } from 'lucide-react'
+import { ArrowLeft, Download, Gift, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { formatMoney, getOperationalPeriod } from '../../lib/helpers'
@@ -210,7 +210,13 @@ export default function RiderPerformanceDetail() {
         <section className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3"><img src="/logo.png" className="h-16 w-16 rounded-3xl border object-contain p-1"/><div><h1 className="text-2xl font-black text-[#061827]">{rider?.name || rider?.username || 'دليفري'}</h1><p className="font-bold text-slate-500">{displayBranchName(branch?.name || rider?.branch_name)} · {rider?.status || 'active'}</p></div></div>
-            <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-center text-emerald-700"><p className="text-xs font-black">إجمالي الأوردرات</p><p className="text-3xl font-black">{stats.clean.length}</p></div>
+            <div className="space-y-2">
+              <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-center text-emerald-700"><p className="text-xs font-black">إجمالي الأوردرات</p><p className="text-3xl font-black">{stats.clean.length}</p></div>
+              <button onClick={() => navigate(`/penalty-incentive?staffId=${riderId}&quick=1`)} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-purple-100 px-4 py-2 text-sm font-black text-purple-700 transition hover:bg-purple-200">
+                <Gift size={16} />
+                خصم / مكافأة
+              </button>
+            </div>
           </div>
         </section>
 

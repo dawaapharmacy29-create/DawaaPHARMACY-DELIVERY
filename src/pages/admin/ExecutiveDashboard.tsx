@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertTriangle, ArrowRight, BarChart3, CheckCircle2, ClipboardCheck, FileText, RefreshCw, Search, ShieldAlert, TrendingUp, Users, Wallet, XCircle } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BarChart3, CheckCircle2, ClipboardCheck, FileText, Gift, RefreshCw, Search, ShieldAlert, TrendingUp, Users, Wallet, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { displayBranchName } from '../../lib/branchUtils'
@@ -205,6 +205,19 @@ export default function ExecutiveDashboard() {
           <StatCard label="مراجعة فنية" value={summary.review} sub="تحتاج قرار إداري" icon={<ShieldAlert/>} tone={summary.review ? 'rose' : 'slate'} onClick={() => navigate(reconciliationUrl({ review_status: 'technical_review', from: period.start, to: period.end }))}/>
           <StatCard label="صافي التسويات" value={formatMoney(summary.positives - summary.deductions)} sub={`مكافآت ${formatMoney(summary.positives)} • خصومات ${formatMoney(summary.deductions)}`} icon={<Wallet/>} tone="purple" onClick={() => navigate('/admin/cash-flow?source=delivery_adjustments')}/>
         </section>
+
+        <button onClick={() => navigate('/penalty-incentive?quick=1')} type="button" className="w-full rounded-3xl border border-purple-200 bg-gradient-to-l from-purple-50 to-purple-100/50 p-6 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-black text-purple-600">إدارة الموارد البشرية</p>
+              <h3 className="mt-2 text-2xl font-black text-[#061827]">خصم / مكافأة سريع</h3>
+              <p className="mt-2 text-sm font-bold text-slate-600">تسجيل خصم أو مكافأة لموظف أو دليفري وإرسالها للاعتماد</p>
+            </div>
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-purple-200">
+              <Gift className="text-purple-700" size={28} />
+            </div>
+          </div>
+        </button>
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <StatCard label="تم التسليم" value={summary.delivered} sub={pct(summary.deliveryRate)} icon={<CheckCircle2/>} onClick={() => navigate(reconciliationUrl({ status: 'delivered', from: period.start, to: period.end }))}/>
