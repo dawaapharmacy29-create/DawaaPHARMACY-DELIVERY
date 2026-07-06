@@ -202,8 +202,11 @@ export async function createInternalTrip(params: {
   notes?: string | null
   hasInvoiceReference?: boolean
   relatedInvoiceNumber?: string | null
+  client_request_id?: string | null
 }) {
+  const clientRequestId = params.client_request_id || (typeof crypto !== 'undefined' && (crypto as any).randomUUID ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`)
   const payload = {
+    client_request_id: clientRequestId,
     rider_id: params.rider.id,
     branch_id: params.rider.branch_id,
     trip_date: todayIso(),
@@ -222,9 +225,19 @@ export async function createInternalTrip(params: {
     trip_multiplier: 1,
     trip_earning: params.rider.trip_rate || 10
   }
-  const { data, error } = await supabase.from('internal_trips').insert(payload).select('*').single()
-  if (error) throw error
-  return data as InternalTrip
+  try {
+    const { data, error } = await supabase.from('internal_trips').insert(payload).select('*').single()
+    if (error) throw error
+    return data as InternalTrip
+  } catch (err: any) {
+    const msg = String(err?.message || '').toLowerCase()
+    const isDuplicate = msg.includes('duplicate') || msg.includes('unique constraint') || String(err?.code || '') === '23505'
+    if (isDuplicate && clientRequestId) {
+      const { data: existing } = await supabase.from('internal_trips').select('*').eq('client_request_id', clientRequestId).maybeSingle()
+      if (existing) return existing as InternalTrip
+    }
+    throw err
+  }
 }
 
 export async function getTodayOrders(riderId?: string) {

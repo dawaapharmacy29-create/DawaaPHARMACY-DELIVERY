@@ -162,6 +162,7 @@ export interface DeliveryOrder {
 
 export interface InternalTrip {
   id: string
+  client_request_id?: string | null
   rider_id: string
   branch_id: string
   trip_date: string
@@ -197,6 +198,10 @@ export interface InternalTrip {
   review_reason: string | null
   created_at: string
   updated_at: string
+  upload_status?: string | null
+  storage_path?: string | null
+  duplicate_of?: string | null
+  duplicate_reason?: string | null
 }
 
 export interface ImportBatch {

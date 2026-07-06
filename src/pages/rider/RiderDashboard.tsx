@@ -2178,8 +2178,10 @@ export default function RiderDashboard() {
         tripProofNote.trim(),
         isPendingProofUpload ? pendingProofReason : "",
       ].filter(Boolean).join(" | ") || null;
+      const clientRequestId = typeof crypto !== 'undefined' && (crypto as any).randomUUID ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
       const payload = {
         id: clientTripId,
+        client_request_id: clientRequestId,
         rider_id: rider.id,
         rider_name: rider.name,
         branch_id: rider.branch_id,
@@ -2271,7 +2273,21 @@ export default function RiderDashboard() {
         .insert(payload)
         .select("*")
         .single();
-      if (error) throw error;
+      if (error) {
+        const msg = String(error?.message || '').toLowerCase()
+        const isDuplicate = msg.includes('duplicate') || msg.includes('unique constraint') || String(error?.code || '') === '23505'
+        if (isDuplicate && clientRequestId) {
+          const { data: existing } = await supabase.from('internal_trips').select('*').eq('client_request_id', clientRequestId).maybeSingle()
+          if (existing) {
+            setTrips((prev) => [existing as InternalTrip, ...prev])
+            toast.success('تم حفظ المشوار سابقًا — استرجاع النسخة الموجودة')
+            setActiveModal(null)
+            resetTripForm()
+            return
+          }
+        }
+        throw error
+      }
       if (isPendingProofUpload && tripProofLocalId && tripProofFile) {
         await savePendingTripProof({
           id: tripProofLocalId,

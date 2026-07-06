@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
@@ -68,6 +68,7 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
   const [allowTripProofException, setAllowTripProofException] = useState(false)
   const [tripProofExceptionReason, setTripProofExceptionReason] = useState('')
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   useEffect(() => {
     if (!open) return
@@ -107,6 +108,7 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
   }
 
   async function saveTrip() {
+    if (isSubmittingRef.current) return
     const finalFrom = fromLabel.trim()
     const finalTo = toLabel === 'custom' ? customToLabel.trim() : toLabel.trim()
     if (!finalFrom || !finalTo) {
@@ -133,9 +135,13 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
     }
 
     try {
+      // prevent double submissions
+      isSubmittingRef.current = true
       setSaving(true)
       const tripRate = rider.trip_rate ?? 10
       const payload = {
+        // idempotency key to avoid duplicate inserts on retries
+        client_request_id: typeof crypto !== 'undefined' && (crypto as any).randomUUID ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         rider_id: rider.id,
         rider_name: rider.name,
         branch_id: rider.branch_id,
@@ -187,8 +193,24 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
         return
       }
 
+      const clientRequestId = (payload as any).client_request_id
       const { data, error } = await supabase.from('internal_trips').insert(payload).select('*').single()
-      if (error) throw error
+      if (error) {
+        // handle duplicate-key / idempotent insert: fetch existing by client_request_id
+        const message = String(error.message || '').toLowerCase()
+        const isDuplicate = message.includes('duplicate') || message.includes('unique constraint') || String(error.code || '') === '23505'
+        if (isDuplicate && clientRequestId) {
+          const { data: existing } = await supabase.from('internal_trips').select('*').eq('client_request_id', clientRequestId).maybeSingle()
+          if (existing) {
+            toast.success('تم حفظ المشوار سابقًا — استرجاع النسخة الموجودة')
+            await onSaved(existing as InternalTrip)
+            reset()
+            onClose()
+            return
+          }
+        }
+        throw error
+      }
       toast.success('تم تسجيل المشوار وهو بانتظار الاعتماد')
       await onSaved(data as InternalTrip)
       reset()
@@ -197,6 +219,7 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
       toast.error(`تعذر تسجيل المشوار: ${error?.message || ''}`)
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 

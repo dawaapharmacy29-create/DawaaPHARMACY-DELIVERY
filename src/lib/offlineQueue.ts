@@ -54,9 +54,22 @@ export function enqueueOfflineMutation(input: Omit<OfflineMutation, 'id' | 'crea
 
 async function runMutation(item: OfflineMutation) {
   if (item.action === 'insert') {
-    const { data, error } = await supabase.from(item.table).insert(item.payload).select('*').single()
-    if (error) throw error
-    return data
+    try {
+      const { data, error } = await supabase.from(item.table).insert(item.payload).select('*').single()
+      if (error) throw error
+      return data
+    } catch (err: any) {
+      const msg = String(err?.message || '').toLowerCase()
+      const isDuplicate = msg.includes('duplicate') || msg.includes('unique constraint') || String(err?.code || '') === '23505'
+      const clientRequestId = item.payload?.client_request_id || item.payload?.clientRequestId
+      if (isDuplicate && clientRequestId) {
+        try {
+          const { data: existing } = await supabase.from(item.table).select('*').eq('client_request_id', clientRequestId).maybeSingle()
+          if (existing) return existing
+        } catch {}
+      }
+      throw err
+    }
   }
 
   if (item.action === 'update') {
