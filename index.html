@@ -29,6 +29,49 @@
       html, body { min-height: 100%; }
       body { overscroll-behavior-y: contain; }
     </style>
+
+    <!-- Safety guard: trip proof must be camera-first, not gallery-first. -->
+    <script>
+      (function () {
+        function textOf(el) { return (el && el.textContent || '').replace(/\s+/g, ' ').trim(); }
+        function hardenTripProofUi() {
+          try {
+            var buttons = Array.from(document.querySelectorAll('button'));
+            buttons.forEach(function (btn) {
+              var text = textOf(btn);
+              if (text.includes('اختيار صورة من المعرض')) {
+                btn.setAttribute('data-dawaa-gallery-disabled', 'true');
+                btn.style.display = 'none';
+                btn.onclick = function (event) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  alert('إثبات المشوار بالكاميرا فقط لمنع التلاعب. افتح التطبيق من Chrome واسمح بالكاميرا.');
+                  return false;
+                };
+              }
+              if (text.includes('فتح الكاميرا')) {
+                btn.setAttribute('data-dawaa-camera-proof', 'true');
+              }
+            });
+            var inputs = Array.from(document.querySelectorAll('input[type="file"][accept*="image"]'));
+            inputs.forEach(function (input) {
+              var refHint = (input.outerHTML || '').toLowerCase();
+              if (!input.hasAttribute('capture')) {
+                input.setAttribute('data-dawaa-gallery-input-disabled', 'true');
+                input.setAttribute('disabled', 'disabled');
+                input.style.display = 'none';
+              } else {
+                input.setAttribute('capture', 'environment');
+                input.setAttribute('accept', 'image/*');
+              }
+            });
+          } catch (e) {}
+        }
+        document.addEventListener('DOMContentLoaded', hardenTripProofUi);
+        window.addEventListener('load', hardenTripProofUi);
+        setInterval(hardenTripProofUi, 1500);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
