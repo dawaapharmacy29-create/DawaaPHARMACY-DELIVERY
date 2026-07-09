@@ -1,5 +1,6 @@
 -- Enrich reconciliation upload history with the same dashboard counters used in /admin/reconciliation.
 -- يعتمد على period_start/period_end الموجودة في سجل الرفع ويحسب التفاصيل من delivery_orders.
+-- ملاحظة: نستخدم الأعمدة الأساسية الموجودة في delivery_orders فقط لتجنب فشل migration على اختلاف الـ schema.
 
 create or replace function public.sync_reconciliation_upload_log_to_history()
 returns trigger
@@ -31,8 +32,8 @@ begin
       count(*) filter (where coalesce(o.status, '') = 'failed')::integer,
       count(*) filter (where o.deleted_at is not null)::integer,
       count(*) filter (where coalesce(o.order_multiplier, 1) >= 1.5)::integer,
-      coalesce(sum(coalesce(o.invoice_amount, o.invoice_value, 0)), 0)::numeric(14,2),
-      coalesce(sum(coalesce(o.invoice_amount, o.invoice_value, 0)), 0)::numeric(14,2)
+      coalesce(sum(coalesce(o.invoice_amount, 0)), 0)::numeric(14,2),
+      coalesce(sum(coalesce(o.invoice_amount, 0)), 0)::numeric(14,2)
     into
       v_delivery_records_count,
       v_review_count,
@@ -56,8 +57,8 @@ begin
       where o.delivery_date >= new.period_start
         and o.delivery_date <= new.period_end
         and o.deleted_at is null
-        and nullif(regexp_replace(coalesce(o.invoice_number, o.invoice_no, ''), '[^0-9A-Za-zء-ي-]', '', 'g'), '') is not null
-      group by regexp_replace(coalesce(o.invoice_number, o.invoice_no, ''), '[^0-9A-Za-zء-ي-]', '', 'g')
+        and nullif(regexp_replace(coalesce(o.invoice_number, ''), '[^0-9A-Za-zء-ي-]', '', 'g'), '') is not null
+      group by regexp_replace(coalesce(o.invoice_number, ''), '[^0-9A-Za-zء-ي-]', '', 'g')
       having count(*) > 1
     ) d;
   end if;
