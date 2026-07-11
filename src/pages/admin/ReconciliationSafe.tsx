@@ -80,7 +80,7 @@ function createGate(maxConcurrent: number) {
     waiting.shift()?.()
   }
 
-  return async <T>(task: () => Promise<T>) => {
+  return async <T,>(task: () => Promise<T>) => {
     await acquire()
     try {
       return await task()
