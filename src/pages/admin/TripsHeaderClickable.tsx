@@ -8,18 +8,22 @@ type SummaryPreset = {
   ariaLabel: string
 }
 
-const SUMMARY_PRESETS: SummaryPreset[] = [
-  { statusLabel: 'كل الحالات', proofLabel: 'كل الإثباتات', ariaLabel: 'عرض كل المشاوير' },
-  { statusLabel: 'كل الحالات', proofLabel: 'بصورة', ariaLabel: 'عرض المشاوير التي تحتوي على صورة' },
-  { statusLabel: 'كل الحالات', proofLabel: 'بدون صورة', ariaLabel: 'عرض المشاوير التي لا تحتوي على صورة' },
-  { statusLabel: 'مستني اعتماد', proofLabel: 'كل الإثباتات', ariaLabel: 'عرض المشاوير المستنية اعتماد' },
-  { statusLabel: 'معتمد', proofLabel: 'كل الإثباتات', ariaLabel: 'عرض المشاوير المعتمدة' },
-  { statusLabel: 'مرفوض', proofLabel: 'كل الإثباتات', ariaLabel: 'عرض المشاوير المرفوضة' },
-]
+const SUMMARY_PRESETS: Record<string, SummaryPreset> = {
+  'كل المشاوير': { statusLabel: 'كل الحالات', proofLabel: 'كل الإثباتات', ariaLabel: 'عرض كل المشاوير' },
+  'بصورة': { statusLabel: 'كل الحالات', proofLabel: 'بصورة', ariaLabel: 'عرض المشاوير التي تحتوي على صورة' },
+  'بدون صورة': { statusLabel: 'كل الحالات', proofLabel: 'بدون صورة', ariaLabel: 'عرض المشاوير التي لا تحتوي على صورة' },
+  'مستني اعتماد': { statusLabel: 'مستني اعتماد', proofLabel: 'كل الإثباتات', ariaLabel: 'عرض المشاوير المستنية اعتماد' },
+  'معتمد': { statusLabel: 'معتمد', proofLabel: 'كل الإثباتات', ariaLabel: 'عرض المشاوير المعتمدة' },
+  'مرفوض': { statusLabel: 'مرفوض', proofLabel: 'كل الإثباتات', ariaLabel: 'عرض المشاوير المرفوضة' },
+}
+
+function normalizedText(element: Element | null) {
+  return (element?.textContent || '').replace(/\s+/g, ' ').trim()
+}
 
 function findButton(root: HTMLElement, label: string) {
   return Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find(button =>
-    (button.textContent || '').replace(/\s+/g, ' ').trim().startsWith(label),
+    normalizedText(button).startsWith(label),
   )
 }
 
@@ -29,8 +33,11 @@ export default function TripsHeaderClickable() {
 
   useEffect(() => {
     const root = rootRef.current
-    const header = root?.querySelector('header')
-    if (!root || !header) return
+    if (!root) return
+
+    let attachedHeader: HTMLElement | null = null
+    let attachedCards: HTMLElement[] = []
+    const cardCleanups = new Map<HTMLElement, () => void>()
 
     const goBack = (event: Event) => {
       event.preventDefault()
@@ -38,26 +45,14 @@ export default function TripsHeaderClickable() {
       navigate('/admin')
     }
 
-    header.setAttribute('role', 'button')
-    header.setAttribute('tabindex', '0')
-    header.setAttribute('aria-label', 'الرجوع إلى لوحة الإدارة')
-    header.classList.add('cursor-pointer')
-    header.addEventListener('click', goBack, true)
-    header.addEventListener('pointerup', goBack, true)
-
     const onHeaderKeyDown = (event: Event) => {
       const keyboardEvent = event as KeyboardEvent
       if (keyboardEvent.key === 'Enter' || keyboardEvent.key === ' ') goBack(event)
     }
-    header.addEventListener('keydown', onHeaderKeyDown, true)
 
-    const summarySection = root.querySelector('main > section:first-of-type')
-    const cards = summarySection ? Array.from(summarySection.children) as HTMLElement[] : []
-    const cleanups: Array<() => void> = []
-
-    const setActiveCard = (activeIndex: number) => {
-      cards.forEach((card, index) => {
-        const active = index === activeIndex
+    const setActiveCard = (activeCard: HTMLElement) => {
+      attachedCards.forEach(card => {
+        const active = card === activeCard
         card.setAttribute('aria-pressed', String(active))
         card.classList.toggle('ring-2', active)
         card.classList.toggle('ring-[#008E92]', active)
@@ -65,43 +60,117 @@ export default function TripsHeaderClickable() {
       })
     }
 
-    cards.slice(0, SUMMARY_PRESETS.length).forEach((card, index) => {
-      const preset = SUMMARY_PRESETS[index]
-      card.setAttribute('role', 'button')
-      card.setAttribute('tabindex', '0')
-      card.setAttribute('aria-label', preset.ariaLabel)
-      card.classList.add('cursor-pointer', 'transition', 'hover:-translate-y-0.5', 'hover:shadow-lg', 'focus:outline-none', 'focus:ring-4', 'focus:ring-teal-200')
+    const attachHeader = () => {
+      const header = root.querySelector<HTMLElement>('header')
+      if (!header || header === attachedHeader) return
 
-      const applyPreset = (event: Event) => {
-        event.preventDefault()
-        const statusButton = findButton(root, preset.statusLabel)
-        const proofButton = findButton(root, preset.proofLabel)
-        statusButton?.click()
-        proofButton?.click()
-        setActiveCard(index)
-        root.querySelector('main > section:nth-of-type(2)')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      if (attachedHeader) {
+        attachedHeader.removeEventListener('click', goBack, true)
+        attachedHeader.removeEventListener('pointerup', goBack, true)
+        attachedHeader.removeEventListener('keydown', onHeaderKeyDown, true)
       }
 
-      const onKeyDown = (event: Event) => {
-        const keyboardEvent = event as KeyboardEvent
-        if (keyboardEvent.key === 'Enter' || keyboardEvent.key === ' ') applyPreset(event)
-      }
+      attachedHeader = header
+      header.setAttribute('role', 'button')
+      header.setAttribute('tabindex', '0')
+      header.setAttribute('aria-label', 'الرجوع إلى لوحة الإدارة')
+      header.classList.add('cursor-pointer')
+      header.addEventListener('click', goBack, true)
+      header.addEventListener('pointerup', goBack, true)
+      header.addEventListener('keydown', onHeaderKeyDown, true)
+    }
 
-      card.addEventListener('click', applyPreset)
-      card.addEventListener('keydown', onKeyDown)
-      cleanups.push(() => {
-        card.removeEventListener('click', applyPreset)
-        card.removeEventListener('keydown', onKeyDown)
+    const attachSummaryCards = () => {
+      const summarySection = root.querySelector<HTMLElement>('main > section:first-of-type')
+      if (!summarySection) return
+
+      const cards = Array.from(summarySection.children).filter((element): element is HTMLElement => element instanceof HTMLElement)
+      attachedCards = cards
+
+      cards.forEach(card => {
+        if (cardCleanups.has(card)) return
+
+        const label = normalizedText(card.querySelector('p'))
+        const preset = SUMMARY_PRESETS[label]
+        if (!preset) return
+
+        card.setAttribute('role', 'button')
+        card.setAttribute('tabindex', '0')
+        card.setAttribute('aria-label', preset.ariaLabel)
+        card.setAttribute('aria-pressed', 'false')
+        card.classList.add(
+          'cursor-pointer',
+          'transition',
+          'hover:-translate-y-0.5',
+          'hover:shadow-lg',
+          'focus:outline-none',
+          'focus:ring-4',
+          'focus:ring-teal-200',
+        )
+
+        const applyPreset = (event: Event) => {
+          event.preventDefault()
+          event.stopPropagation()
+
+          findButton(root, preset.statusLabel)?.click()
+          findButton(root, preset.proofLabel)?.click()
+          setActiveCard(card)
+
+          window.setTimeout(() => {
+            root.querySelector('main > section:nth-of-type(2)')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }, 0)
+        }
+
+        const onKeyDown = (event: Event) => {
+          const keyboardEvent = event as KeyboardEvent
+          if (keyboardEvent.key === 'Enter' || keyboardEvent.key === ' ') applyPreset(event)
+        }
+
+        card.addEventListener('click', applyPreset)
+        card.addEventListener('keydown', onKeyDown)
+        cardCleanups.set(card, () => {
+          card.removeEventListener('click', applyPreset)
+          card.removeEventListener('keydown', onKeyDown)
+        })
       })
-    })
 
-    setActiveCard(0)
+      const allCard = cards.find(card => normalizedText(card.querySelector('p')) === 'كل المشاوير')
+      if (allCard && !cards.some(card => card.getAttribute('aria-pressed') === 'true')) setActiveCard(allCard)
+    }
+
+    const initializeInteractiveElements = () => {
+      attachHeader()
+      attachSummaryCards()
+    }
+
+    const closeOpenDetailsWithEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+
+      const overlays = Array.from(root.querySelectorAll<HTMLElement>('.fixed.inset-0'))
+      const detailsOverlay = overlays.reverse().find(overlay => normalizedText(overlay).includes('تفاصيل المشوار'))
+      if (!detailsOverlay) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      const closeButton = detailsOverlay.querySelector<HTMLButtonElement>('button')
+      closeButton?.click()
+    }
+
+    initializeInteractiveElements()
+    const observer = new MutationObserver(initializeInteractiveElements)
+    observer.observe(root, { childList: true, subtree: true })
+    window.addEventListener('keydown', closeOpenDetailsWithEscape, true)
 
     return () => {
-      header.removeEventListener('click', goBack, true)
-      header.removeEventListener('pointerup', goBack, true)
-      header.removeEventListener('keydown', onHeaderKeyDown, true)
-      cleanups.forEach(cleanup => cleanup())
+      observer.disconnect()
+      window.removeEventListener('keydown', closeOpenDetailsWithEscape, true)
+      if (attachedHeader) {
+        attachedHeader.removeEventListener('click', goBack, true)
+        attachedHeader.removeEventListener('pointerup', goBack, true)
+        attachedHeader.removeEventListener('keydown', onHeaderKeyDown, true)
+      }
+      cardCleanups.forEach(cleanup => cleanup())
+      cardCleanups.clear()
     }
   }, [navigate])
 
