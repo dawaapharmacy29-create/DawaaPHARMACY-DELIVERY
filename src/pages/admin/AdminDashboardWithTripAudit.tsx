@@ -4,7 +4,7 @@ import CycleArchiveOverview from '../../components/CycleArchiveOverview'
 import DashboardGrowthPanelReliable from '../../components/DashboardGrowthPanelReliable'
 import RiderAppVersionStatus from '../../components/RiderAppVersionStatus'
 import RiderOperationsHealth from '../../components/RiderOperationsHealth'
-import LiveRiderLeaderboard from '../../components/LiveRiderLeaderboard'
+import LiveRiderLeaderboardPanel from '../../components/LiveRiderLeaderboardPanel'
 
 export default function AdminDashboardWithTripAudit() {
   return (
@@ -13,7 +13,7 @@ export default function AdminDashboardWithTripAudit() {
 
       <section className="grid gap-5 xl:grid-cols-2">
         <RiderAppVersionStatus />
-        <LiveRiderLeaderboard />
+        <LiveRiderLeaderboardPanel />
       </section>
 
       <RiderOperationsHealth />
