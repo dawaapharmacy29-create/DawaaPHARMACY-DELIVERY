@@ -19,7 +19,7 @@ const Riders = lazy(() => import('./pages/admin/Riders'))
 const Performance = lazy(() => import('./pages/admin/PerformanceUnified'))
 const HourlyDeliveryAnalytics = lazy(() => import('./pages/admin/HourlyDeliveryAnalytics'))
 const DuplicateInvoices = lazy(() => import('./pages/admin/DuplicateInvoices'))
-const Reconciliation = lazy(() => import('./pages/admin/Reconciliation'))
+const Reconciliation = lazy(() => import('./pages/admin/ReconciliationSafe'))
 const Trips = lazy(() => import('./pages/admin/TripsImproved'))
 const TripsWithoutInvoice = lazy(() => import('./pages/admin/TripsWithoutInvoice'))
 const RiderAccounts = lazy(() => import('./pages/admin/RiderAccounts'))
@@ -64,4 +64,5 @@ function App() {
     <Route path="*" element={<Navigate to="/login" replace />} />
   </Routes></Suspense></BrowserRouter></ErrorBoundary>
 }
+
 export default App
