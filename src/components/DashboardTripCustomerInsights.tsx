@@ -23,8 +23,6 @@ type OrderRow = {
   customer_id?: string | null
   customer_code_snapshot?: string | null
   customer_name_snapshot?: string | null
-  customer_code?: string | null
-  customer_name?: string | null
   delivery_date?: string | null
   work_date?: string | null
   registered_at?: string | null
@@ -80,7 +78,7 @@ export default function DashboardTripCustomerInsights() {
           }),
           fetchAllRows<OrderRow>({
             table: 'delivery_orders',
-            select: 'id,invoice_number,invoice_amount,customer_id,customer_code_snapshot,customer_name_snapshot,customer_code,customer_name,delivery_date,work_date,registered_at',
+            select: 'id,invoice_number,invoice_amount,customer_id,customer_code_snapshot,customer_name_snapshot,delivery_date,work_date,registered_at',
             filters: [
               { column: 'delivery_date', operator: 'gte', value: period.start },
               { column: 'delivery_date', operator: 'lte', value: period.end },
@@ -124,8 +122,8 @@ export default function DashboardTripCustomerInsights() {
     const map = new Map<string, CustomerAggregate>()
 
     for (const order of orders) {
-      const code = String(order.customer_code_snapshot || order.customer_code || '').trim()
-      const name = String(order.customer_name_snapshot || order.customer_name || 'عميل غير محدد').trim()
+      const code = String(order.customer_code_snapshot || '').trim()
+      const name = String(order.customer_name_snapshot || 'عميل غير محدد').trim()
       const key = String(order.customer_id || code || name || order.id)
       const current = map.get(key) || {
         key,
