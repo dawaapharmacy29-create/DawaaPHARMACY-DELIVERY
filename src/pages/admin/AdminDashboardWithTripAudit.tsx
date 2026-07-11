@@ -1,4 +1,4 @@
-import AdminDashboardReliable from './AdminDashboardReliable'
+import AdminDashboardClassicReliable from './AdminDashboardClassicReliable'
 import DashboardTripCustomerInsights from '../../components/DashboardTripCustomerInsights'
 import CycleArchiveOverview from '../../components/CycleArchiveOverview'
 import DashboardGrowthPanelReliable from '../../components/DashboardGrowthPanelReliable'
@@ -8,10 +8,10 @@ import LiveRiderLeaderboardPanel from '../../components/LiveRiderLeaderboardPane
 
 export default function AdminDashboardWithTripAudit() {
   return (
-    <div className="space-y-5" dir="rtl">
-      <AdminDashboardReliable />
+    <div className="space-y-6" dir="rtl">
+      <AdminDashboardClassicReliable />
 
-      <section className="grid gap-5 xl:grid-cols-2">
+      <section className="grid gap-6 xl:grid-cols-[.85fr_1.15fr]">
         <RiderAppVersionStatus />
         <LiveRiderLeaderboardPanel />
       </section>
