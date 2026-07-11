@@ -4,11 +4,11 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "node scripts/patch-reconciliation-pagination.mjs && vite",
+    "build": "node scripts/patch-reconciliation-pagination.mjs && vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node scripts/patch-reconciliation-pagination.mjs && tsc --noEmit"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
