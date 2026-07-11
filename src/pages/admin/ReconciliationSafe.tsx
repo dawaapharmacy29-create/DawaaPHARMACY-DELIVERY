@@ -23,10 +23,8 @@ function findBatchId(value: unknown): string | null {
     if (typeof direct === 'string' && UUID_RE.test(direct)) return direct
   }
 
-  for (const nested of Object.values(row)) {
-    const found = findBatchId(nested)
-    if (found) return found
-  }
+  // لا نبحث داخل كل قيم الكائن عشوائياً؛ قد يحتوي رد الـ RPC على UUID آخر
+  // مثل uploaded_by أو auth_user_id، واستخدامه كـ batch_id يسبب خطأ foreign key.
   return null
 }
 
@@ -146,9 +144,9 @@ if (!client.__reconciliationNetworkPatched) {
       data: null,
       error: {
         code: 'INVALID_BATCH_ID',
-        message: 'تعذر تحديد رقم دفعة المطابقة بعد حفظ الملف',
-        details: 'الدالة save_monthly_invoice_import_batch لم تُرجع UUID صالحًا للدفعة.',
-        hint: 'راجع نوع القيمة المرجعة من الدالة في Supabase.',
+        message: 'تعذر تحديد رقم دفعة المطابقة الصحيح بعد حفظ الملف',
+        details: 'تم رفض أي UUID غير موجود صراحة في batch_id أو id حتى لا يتم ربط الفواتير بدفعة خاطئة.',
+        hint: 'راجع القيمة المرجعة من الدالة save_monthly_invoice_import_batch في Supabase.',
       },
     }
   }
