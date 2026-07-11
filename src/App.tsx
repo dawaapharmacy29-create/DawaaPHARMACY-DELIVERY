@@ -28,7 +28,7 @@ const RiderMonthlyReports = lazy(() => import('./pages/admin/RiderMonthlyReports
 const RiderImpersonationPreview = lazy(() => import('./pages/admin/RiderImpersonationPreview'))
 const BranchManagerDashboard = lazy(() => import('./pages/admin/BranchManagerDashboard'))
 const CustomerImport = lazy(() => import('./pages/admin/CustomerImport'))
-const CustomerAnalytics = lazy(() => import('./pages/admin/CustomerAnalytics'))
+const CustomerAnalytics = lazy(() => import('./pages/admin/CustomerAnalyticsUnified'))
 const RiderPerformanceDetail = lazy(() => import('./pages/admin/RiderPerformanceDetail'))
 const OperationsBoard = lazy(() => import('./pages/admin/OperationsBoard'))
 const CashFlowDashboard = lazy(() => import('./pages/admin/CashFlowDashboard'))
