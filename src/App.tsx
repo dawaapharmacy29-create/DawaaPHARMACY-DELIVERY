@@ -30,7 +30,7 @@ const BranchManagerDashboard = lazy(() => import('./pages/admin/BranchManagerDas
 const CustomerImport = lazy(() => import('./pages/admin/CustomerImport'))
 const CustomerAnalytics = lazy(() => import('./pages/admin/CustomerAnalytics'))
 const RiderPerformanceDetail = lazy(() => import('./pages/admin/RiderPerformanceDetail'))
-const OperationsBoard = lazy(() => import('./pages/admin/OperationsBoard'))
+const OperationsBoard = lazy(() => import('./pages/admin/OperationsBoardReliable'))
 const CashFlowDashboard = lazy(() => import('./pages/admin/CashFlowDashboard'))
 const FraudAlerts = lazy(() => import('./pages/admin/FraudAlerts'))
 const InvoiceNotebook = lazy(() => import('./pages/admin/InvoiceNotebook'))
