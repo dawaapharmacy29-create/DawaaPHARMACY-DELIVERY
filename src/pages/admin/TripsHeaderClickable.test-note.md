@@ -1,1 +1,0 @@
-The trips page is routed through TripsHeaderClickable so the full top header reliably navigates back to /admin on click, pointer interaction, Enter, or Space.
