@@ -1,9 +1,19 @@
+import { useEffect, useRef } from 'react'
 import Reconciliation from './Reconciliation'
 import { supabase } from '../../lib/supabase'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const BULK_INSERT_TABLES = new Set(['monthly_system_invoices', 'monthly_invoice_reconciliation_results'])
 const RETRYABLE_MESSAGE = /(timeout|network|fetch|connection|انتهى|شبكة)/i
+const INLINE_ACTION_LABELS = [
+  'اعتماد يدوي',
+  'استبعاد',
+  'حذف مع حفظ البيان',
+  'استعادة',
+  'تحويل لمندوب',
+  'حفظ التعديل',
+  'تعديل البيانات',
+]
 
 function findBatchId(value: unknown): string | null {
   if (typeof value === 'string') return UUID_RE.test(value) ? value : null
@@ -175,4 +185,92 @@ if (!client.__reconciliationNetworkPatched) {
   client.__reconciliationNetworkPatched = true
 }
 
-export default Reconciliation
+function isInlineAction(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+  const button = target.closest('button')
+  if (!button) return false
+  const label = (button.textContent || '').replace(/\s+/g, ' ').trim()
+  return INLINE_ACTION_LABELS.some(action => label.includes(action))
+}
+
+export default function ReconciliationSafe() {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const cleanupRef = useRef<(() => void) | null>(null)
+
+  useEffect(() => () => cleanupRef.current?.(), [])
+
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+
+    const keepViewStable = (event: Event) => {
+      if (!isInlineAction(event.target)) return
+      if (root.dataset.actionBusy === 'true') return
+
+      cleanupRef.current?.()
+      root.dataset.actionBusy = 'true'
+
+      const scrollY = window.scrollY
+      const minHeight = Math.max(root.scrollHeight, root.getBoundingClientRect().height)
+      const snapshot = root.cloneNode(true) as HTMLDivElement
+      snapshot.removeAttribute('data-action-busy')
+      snapshot.setAttribute('aria-hidden', 'true')
+      snapshot.style.position = 'absolute'
+      snapshot.style.inset = '0'
+      snapshot.style.zIndex = '20'
+      snapshot.style.background = '#eef7f7'
+      snapshot.style.pointerEvents = 'auto'
+      snapshot.style.overflow = 'hidden'
+
+      const badge = document.createElement('div')
+      badge.textContent = 'جارٍ حفظ التعديل…'
+      badge.style.position = 'fixed'
+      badge.style.left = '24px'
+      badge.style.bottom = '24px'
+      badge.style.zIndex = '9999'
+      badge.style.background = '#078f91'
+      badge.style.color = '#fff'
+      badge.style.padding = '10px 16px'
+      badge.style.borderRadius = '999px'
+      badge.style.fontWeight = '700'
+      badge.style.boxShadow = '0 8px 24px rgba(0,0,0,.18)'
+
+      const previousPosition = root.style.position
+      const previousMinHeight = root.style.minHeight
+      root.style.position = 'relative'
+      root.style.minHeight = `${minHeight}px`
+      root.appendChild(snapshot)
+      document.body.appendChild(badge)
+
+      let frames = 0
+      const restoreScroll = () => {
+        window.scrollTo({ top: scrollY, behavior: 'auto' })
+        frames += 1
+        if (frames < 120) requestAnimationFrame(restoreScroll)
+      }
+      requestAnimationFrame(restoreScroll)
+
+      const cleanup = () => {
+        snapshot.remove()
+        badge.remove()
+        root.style.position = previousPosition
+        root.style.minHeight = previousMinHeight
+        delete root.dataset.actionBusy
+        window.scrollTo({ top: scrollY, behavior: 'auto' })
+        cleanupRef.current = null
+      }
+
+      cleanupRef.current = cleanup
+      window.setTimeout(cleanup, 3200)
+    }
+
+    root.addEventListener('click', keepViewStable, true)
+    return () => root.removeEventListener('click', keepViewStable, true)
+  }, [])
+
+  return (
+    <div ref={rootRef}>
+      <Reconciliation />
+    </div>
+  )
+}
