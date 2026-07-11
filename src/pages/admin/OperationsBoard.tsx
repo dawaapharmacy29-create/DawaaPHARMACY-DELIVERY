@@ -1,85 +1,112 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { AlertTriangle, Columns as Columns3, Search } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { AlertTriangle, Columns as Columns3, RefreshCcw, Search, ShieldAlert } from 'lucide-react'
 import AdminModuleShell from '../../components/AdminModuleShell'
-import SmartAlertsCenter from '../../components/SmartAlertsCenter'
-import LiveRiderLeaderboard from '../../components/LiveRiderLeaderboard'
-import { supabase } from '../../lib/supabase'
-import { formatDateTime, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
-import { useAdminRealtimeSync } from '../../lib/useRealtimeSync'
-import type { DeliveryOrder, InternalTrip, Rider } from '../../lib/types'
-import { isDelivered, isFailed, isOverdue, minutesOpen, orderAmount } from '../../lib/deliveryAnalytics'
+import { loadCanonicalDeliveryData } from '../../lib/canonicalDeliveryData'
+import { getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
+import { isDelivered, isDuplicate, isFailed, minutesOpen } from '../../lib/deliveryAnalytics'
 
-type OpsFilter = 'all' | 'overdue' | 'danger' | 'duplicate' | 'open' | 'failed' | 'delivered' | 'inactive_today'
-const valid = ['overdue', 'danger', 'duplicate', 'open', 'failed', 'delivered', 'inactive_today']
-const norm = (v: string | null): OpsFilter => valid.includes(String(v)) ? v as OpsFilter : 'all'
-const closed = (o: DeliveryOrder) => isDelivered(o) || isFailed(o) || String(o.status || '') === 'cancelled'
-const day = (o: DeliveryOrder) => String((o as any).work_date || o.delivery_date || o.registered_at || o.created_at || '').slice(0, 10)
-const inv = (o: DeliveryOrder) => String(o.invoice_number || (o as any).invoice_no || '—')
-const code = (o: DeliveryOrder) => String((o as any).customer_code_snapshot || (o as any).customer_code || '—')
-const cols = ['registered', 'ready', 'dispatched', 'delivered', 'failed'] as const
-const labels: Record<string, string> = { registered: 'مسجل', ready: 'جاهز', dispatched: 'في الطريق', delivered: 'تم التسليم', failed: 'فشل' }
-function col(o: DeliveryOrder, key: string) {
-  const s = String(o.status || '')
-  const d = String((o as any).dispatch_status || '')
-  if (key === 'delivered') return isDelivered(o)
-  if (key === 'failed') return isFailed(o)
-  if (key === 'ready') return d === 'ready'
-  if (key === 'dispatched') return ['dispatched', 'picked_up', 'on_the_way'].includes(d)
-  return !['ready', 'dispatched', 'picked_up', 'on_the_way', 'delivered', 'failed'].includes(d) && !['delivered', 'failed'].includes(s)
+const dateOf = (order: any) => String(order.work_date || order.delivery_date || order.registered_at || order.created_at || '').slice(0, 10)
+const invoiceOf = (order: any) => String(order.invoice_number || order.invoice_no || '—')
+const closed = (order: any) => isDelivered(order) || isFailed(order) || String(order.status || '') === 'cancelled'
+const ageHours = (order: any) => {
+  const raw = order.registered_at || order.created_at || order.delivery_date
+  const timestamp = raw ? new Date(raw).getTime() : Number.NaN
+  return Number.isFinite(timestamp) ? Math.max(0, (Date.now() - timestamp) / 3600000) : 0
 }
+const liveOpen = (order: any) => !closed(order) && ageHours(order) <= 24
+const staleOpen = (order: any) => !closed(order) && ageHours(order) > 24
 
 export default function OperationsBoard() {
-  const period = useMemo(() => getOperationalPeriod(), [])
   const navigate = useNavigate()
-  const [params, setParams] = useSearchParams()
-  const [orders, setOrders] = useState<DeliveryOrder[]>([])
-  const [riders, setRiders] = useState<Rider[]>([])
-  const [trips, setTrips] = useState<InternalTrip[]>([])
+  const period = useMemo(() => getOperationalPeriod(), [])
+  const [orders, setOrders] = useState<any[]>([])
+  const [riders, setRiders] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<OpsFilter>(norm(params.get('filter')))
-  const [search, setSearch] = useState(params.get('q') || '')
+  const [error, setError] = useState('')
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<'all' | 'live' | 'overdue' | 'stale' | 'duplicate' | 'failed' | 'delivered'>('all')
+  const [selected, setSelected] = useState<any | null>(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
+    setError('')
     try {
-      const [o, r, t] = await Promise.allSettled([
-        supabase.from('delivery_orders').select('*').gte('work_date', period.start).lte('work_date', period.end).order('registered_at', { ascending: false }),
-        supabase.from('riders').select('*').eq('status', 'active'),
-        supabase.from('internal_trips').select('*').gte('work_date', period.start).lte('work_date', period.end),
-      ])
-      if (o.status === 'fulfilled') setOrders((o.value.data || []) as DeliveryOrder[])
-      if (r.status === 'fulfilled') setRiders((r.value.data || []) as Rider[])
-      if (t.status === 'fulfilled') setTrips((t.value.data || []) as InternalTrip[])
-    } finally { setLoading(false) }
-  }, [period])
+      const data = await loadCanonicalDeliveryData(period.start, period.end)
+      setOrders(data.orders)
+      setRiders(data.riders.filter(rider => String(rider.status || '') === 'active'))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'تعذر تحميل غرفة العمليات')
+    } finally {
+      setLoading(false)
+    }
+  }, [period.end, period.start])
+
   useEffect(() => { void load() }, [load])
-  useAdminRealtimeSync({ onOrderChange: load, onTripChange: load })
-  useEffect(() => { const n = new URLSearchParams(); if (filter !== 'all') n.set('filter', filter); if (search.trim()) n.set('q', search.trim()); setParams(n, { replace: true }) }, [filter, search, setParams])
+  useEffect(() => {
+    const timer = window.setInterval(() => void load(true), 60000)
+    return () => window.clearInterval(timer)
+  }, [load])
 
-  const riderMap = useMemo(() => new Map(riders.map(r => [r.id, r])), [riders])
   const today = new Date().toISOString().slice(0, 10)
-  const inactive = riders.filter(r => !orders.some(o => o.rider_id === r.id && day(o) === today))
-  const filtered = orders.filter(o => {
-    const r = riderMap.get(o.rider_id)
-    const searchOk = !search.trim() || [inv(o), code(o), o.customer_name_snapshot, (o as any).customer_name, o.customer_phone_snapshot, r?.name, r?.username].some(v => wildcardMatchText(String(v || ''), search))
-    const filterOk = filter === 'all' || (filter === 'overdue' && isOverdue(o, 60)) || (filter === 'danger' && isOverdue(o, 120)) || (filter === 'duplicate' && ((o as any).is_duplicate_invoice || (o as any).duplicate_review_status === 'pending')) || (filter === 'open' && !closed(o)) || (filter === 'failed' && isFailed(o)) || (filter === 'delivered' && isDelivered(o)) || filter === 'inactive_today'
-    return searchOk && filterOk
-  })
-  const overdue = orders.filter(o => isOverdue(o, 60)).length
-  const danger = orders.filter(o => isOverdue(o, 120)).length
-  const quick: Array<[OpsFilter, string, number]> = [['all','الكل',orders.length],['open','مفتوحة',orders.filter(o=>!closed(o)).length],['overdue','أكثر من ساعة',overdue],['danger','أكثر من ساعتين',danger],['duplicate','مكررة',orders.filter(o=>(o as any).is_duplicate_invoice||(o as any).duplicate_review_status==='pending').length],['failed','فشل',orders.filter(isFailed).length],['delivered','تم',orders.filter(isDelivered).length],['inactive_today','دليفري بدون أوردر',inactive.length]]
-  const alerts = orders.filter(o => isOverdue(o, 60)).sort((a, b) => minutesOpen(b) - minutesOpen(a)).slice(0, 10)
+  const riderMap = useMemo(() => new Map(riders.map(rider => [rider.id, rider])), [riders])
+  const live = orders.filter(liveOpen)
+  const overdue = live.filter(order => minutesOpen(order) >= 60)
+  const danger = live.filter(order => minutesOpen(order) >= 120)
+  const stale = orders.filter(staleOpen)
+  const todayOrders = orders.filter(order => dateOf(order) === today)
+  const inactive = riders.filter(rider => !todayOrders.some(order => order.rider_id === rider.id))
 
-  return <AdminModuleShell title="مركز العمليات الحي" subtitle="تشغيل لحظي وتنبيهات تأخير أكثر من ساعة" icon={<Columns3/>} loading={loading} onRefresh={load}>
-    <section className="mb-4 grid gap-3 md:grid-cols-5"><K label="أوردرات الدورة" value={orders.length}/><K label="مفتوحة" value={orders.filter(o=>!closed(o)).length}/><K label="متأخرة +60د" value={overdue} danger={overdue>0}/><K label="خطر +120د" value={danger} danger={danger>0}/><K label="بدون أوردر اليوم" value={inactive.length}/></section>
-    {alerts.length > 0 && <section className="mb-4 rounded-3xl border border-rose-200 bg-rose-50 p-4"><div className="mb-3 flex items-center gap-2 font-black text-rose-800"><AlertTriangle size={18}/> تنبيهات عاجلة للدليفري</div><div className="grid gap-2 md:grid-cols-2">{alerts.map(o => { const r = riderMap.get(o.rider_id); return <button key={o.id} onClick={() => navigate(`/admin/reconciliation?invoice_number=${encodeURIComponent(inv(o))}`)} className="rounded-2xl border border-rose-100 bg-white p-3 text-right text-sm font-bold text-rose-800 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg">فاتورة {inv(o)} — {r?.name || 'غير محدد'} — متأخرة {minutesOpen(o)} دقيقة</button> })}</div></section>}
-    <div className="mb-4"><SmartAlertsCenter orders={orders} riders={riders}/></div>
-    <div className="mb-4 flex flex-wrap gap-2">{quick.map(([k,l,c])=><button key={k} onClick={()=>setFilter(k)} className={`rounded-xl px-3 py-2 text-xs font-black transition hover:-translate-y-0.5 hover:shadow-lg ${filter===k?'bg-[#0b2d33] text-white':'bg-white text-slate-600'}`}>{l} {c}</button>)}</div>
-    {filter === 'inactive_today' ? <div className="grid gap-3 md:grid-cols-3">{inactive.map(r=><div key={r.id} className="rounded-2xl bg-white p-4 shadow-sm"><b>{r.name}</b><p className="text-xs text-slate-400">{r.username}</p></div>)}</div> : <>
-      <div className="relative mb-4"><Search className="absolute right-4 top-3 text-slate-400" size={18}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="بحث برقم الفاتورة، اسم العميل، كود العميل أو الدليفري" className="w-full rounded-2xl border bg-white py-3 pr-11 font-bold outline-none"/></div>
-      <div className="grid gap-4 xl:grid-cols-5">{cols.map(c=>{ const rows=filtered.filter(o=>col(o,c)); return <section key={c} className="min-h-[380px] rounded-3xl border bg-slate-50 p-3"><div className="mb-3 flex justify-between"><b>{labels[c]}</b><span>{rows.length}</span></div><div className="max-h-[62vh] space-y-3 overflow-y-auto pr-1">{rows.map(o=>{ const r=riderMap.get(o.rider_id); const age=minutesOpen(o); return <article key={o.id} onClick={() => navigate(`/admin/reconciliation?invoice_number=${encodeURIComponent(inv(o))}`)} className={`cursor-pointer rounded-2xl border bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg ${age>120&&!closed(o)?'border-rose-400 bg-rose-50':age>60&&!closed(o)?'border-amber-300':''}`}><div className="mb-2 flex justify-between"><b className="truncate">{o.customer_name_snapshot || (o as any).customer_name || 'عميل غير محدد'}</b><span className="text-xs text-teal-700">{orderAmount(o).toLocaleString('ar-EG')} ج</span></div><p className="text-[11px] font-bold text-slate-400">فاتورة #{inv(o)} · كود {code(o)}</p><p className="mt-2 border-t pt-2 text-[11px] font-bold text-slate-500">{r?.name || 'غير محدد'} · {age} دقيقة</p>{age>60&&!closed(o)&&<p className="mt-2 rounded-xl bg-rose-100 px-2 py-1 text-[11px] font-black text-rose-700">متأخر أكثر من {age>120?'ساعتين':'ساعة'}</p>}<p className="text-[11px] font-bold text-slate-500">وقت التسجيل: {formatDateTime(o.registered_at || o.created_at)}</p></article>})}{!rows.length&&<p className="py-10 text-center text-xs text-slate-400">لا توجد أوردرات</p>}</div></section>})}</div></>}
-    <div className="mt-4"><LiveRiderLeaderboard orders={orders} trips={trips} riders={riders}/></div>
+  const visible = orders.filter(order => {
+    const rider = riderMap.get(order.rider_id)
+    const matchesSearch = !search.trim() || [invoiceOf(order), order.customer_name_snapshot, order.customer_name, order.customer_code_snapshot, rider?.name].some(value => wildcardMatchText(String(value || ''), search))
+    const matchesFilter = filter === 'all'
+      || (filter === 'live' && liveOpen(order))
+      || (filter === 'overdue' && liveOpen(order) && minutesOpen(order) >= 60)
+      || (filter === 'stale' && staleOpen(order))
+      || (filter === 'duplicate' && isDuplicate(order))
+      || (filter === 'failed' && isFailed(order))
+      || (filter === 'delivered' && isDelivered(order))
+    return matchesSearch && matchesFilter
+  })
+
+  const openInReconciliation = (order: any) => navigate(`/admin/reconciliation?invoice_number=${encodeURIComponent(invoiceOf(order))}`)
+
+  return <AdminModuleShell title="مركز العمليات الحي" subtitle={`الدورة الكاملة ${period.start} إلى ${period.end} · تحديث تلقائي كل دقيقة`} icon={<Columns3 />} loading={loading && orders.length === 0} onRefresh={() => load()}>
+    {error && <div className="mb-4 flex items-center justify-between rounded-2xl border border-rose-200 bg-rose-50 p-4 font-black text-rose-700"><span>{error}</span><button type="button" onClick={() => load()}><RefreshCcw size={18}/></button></div>}
+
+    <section className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+      <Metric label="أوردرات الدورة" value={orders.length} note="كامل البيانات بدون حد 1000" />
+      <Metric label="أوردرات اليوم" value={todayOrders.length} note={`${todayOrders.filter(isDelivered).length} تم · ${todayOrders.filter(isFailed).length} فشل`} />
+      <Metric label="مفتوحة حية" value={live.length} note="آخر 24 ساعة" />
+      <Metric label="متأخرة +60د" value={overdue.length} danger={overdue.length > 0} note="تحتاج متابعة" />
+      <Metric label="خطر +120د" value={danger.length} danger={danger.length > 0} note="تدخل فوري" />
+      <Metric label="قديمة مفتوحة" value={stale.length} note="منفصلة عن التشغيل الحي" />
+    </section>
+
+    <section className="mb-4 grid gap-3 lg:grid-cols-[1fr_auto]">
+      <div className="relative"><Search className="absolute right-4 top-3.5 text-slate-400" size={18}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="بحث بالفاتورة أو العميل أو الكود أو المندوب" className="w-full rounded-2xl border bg-white py-3 pr-11 font-bold outline-none"/></div>
+      <div className="flex flex-wrap gap-2">{([
+        ['all','الكل',orders.length],['live','مفتوحة',live.length],['overdue','متأخرة',overdue.length],['stale','قديمة',stale.length],['duplicate','مكررة',orders.filter(isDuplicate).length],['failed','فشل',orders.filter(isFailed).length],['delivered','تم',orders.filter(isDelivered).length],
+      ] as Array<[typeof filter,string,number]>).map(([key,label,count]) => <button type="button" key={key} onClick={() => setFilter(key)} className={`rounded-xl px-3 py-2 text-xs font-black ${filter === key ? 'bg-[#0b2d33] text-white' : 'bg-white text-slate-600'}`}>{label} {count}</button>)}</div>
+    </section>
+
+    {danger.length > 0 && <section className="mb-4 rounded-3xl border border-rose-200 bg-rose-50 p-4"><div className="mb-3 flex items-center gap-2 font-black text-rose-800"><AlertTriangle size={18}/> أخطر الحالات الآن</div><div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{danger.slice(0, 12).map(order => <button type="button" key={order.id} onClick={() => setSelected(order)} className="rounded-2xl bg-white p-3 text-right shadow-sm"><b>فاتورة {invoiceOf(order)}</b><p className="mt-1 text-xs font-bold text-rose-700">{riderMap.get(order.rider_id)?.name || 'غير محدد'} · {Math.round(minutesOpen(order))} دقيقة</p></button>)}</div></section>}
+
+    <section className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{visible.slice(0, 180).map(order => <button type="button" key={order.id} onClick={() => setSelected(order)} className={`rounded-2xl border p-4 text-right shadow-sm ${staleOpen(order) ? 'border-amber-300 bg-amber-50' : liveOpen(order) && minutesOpen(order) >= 120 ? 'border-rose-300 bg-rose-50' : 'bg-white'}`}><div className="flex items-center justify-between gap-2"><b>فاتورة {invoiceOf(order)}</b><span className="text-xs font-black text-teal-700">{order.status || 'غير محدد'}</span></div><p className="mt-2 text-sm font-bold text-slate-600">{order.customer_name_snapshot || order.customer_name || 'عميل غير محدد'}</p><p className="mt-1 text-xs font-bold text-slate-400">{riderMap.get(order.rider_id)?.name || 'مندوب غير محدد'} · {Math.round(minutesOpen(order))} دقيقة</p></button>)}</section>
+
+    {visible.length > 180 && <p className="mb-4 rounded-2xl bg-amber-50 p-3 text-center text-sm font-bold text-amber-700">يظهر أول 180 أوردر لحماية سرعة الصفحة. استخدم البحث للوصول لأي فاتورة أخرى.</p>}
+
+    <section className="rounded-3xl border bg-white p-4"><div className="mb-3 flex items-center gap-2"><ShieldAlert size={18}/><h3 className="font-black">مراجعة جودة البيانات</h3></div><p className="text-sm font-bold text-slate-600">يوجد {stale.length} أوردر قديم مفتوح و{inactive.length} مندوب بدون أوردر اليوم. تم فصل الأوردرات القديمة عن التنبيهات الحية حتى لا تظهر تأخيرات غير منطقية مثل 15,000 دقيقة.</p></section>
+
+    {selected && <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4" onClick={() => setSelected(null)}><div className="w-full max-w-lg rounded-3xl bg-white p-5" onClick={event => event.stopPropagation()}><h3 className="text-xl font-black">فاتورة {invoiceOf(selected)}</h3><p className="mt-2 font-bold text-slate-600">{selected.customer_name_snapshot || selected.customer_name || 'عميل غير محدد'}</p><div className="mt-4 grid gap-2 sm:grid-cols-2"><Info label="المندوب" value={riderMap.get(selected.rider_id)?.name || 'غير محدد'} /><Info label="الحالة" value={String(selected.status || 'غير محدد')} /><Info label="منذ" value={`${Math.round(minutesOpen(selected))} دقيقة`} /><Info label="التاريخ" value={dateOf(selected) || 'غير محدد'} /></div><button type="button" onClick={() => openInReconciliation(selected)} className="mt-4 w-full rounded-2xl bg-[#008E92] px-4 py-3 font-black text-white">فتح التفاصيل في المطابقة</button></div></div>}
   </AdminModuleShell>
 }
-function K({label,value,danger}:{label:string;value:number;danger?:boolean}){return <button type="button" className={`rounded-2xl p-4 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg ${danger?'bg-rose-50 text-rose-800':'bg-white'}`}><p className="text-xs font-black text-slate-500">{label}</p><p className="mt-2 text-3xl font-black">{value}</p><p className="mt-1 text-[11px] font-bold text-slate-400">اضغط للتفاصيل</p></button>}
+
+function Metric({ label, value, note, danger = false }: { label: string; value: number; note: string; danger?: boolean }) {
+  return <div className={`rounded-2xl p-4 shadow-sm ${danger ? 'border border-rose-200 bg-rose-50 text-rose-900' : 'bg-white'}`}><p className="text-xs font-black text-slate-500">{label}</p><p className="mt-2 text-3xl font-black">{value}</p><p className="mt-1 text-[11px] font-bold text-slate-400">{note}</p></div>
+}
+
+function Info({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-2xl bg-slate-50 p-3"><p className="text-xs font-bold text-slate-400">{label}</p><p className="mt-1 font-black">{value}</p></div>
+}
