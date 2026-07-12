@@ -1,0 +1,217 @@
+-- 0076_rider_order_gps_and_duplicate_safety.sql
+-- Make rider order registration tolerant to missing mobile GPS while still marking it for review,
+-- and make duplicate invoice registration accept trimmed reason/note/doctor fields reliably.
+
+create or replace function public.rider_create_order(
+  p_token text,
+  p_customer_id uuid default null,
+  p_customer_code text default null,
+  p_customer_name text default null,
+  p_customer_phone text default null,
+  p_customer_address text default null,
+  p_invoice_number text default null,
+  p_invoice_amount numeric default 0,
+  p_order_multiplier numeric default 1,
+  p_notes text default null,
+  p_is_duplicate_invoice boolean default false,
+  p_duplicate_reason text default null,
+  p_duplicate_note text default null,
+  p_preparing_doctor_name text default null,
+  p_original_order_id uuid default null,
+  p_gps_lat double precision default null,
+  p_gps_lng double precision default null,
+  p_gps_accuracy_m int default null,
+  p_receipt_image_path text default null,
+  p_receipt_image_url text default null,
+  p_receipt_ocr_json jsonb default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_session record;
+  v_account record;
+  v_rider record;
+  v_att record;
+  v_order_id uuid;
+  v_duplicate_id uuid;
+  v_today date := ((now() at time zone 'Africa/Cairo')::date);
+  v_work_date date;
+  v_missing_shift boolean := false;
+  v_needs_review boolean := false;
+  v_review_reason text := null;
+  v_review_status text := 'pending';
+  v_invoice text := nullif(trim(coalesce(p_invoice_number, '')), '');
+  v_duplicate_reason text := nullif(trim(coalesce(p_duplicate_reason, '')), '');
+  v_duplicate_note text := nullif(trim(coalesce(p_duplicate_note, '')), '');
+  v_doctor_name text := nullif(trim(coalesce(p_preparing_doctor_name, '')), '');
+begin
+  if v_invoice is null then
+    return jsonb_build_object('success', false, 'error', 'invoice_required', 'message', 'رقم الفاتورة مطلوب');
+  end if;
+
+  select * into v_session from public.rider_sessions
+  where session_token = p_token
+    and coalesce(revoked,false) = false
+    and revoked_at is null
+    and (expires_at is null or expires_at > now())
+  limit 1;
+
+  if not found then
+    return jsonb_build_object('success', false, 'error', 'expired_session', 'message', 'انتهت الجلسة، سجل الدخول مرة أخرى');
+  end if;
+
+  update public.rider_sessions set last_seen = now() where id = v_session.id;
+
+  select * into v_account from public.rider_accounts
+  where id = v_session.account_id and status = 'active'
+  limit 1;
+
+  if not found then
+    return jsonb_build_object('success', false, 'error', 'inactive_account', 'message', 'الحساب غير نشط');
+  end if;
+
+  select * into v_rider from public.riders
+  where id = coalesce(v_session.rider_id, v_account.rider_id)
+  limit 1;
+
+  select * into v_att from public.delivery_attendance
+  where rider_id = coalesce(v_session.rider_id, v_account.rider_id)
+    and (check_in_time is not null or check_in_at is not null)
+    and coalesce(check_out_time, check_out_at) is null
+  order by coalesce(check_in_time, check_in_at) desc nulls last, created_at desc
+  limit 1;
+
+  if found then
+    v_work_date := coalesce(v_att.work_date, v_att.shift_date, v_today);
+  else
+    v_work_date := v_today;
+    v_missing_shift := true;
+  end if;
+
+  select id into v_duplicate_id
+  from public.delivery_orders
+  where (coalesce(invoice_number, '') = v_invoice or coalesce(invoice_no, '') = v_invoice)
+    and coalesce(deleted_at, null) is null
+  order by registered_at asc nulls last, created_at asc nulls last
+  limit 1;
+
+  if v_duplicate_id is not null then
+    if p_is_duplicate_invoice is not true
+      or v_duplicate_reason is null
+      or v_duplicate_note is null
+      or length(v_duplicate_note) < 3
+      or v_doctor_name is null then
+      return jsonb_build_object(
+        'success', false,
+        'error', 'DUPLICATE_REASON_REQUIRED',
+        'message', 'رقم الفاتورة مكرر. اكتب سبب التكرار وملاحظة واضحة واسم الدكتور ثم احفظ مرة أخرى.'
+      );
+    end if;
+    v_needs_review := true;
+    v_review_reason := 'duplicate_invoice';
+    v_review_status := 'pending';
+  elsif v_missing_shift then
+    v_needs_review := true;
+    v_review_reason := 'missing_shift';
+    v_review_status := 'missing_shift';
+  elsif p_gps_lat is null or p_gps_lng is null then
+    -- Do not block riders when browser permission/GPS fails. Keep the order registered but visible for admin review.
+    v_needs_review := true;
+    v_review_reason := 'gps_missing';
+    v_review_status := 'pending';
+  elsif p_gps_accuracy_m is not null and p_gps_accuracy_m > 100 then
+    v_needs_review := true;
+    v_review_reason := 'gps_accuracy_weak';
+  elsif coalesce(p_order_multiplier, 1) >= 1.5 then
+    v_needs_review := true;
+    v_review_reason := 'multiplier_order';
+  end if;
+
+  insert into public.delivery_orders(
+    rider_id, rider_name, branch_id, customer_id,
+    delivery_date, work_date, attendance_id,
+    invoice_number, invoice_no, invoice_amount, invoice_value,
+    customer_code, customer_name, customer_phone, customer_address,
+    customer_code_snapshot, customer_name_snapshot, customer_phone_snapshot, customer_address_snapshot,
+    status, registered_at, prepared_at, ready_at, dispatched_at, dispatch_status,
+    dispatch_by, dispatch_by_name, picked_up_at, picked_up_by, picked_up_by_name,
+    notes, source, created_source,
+    is_duplicate_invoice, duplicate_reason, duplicate_note, preparing_doctor_name, original_order_id, duplicate_review_status,
+    needs_review, review_reason, review_status, approval_status,
+    order_multiplier, is_multiplier_order, order_rate, order_earning,
+    bconnect_match_status, reconciliation_status, is_countable, final_count_status,
+    gps_lat, gps_lng, gps_accuracy_m,
+    receipt_image_path, receipt_image_url, receipt_ocr_json, receipt_review_status,
+    security_flags, updated_at
+  ) values (
+    coalesce(v_session.rider_id, v_account.rider_id),
+    coalesce(v_rider.name, v_account.display_name, v_account.username),
+    coalesce(v_account.branch_id, v_rider.branch_id),
+    p_customer_id,
+    v_today, v_work_date, case when v_missing_shift then null else v_att.id end,
+    v_invoice, v_invoice, coalesce(p_invoice_amount, 0), coalesce(p_invoice_amount, 0),
+    nullif(trim(coalesce(p_customer_code, '')), ''),
+    coalesce(nullif(trim(coalesce(p_customer_name, '')), ''), 'عميل غير مسجل'),
+    nullif(trim(coalesce(p_customer_phone, '')), ''),
+    nullif(trim(coalesce(p_customer_address, '')), ''),
+    nullif(trim(coalesce(p_customer_code, '')), ''),
+    coalesce(nullif(trim(coalesce(p_customer_name, '')), ''), 'عميل غير مسجل'),
+    nullif(trim(coalesce(p_customer_phone, '')), ''),
+    nullif(trim(coalesce(p_customer_address, '')), ''),
+    'registered', now(), now(), now(), now(), 'dispatched',
+    coalesce(v_session.rider_id, v_account.rider_id),
+    coalesce(v_rider.name, v_account.display_name),
+    now(),
+    coalesce(v_session.rider_id, v_account.rider_id),
+    coalesce(v_rider.name, v_account.display_name),
+    nullif(trim(coalesce(p_notes, '')), ''), 'rider_app', 'secure_rpc_duplicate_invoice_v2',
+    v_duplicate_id is not null,
+    case when v_duplicate_id is not null then v_duplicate_reason else null end,
+    case when v_duplicate_id is not null then v_duplicate_note else null end,
+    case when v_duplicate_id is not null then v_doctor_name else null end,
+    case when v_duplicate_id is not null then coalesce(p_original_order_id, v_duplicate_id) else null end,
+    case when v_duplicate_id is not null then 'pending' else 'not_required' end,
+    v_needs_review,
+    v_review_reason,
+    v_review_status,
+    'pending',
+    coalesce(p_order_multiplier, 1),
+    coalesce(p_order_multiplier, 1) >= 1.5,
+    0, 0,
+    'pending', 'pending_reconciliation', true, 'pending_reconciliation',
+    p_gps_lat, p_gps_lng, p_gps_accuracy_m,
+    p_receipt_image_path, p_receipt_image_url, p_receipt_ocr_json,
+    case when coalesce(p_receipt_image_path, '') <> '' then 'pending_admin_review' else 'not_uploaded' end,
+    jsonb_build_object(
+      'created_via', 'secure_rpc_duplicate_invoice_v2',
+      'missing_shift', v_missing_shift,
+      'gps_missing', (p_gps_lat is null or p_gps_lng is null),
+      'gps_accuracy_m', p_gps_accuracy_m,
+      'attendance_id', case when v_missing_shift then null else v_att.id end,
+      'session_id', v_session.id
+    ),
+    now()
+  ) returning id into v_order_id;
+
+  return jsonb_build_object(
+    'success', true,
+    'order_id', v_order_id,
+    'attendance_id', case when v_missing_shift then null else v_att.id end,
+    'work_date', v_work_date,
+    'is_duplicate', v_duplicate_id is not null,
+    'needs_review', v_needs_review,
+    'review_reason', v_review_reason,
+    'message', case
+      when v_duplicate_id is not null then 'تم تسجيل الفاتورة المكررة للمراجعة بعد تسجيل السبب والملاحظة.'
+      when p_gps_lat is null or p_gps_lng is null then 'تم تسجيل الأوردر، وسيظهر للإدارة كمراجعة GPS لأن الموقع لم يصل من الجهاز.'
+      when v_missing_shift then 'تم تسجيل الأوردر، وسيتم مراجعته إداريًا لأن الشيفت غير ظاهر.'
+      else 'تم تسجيل الأوردر بنجاح'
+    end
+  );
+end;
+$$;
+
+grant execute on function public.rider_create_order(text, uuid, text, text, text, text, text, numeric, numeric, text, boolean, text, text, text, uuid, double precision, double precision, int, text, text, jsonb) to anon, authenticated;
