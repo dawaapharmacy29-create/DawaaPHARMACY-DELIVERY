@@ -7,6 +7,12 @@ on:
     paths:
       - scripts/apply_trip_safety_fix.py
       - .github/workflows/apply-trip-safety-fix.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - scripts/apply_trip_safety_fix.py
+      - .github/workflows/apply-trip-safety-fix.yml
   workflow_dispatch:
 
 permissions:
@@ -14,6 +20,7 @@ permissions:
 
 jobs:
   patch-and-build:
+    if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, '[trip-safety-applied]') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout branch
@@ -35,6 +42,7 @@ jobs:
         run: pnpm build
 
       - name: Commit validated changes
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -45,5 +53,3 @@ jobs:
           fi
           git commit -m "fix: harden trip proof, idempotency, and cycle count [trip-safety-applied]"
           git push origin HEAD:fix/trip-proof-idempotency-cycle-summary
-
-# Trigger revision: 2026-07-15T14:35:00Z
