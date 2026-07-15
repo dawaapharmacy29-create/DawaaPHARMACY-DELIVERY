@@ -1,0 +1,48 @@
+name: Apply rider trip safety fix
+
+on:
+  push:
+    branches:
+      - fix/trip-proof-idempotency-cycle-summary
+    paths:
+      - scripts/apply_trip_safety_fix.py
+      - .github/workflows/apply-trip-safety-fix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-build:
+    if: ${{ !contains(github.event.head_commit.message, '[trip-safety-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/trip-proof-idempotency-cycle-summary
+          fetch-depth: 0
+
+      - name: Apply guarded patch
+        run: python3 scripts/apply_trip_safety_fix.py
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build application
+        run: pnpm build
+
+      - name: Commit validated changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pages/rider/RiderDashboard.tsx supabase/migrations/20260715143000_internal_trips_idempotency.sql
+          if git diff --cached --quiet; then
+            echo "No patch changes to commit"
+            exit 0
+          fi
+          git commit -m "fix: harden trip proof, idempotency, and cycle count [trip-safety-applied]"
+          git push origin HEAD:fix/trip-proof-idempotency-cycle-summary
