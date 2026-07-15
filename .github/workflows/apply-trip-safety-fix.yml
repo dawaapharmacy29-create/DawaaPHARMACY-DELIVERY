@@ -3,7 +3,7 @@ name: Apply rider trip safety fix
 on:
   push:
     branches:
-      - fix/trip-proof-idempotency-cycle-summary
+      - fix/trip-safety-final
     paths:
       - scripts/apply_trip_safety_fix.py
       - .github/workflows/apply-trip-safety-fix.yml
@@ -20,7 +20,7 @@ jobs:
       - name: Checkout branch
         uses: actions/checkout@v4
         with:
-          ref: fix/trip-proof-idempotency-cycle-summary
+          ref: fix/trip-safety-final
           fetch-depth: 0
 
       - name: Apply guarded patch
@@ -45,4 +45,6 @@ jobs:
             exit 0
           fi
           git commit -m "fix: harden trip proof, idempotency, and cycle count [trip-safety-applied]"
-          git push origin HEAD:fix/trip-proof-idempotency-cycle-summary
+          git push origin HEAD:fix/trip-safety-final
+
+# Trigger 2026-07-15T13:45:00Z
