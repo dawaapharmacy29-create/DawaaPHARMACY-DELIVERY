@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { backoffDelayMs } from './helpers'
 
 export type OfflineMutation = {
   id: string
@@ -22,6 +23,19 @@ function uuid() {
   }
 }
 
+function getStoredRiderToken(): string | null {
+  try {
+    const raw = localStorage.getItem('dawaa_rider_session')
+    return raw ? JSON.parse(raw)?.session_token || null : null
+  } catch {
+    return null
+  }
+}
+
+function getRpcResult<T = any>(data: any): T | null {
+  return Array.isArray(data) ? (data[0] as T) : (data as T | null)
+}
+
 export function getOfflineQueue(): OfflineMutation[] {
   try {
     return JSON.parse(localStorage.getItem(KEY) || '[]')
@@ -40,13 +54,31 @@ export function offlineQueueCount() {
 }
 
 export function enqueueOfflineMutation(input: Omit<OfflineMutation, 'id' | 'created_at' | 'attempts'>) {
+  const rows = getOfflineQueue()
+  const requestId = input.payload?.client_request_id || input.payload?.clientRequestId
+  if (input.table === 'internal_trips' && input.action === 'insert' && requestId) {
+    const existingIndex = rows.findIndex(row =>
+      row.table === 'internal_trips' &&
+      row.action === 'insert' &&
+      (row.payload?.client_request_id || row.payload?.clientRequestId) === requestId,
+    )
+    if (existingIndex >= 0) {
+      rows[existingIndex] = {
+        ...rows[existingIndex],
+        ...input,
+        payload: { ...rows[existingIndex].payload, ...input.payload },
+      }
+      setOfflineQueue(rows)
+      return rows[existingIndex]
+    }
+  }
+
   const item: OfflineMutation = {
     ...input,
     id: `offline-${uuid()}`,
     created_at: new Date().toISOString(),
     attempts: 0,
   }
-  const rows = getOfflineQueue()
   rows.push(item)
   setOfflineQueue(rows)
   return item
@@ -54,6 +86,29 @@ export function enqueueOfflineMutation(input: Omit<OfflineMutation, 'id' | 'crea
 
 async function runMutation(item: OfflineMutation) {
   if (item.action === 'insert') {
+    if (item.table === 'internal_trips') {
+      const clientRequestId = item.payload?.client_request_id || item.payload?.clientRequestId
+      if (!clientRequestId) throw new Error('client_request_id is required for offline trips')
+      const token = item.payload?.session_token || getStoredRiderToken()
+      if (!token) throw new Error('انتهت الجلسة، سجل الدخول مرة أخرى لاستكمال رفع إثبات المشوار.')
+
+      const { data: rpcData, error: rpcError } = await supabase.rpc('rider_create_trip_idempotent', {
+        p_token: token,
+        p_payload: item.payload,
+      })
+      const result = getRpcResult<any>(rpcData)
+      if (rpcError || !result?.success) throw new Error(rpcError?.message || result?.message || 'تعذر مزامنة المشوار')
+      const trip = result.trip
+      if (!trip?.id) throw new Error('trip_missing_after_sync')
+      const { data: verified, error: verifyError } = await supabase
+        .from('internal_trips')
+        .select('*')
+        .eq('client_request_id', clientRequestId)
+        .maybeSingle()
+      if (verifyError || !verified?.id) throw verifyError || new Error('trip_verification_failed')
+      return verified
+    }
+
     try {
       const { data, error } = await supabase.from(item.table).insert(item.payload).select('*').single()
       if (error) throw error
@@ -109,9 +164,11 @@ export async function flushOfflineQueue() {
         })
       } catch {}
     } catch (error: any) {
+      const attempts = (item.attempts || 0) + 1
+      if (attempts > 1) await new Promise(resolve => setTimeout(resolve, backoffDelayMs(attempts - 2)))
       remaining.push({
         ...item,
-        attempts: (item.attempts || 0) + 1,
+        attempts,
         last_error: error?.message || String(error),
       })
     }

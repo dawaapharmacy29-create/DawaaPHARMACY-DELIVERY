@@ -10,8 +10,8 @@ import { supabase } from './supabase'
 
 interface RealtimeSyncOptions {
   riderId?: string | null
-  onOrderChange?: () => void
-  onTripChange?: () => void
+  onOrderChange?: (payload?: any) => void
+  onTripChange?: (payload?: any) => void
   onAttendanceChange?: () => void
   onNotificationChange?: () => void
   enabled?: boolean
@@ -40,9 +40,9 @@ export function useRealtimeSync({
     const channel = supabase
       .channel(`rider-realtime-${riderId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_orders', filter: `rider_id=eq.${riderId}` },
-        () => onOrderChange?.())
+        (payload) => onOrderChange?.(payload))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'internal_trips', filter: `rider_id=eq.${riderId}` },
-        () => onTripChange?.())
+        (payload) => onTripChange?.(payload))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance', filter: `rider_id=eq.${riderId}` },
         () => onAttendanceChange?.())
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'rider_notifications' },

@@ -178,7 +178,6 @@ export default function RiderDeviceMonitor({ riderId, riderName, branchId, branc
       }
       void saveDeviceStatus(offlineSnapshot, 'unmount')
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [riderId])
 
   const percentText = snapshot.battery_supported && snapshot.battery_percent !== null ? `${snapshot.battery_percent}%` : 'غير مدعوم'
