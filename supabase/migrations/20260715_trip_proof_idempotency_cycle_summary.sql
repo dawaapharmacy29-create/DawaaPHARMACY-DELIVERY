@@ -5,7 +5,12 @@ alter table if exists public.internal_trips
   add column if not exists proof_uploaded_at timestamptz null,
   add column if not exists proof_source text null,
   add column if not exists proof_sha256 text null,
-  add column if not exists is_countable boolean null;
+  add column if not exists is_countable boolean null,
+  add column if not exists duplicate_of uuid null,
+  add column if not exists duplicate_reason text null;
+
+comment on column public.internal_trips.duplicate_of is
+  'Legacy duplicate cleanup on 2026-07-16 kept data intact: 9 primary records and 69 duplicate records linked through duplicate_of, with no deletes.';
 
 create index if not exists internal_trips_proof_sha256_idx
 on public.internal_trips(proof_sha256)
@@ -54,11 +59,17 @@ declare
   v_trip public.internal_trips%rowtype;
   v_client_request_id text := nullif(trim(p_payload->>'client_request_id'), '');
   v_proof_sha256 text := nullif(trim(p_payload->>'proof_sha256'), '');
-  v_insert_payload jsonb;
+  v_payload_rider_id uuid;
 begin
   if v_client_request_id is null then
     return jsonb_build_object('success', false, 'error', 'client_request_id_required', 'message', 'client_request_id is required');
   end if;
+
+  begin
+    v_payload_rider_id := nullif(trim(p_payload->>'rider_id'), '')::uuid;
+  exception when invalid_text_representation then
+    return jsonb_build_object('success', false, 'error', 'invalid_rider_id', 'message', 'Invalid rider_id');
+  end;
 
   select * into v_session
   from public.rider_sessions
@@ -83,6 +94,14 @@ begin
 
   if v_rider.id is null then
     return jsonb_build_object('success', false, 'error', 'inactive_account', 'message', 'Rider account is not active');
+  end if;
+
+  if v_payload_rider_id is not null and v_payload_rider_id is distinct from v_session.rider_id then
+    return jsonb_build_object(
+      'success', false,
+      'error', 'rider_identity_mismatch',
+      'message', 'rider_id does not match the active session'
+    );
   end if;
 
   select * into v_trip
@@ -126,19 +145,95 @@ begin
     );
   end if;
 
-  v_insert_payload :=
-    (p_payload - 'session_token')
-    || jsonb_build_object(
-      'client_request_id', v_client_request_id,
-      'rider_id', v_session.rider_id,
-      'rider_name', v_rider.name,
-      'branch_id', v_rider.branch_id,
-      'branch_name', coalesce(v_rider.branch_name, p_payload->>'branch_name')
-    );
-
   begin
-    insert into public.internal_trips
-    select (jsonb_populate_record(null::public.internal_trips, v_insert_payload)).*
+    insert into public.internal_trips (
+      id,
+      client_request_id,
+      rider_id,
+      rider_name,
+      branch_id,
+      branch_name,
+      trip_date,
+      work_date,
+      attendance_id,
+      trip_type,
+      from_label,
+      to_label,
+      reason,
+      related_invoice_number,
+      has_invoice_reference,
+      requested_by_name,
+      evidence_type,
+      evidence_note,
+      evidence_status,
+      proof_required,
+      proof_image_url,
+      proof_image_path,
+      proof_note,
+      proof_capture_session_id,
+      proof_camera_opened_at,
+      proof_captured_at,
+      proof_uploaded_at,
+      proof_source,
+      proof_sha256,
+      proof_review_status,
+      proof_exception_status,
+      proof_exception_reason,
+      needs_review,
+      is_countable,
+      review_reason,
+      review_status,
+      notes,
+      status,
+      registered_at,
+      trip_rate,
+      trip_multiplier,
+      trip_earning
+    )
+    values (
+      coalesce(nullif(trim(p_payload->>'id'), '')::uuid, gen_random_uuid()),
+      v_client_request_id,
+      v_session.rider_id,
+      v_rider.name,
+      v_rider.branch_id,
+      coalesce(v_rider.branch_name, p_payload->>'branch_name'),
+      coalesce(nullif(trim(p_payload->>'trip_date'), '')::date, current_date),
+      nullif(trim(p_payload->>'work_date'), '')::date,
+      nullif(trim(p_payload->>'attendance_id'), '')::uuid,
+      coalesce(nullif(trim(p_payload->>'trip_type'), ''), 'branch_to_branch'),
+      nullif(trim(p_payload->>'from_label'), ''),
+      nullif(trim(p_payload->>'to_label'), ''),
+      coalesce(nullif(trim(p_payload->>'reason'), ''), 'مشوار بدون سبب تفصيلي'),
+      nullif(trim(p_payload->>'related_invoice_number'), ''),
+      coalesce((p_payload->>'has_invoice_reference')::boolean, false),
+      nullif(trim(p_payload->>'requested_by_name'), ''),
+      coalesce(nullif(trim(p_payload->>'evidence_type'), ''), 'trip_photo'),
+      nullif(trim(p_payload->>'evidence_note'), ''),
+      coalesce(nullif(trim(p_payload->>'evidence_status'), ''), 'pending_admin_review'),
+      coalesce((p_payload->>'proof_required')::boolean, true),
+      nullif(trim(p_payload->>'proof_image_url'), ''),
+      nullif(trim(p_payload->>'proof_image_path'), ''),
+      nullif(trim(p_payload->>'proof_note'), ''),
+      nullif(trim(p_payload->>'proof_capture_session_id'), ''),
+      nullif(trim(p_payload->>'proof_camera_opened_at'), '')::timestamptz,
+      nullif(trim(p_payload->>'proof_captured_at'), '')::timestamptz,
+      nullif(trim(p_payload->>'proof_uploaded_at'), '')::timestamptz,
+      nullif(trim(p_payload->>'proof_source'), ''),
+      v_proof_sha256,
+      coalesce(nullif(trim(p_payload->>'proof_review_status'), ''), 'pending'),
+      coalesce(nullif(trim(p_payload->>'proof_exception_status'), ''), 'none'),
+      nullif(trim(p_payload->>'proof_exception_reason'), ''),
+      coalesce((p_payload->>'needs_review')::boolean, false),
+      true,
+      nullif(trim(p_payload->>'review_reason'), ''),
+      coalesce(nullif(trim(p_payload->>'review_status'), ''), 'pending'),
+      nullif(trim(p_payload->>'notes'), ''),
+      'pending_approval',
+      coalesce(nullif(trim(p_payload->>'registered_at'), '')::timestamptz, now()),
+      coalesce(nullif(trim(p_payload->>'trip_rate'), '')::numeric, 0),
+      coalesce(nullif(trim(p_payload->>'trip_multiplier'), '')::numeric, 1),
+      coalesce(nullif(trim(p_payload->>'trip_earning'), '')::numeric, coalesce(nullif(trim(p_payload->>'trip_rate'), '')::numeric, 0))
+    )
     returning * into v_trip;
   exception
     when unique_violation then
@@ -212,6 +307,8 @@ begin
     where t.rider_id = p_rider_id
       and coalesce(t.work_date, t.trip_date, t.registered_at::date, t.created_at::date) >= p_period_start
       and coalesce(t.work_date, t.trip_date, t.registered_at::date, t.created_at::date) <= p_period_end
+      and coalesce(t.is_countable, true) = true
+      and t.duplicate_of is null
   ),
   order_counts as (
     select
