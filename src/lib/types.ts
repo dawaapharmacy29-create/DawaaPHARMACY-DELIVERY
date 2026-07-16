@@ -200,8 +200,38 @@ export interface InternalTrip {
   updated_at: string
   upload_status?: string | null
   storage_path?: string | null
+  proof_image_url?: string | null
+  proof_image_path?: string | null
+  proof_note?: string | null
+  proof_capture_session_id?: string | null
+  proof_camera_opened_at?: string | null
+  proof_captured_at?: string | null
+  proof_uploaded_at?: string | null
+  proof_source?: string | null
+  proof_sha256?: string | null
+  proof_review_status?: string | null
+  proof_exception_status?: string | null
+  proof_exception_reason?: string | null
+  evidence_status?: string | null
+  review_status?: string | null
+  is_countable?: boolean | null
   duplicate_of?: string | null
   duplicate_reason?: string | null
+}
+
+export type RiderCycleSummary = {
+  total_orders: number
+  delivered_orders: number
+  failed_orders: number
+  pending_orders: number
+  countable_orders: number
+  excluded_orders: number
+  multiplier_orders: number
+  duplicate_orders: number
+  total_trips: number
+  approved_trips: number
+  pending_trips: number
+  pending_proof_trips: number
 }
 
 export interface ImportBatch {

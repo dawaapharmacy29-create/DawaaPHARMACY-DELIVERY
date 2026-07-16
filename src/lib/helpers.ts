@@ -1,4 +1,4 @@
-import { OperationalPeriod } from './types'
+import type { InternalTrip, OperationalPeriod } from './types'
 
 export function getOperationalPeriod(date: Date = new Date()): OperationalPeriod {
   const day = date.getDate()
@@ -119,6 +119,41 @@ export function wildcardMatchText(value: string, rawQuery: string): boolean {
 
 export function todayIso(): string {
   return localIsoDate(new Date())
+}
+
+export function prependUniqueTrip(
+  rows: InternalTrip[],
+  trip: InternalTrip,
+): InternalTrip[] {
+  const id = String((trip as any)?.id || '')
+  const requestId = String((trip as any)?.client_request_id || '')
+
+  const filtered = rows.filter((row: any) => {
+    if (id && String(row?.id || '') === id) return false
+    if (requestId && String(row?.client_request_id || '') === requestId) return false
+    return true
+  })
+
+  return [trip, ...filtered]
+}
+
+export function dedupeTrips(rows: InternalTrip[]): InternalTrip[] {
+  const out: InternalTrip[] = []
+  rows.forEach(row => {
+    if (prependUniqueTrip(out, row).length > out.length) out.push(row)
+  })
+  return out
+}
+
+export function backoffDelayMs(attempt: number): number {
+  const schedule = [2000, 5000, 10000, 30000, 60000]
+  return schedule[Math.min(Math.max(0, attempt), schedule.length - 1)]
+}
+
+export function arrayBufferToHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer))
+    .map(byte => byte.toString(16).padStart(2, '0'))
+    .join('')
 }
 
 // ─── Label maps used by RiderDashboard ───────────────────────────────────────
