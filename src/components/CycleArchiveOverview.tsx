@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronLeft, History, PackageCheck, Route, ShieldCheck } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/fetchAllRows'
 import { getOperationalPeriod } from '../lib/helpers'
 
 type OrderRow = { id: string; delivery_date?: string | null; work_date?: string | null; registered_at?: string | null; created_at?: string | null; status?: string | null; delivered_at?: string | null; failed_reason?: string | null; invoice_amount?: number | null }
@@ -9,8 +9,11 @@ type TripRow = { id: string; trip_date?: string | null; work_date?: string | nul
 type CycleRow = { key: string; start: string; end: string; orders: number; delivered: number; failed: number; trips: number; tripsWithProof: number; tripsWithoutProof: number; exceptions: number; pendingTrips: number; sales: number }
 
 function d(value?: string | null) { return String(value || '').slice(0, 10) }
-function orderDate(o: OrderRow) { return d(o.work_date || o.delivery_date || o.registered_at || o.created_at) }
-function tripDate(t: TripRow) { return d(t.work_date || t.trip_date || t.registered_at || t.created_at) }
+// The archive query and cycle grouping must use the same canonical date.
+// Mixing delivery_date in the query with work_date in grouping moved orders
+// between cycles and made the archive disagree with the dashboard totals.
+function orderDate(o: OrderRow) { return d(o.delivery_date) }
+function tripDate(t: TripRow) { return d(t.trip_date) }
 function ok(o: OrderRow) { return o.status === 'delivered' || Boolean(o.delivered_at) }
 function bad(o: OrderRow) { return o.status === 'failed' || Boolean(o.failed_reason) }
 function money(value: number) { return `${Math.round(value).toLocaleString('ar-EG')} ج` }
@@ -28,12 +31,30 @@ export default function CycleArchiveOverview() {
     async function load() {
       setLoading(true)
       const [ordersRes, tripsRes] = await Promise.allSettled([
-        supabase.from('delivery_orders').select('id,delivery_date,work_date,registered_at,created_at,status,delivered_at,failed_reason,invoice_amount').gte('delivery_date', archiveStart).lte('delivery_date', current.end).limit(6000),
-        supabase.from('internal_trip_daily_audit').select('id,trip_date,work_date,registered_at,created_at,status,proof_image_url,proof_exception_status,audit_status').gte('trip_date', archiveStart).lte('trip_date', current.end).limit(4000),
+        fetchAllRows<OrderRow>({
+          table: 'delivery_orders',
+          select: 'id,delivery_date,work_date,registered_at,created_at,status,delivered_at,failed_reason,invoice_amount',
+          filters: [
+            { column: 'delivery_date', operator: 'gte', value: archiveStart },
+            { column: 'delivery_date', operator: 'lte', value: current.end },
+          ],
+          orderColumn: 'delivery_date',
+          ascending: false,
+        }),
+        fetchAllRows<TripRow>({
+          table: 'internal_trip_daily_audit',
+          select: 'id,trip_date,work_date,registered_at,created_at,status,proof_image_url,proof_exception_status,audit_status',
+          filters: [
+            { column: 'trip_date', operator: 'gte', value: archiveStart },
+            { column: 'trip_date', operator: 'lte', value: current.end },
+          ],
+          orderColumn: 'trip_date',
+          ascending: false,
+        }),
       ])
       if (cancelled) return
-      if (ordersRes.status === 'fulfilled' && !ordersRes.value.error) setOrders((ordersRes.value.data || []) as OrderRow[])
-      if (tripsRes.status === 'fulfilled' && !tripsRes.value.error) setTrips((tripsRes.value.data || []) as TripRow[])
+      if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value)
+      if (tripsRes.status === 'fulfilled') setTrips(tripsRes.value)
       setLoading(false)
     }
     void load()
