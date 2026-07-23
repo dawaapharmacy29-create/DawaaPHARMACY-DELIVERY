@@ -1,0 +1,53 @@
+name: Validate order receipt storage guard
+
+on:
+  pull_request:
+    paths:
+      - "package.json"
+      - "scripts/patch-order-receipt-storage.mjs"
+      - "src/pages/rider/RiderDashboard.tsx"
+      - ".github/workflows/validate-order-receipt-storage.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply storage guard twice to prove idempotency
+        run: |
+          node scripts/patch-order-receipt-storage.mjs
+          node scripts/patch-order-receipt-storage.mjs
+
+      - name: Verify patched upload behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "storage-capacity-guard: compressed stable order receipt upload" src/pages/rider/RiderDashboard.tsx
+          grep -Fq 'const path = `orders/${rider.id}/${activeWorkDate}/${safeInvoice}.jpg`;' src/pages/rider/RiderDashboard.tsx
+          grep -Fq 'upsert: true' src/pages/rider/RiderDashboard.tsx
+          grep -Fq 'contentType: "image/jpeg"' src/pages/rider/RiderDashboard.tsx
+          ! grep -Fq '${Date.now()}-${safeInvoice}' src/pages/rider/RiderDashboard.tsx
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
