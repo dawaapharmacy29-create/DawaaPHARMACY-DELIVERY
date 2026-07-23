@@ -30,7 +30,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Validate required secrets
+      - name: Validate required secrets and input
         shell: bash
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
@@ -39,6 +39,10 @@ jobs:
           set -euo pipefail
           test -n "$SUPABASE_DB_URL" || { echo "Missing SUPABASE_DB_URL"; exit 1; }
           test -n "$RCLONE_CONFIG_GDRIVE" || { echo "Missing RCLONE_CONFIG_GDRIVE"; exit 1; }
+          [[ "$CUTOFF" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
+            echo "Invalid cutoff. Expected UTC format: YYYY-MM-DDTHH:MM:SSZ"
+            exit 1
+          }
 
       - name: Install tools
         shell: bash
@@ -68,15 +72,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p archive-output
-          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 \
-            -v cutoff="$CUTOFF" \
+
+          export PGOPTIONS='-c statement_timeout=120000'
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F ',' \
             -c "COPY (
               SELECT name,
                      created_at,
                      COALESCE((metadata->>'size')::bigint, 0) AS expected_bytes
               FROM storage.objects
               WHERE bucket_id = '${SUPABASE_BUCKET}'
-                AND created_at < :'cutoff'::timestamptz
+                AND created_at < '${CUTOFF}'::timestamptz
               ORDER BY created_at, name
             ) TO STDOUT WITH CSV HEADER" > archive-output/source-manifest.csv
 
@@ -90,6 +95,7 @@ jobs:
           set -euo pipefail
           python3 <<'PY'
           import csv
+          import json
           import os
           import pathlib
           import subprocess
@@ -115,7 +121,7 @@ jobs:
                       if attempt == attempts:
                           raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{exc.output}") from exc
                       time.sleep(attempt * 10)
-              raise last  # pragma: no cover
+              raise last
 
           with source_manifest.open(newline="", encoding="utf-8") as src, result_manifest.open("w", newline="", encoding="utf-8") as dst:
               reader = csv.DictReader(src)
@@ -131,25 +137,17 @@ jobs:
                   local_path = work_root / name
                   local_path.parent.mkdir(parents=True, exist_ok=True)
 
-                  downloaded = False
                   for attempt in range(1, 5):
                       try:
                           request = urllib.request.Request(source_url, headers={"User-Agent": "dawaa-storage-archive/1.0"})
                           with urllib.request.urlopen(request, timeout=180) as response, local_path.open("wb") as output:
-                              while True:
-                                  chunk = response.read(1024 * 1024)
-                                  if not chunk:
-                                      break
+                              while chunk := response.read(1024 * 1024):
                                   output.write(chunk)
-                          downloaded = True
                           break
                       except Exception:
                           if attempt == 4:
                               raise
                           time.sleep(attempt * 10)
-
-                  if not downloaded:
-                      raise RuntimeError(f"Unable to download {name}")
 
                   actual = local_path.stat().st_size
                   if expected > 0 and actual != expected:
@@ -163,9 +161,11 @@ jobs:
                       "--checksum", "--retries", "5", "--low-level-retries", "20"
                   ])
 
-                  lsjson = run(["rclone", "lsjson", remote, "--drive-root-folder-id", root_id, "--files-only"])
-                  import json
-                  remote_rows = json.loads(lsjson)
+                  remote_rows = json.loads(run([
+                      "rclone", "lsjson", remote,
+                      "--drive-root-folder-id", root_id,
+                      "--files-only"
+                  ]))
                   if not remote_rows or int(remote_rows[0]["Size"]) != actual:
                       raise RuntimeError(f"Google Drive verification failed for {name}")
 
@@ -190,6 +190,7 @@ jobs:
           set -euo pipefail
           python3 <<'PY'
           import csv
+          import os
           from pathlib import Path
 
           source = list(csv.DictReader(Path("archive-output/source-manifest.csv").open(encoding="utf-8")))
@@ -200,7 +201,7 @@ jobs:
           result_bytes = sum(int(row["downloaded_bytes"] or 0) for row in result)
           assert source_bytes == result_bytes, (source_bytes, result_bytes)
           Path("archive-output/verification-summary.txt").write_text(
-              f"objects={len(result)}\nbytes={result_bytes}\ncutoff={__import__('os').environ['CUTOFF']}\n",
+              f"objects={len(result)}\nbytes={result_bytes}\ncutoff={os.environ['CUTOFF']}\n",
               encoding="utf-8",
           )
           print(f"Verified {len(result)} objects and {result_bytes} bytes")
