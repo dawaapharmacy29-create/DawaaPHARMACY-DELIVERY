@@ -1,0 +1,245 @@
+name: Audit delivery storage capacity
+
+on:
+  workflow_dispatch:
+    inputs:
+      bucket:
+        description: Supabase Storage bucket to audit
+        required: true
+        default: delivery-receipts
+      warning_gb:
+        description: Warning threshold in GB
+        required: true
+        default: "0.70"
+      critical_gb:
+        description: Critical threshold in GB
+        required: true
+        default: "0.90"
+  schedule:
+    - cron: "20 2 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: delivery-storage-capacity-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TZ: Africa/Cairo
+      SUPABASE_BUCKET: ${{ github.event.inputs.bucket || 'delivery-receipts' }}
+      WARNING_GB: ${{ github.event.inputs.warning_gb || '0.70' }}
+      CRITICAL_GB: ${{ github.event.inputs.critical_gb || '0.90' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate required secret
+        shell: bash
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_DB_URL" || { echo "Missing SUPABASE_DB_URL"; exit 1; }
+
+      - name: Install PostgreSQL client
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y postgresql-client
+          psql --version
+
+      - name: Build storage audit reports
+        shell: bash
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p storage-audit
+          export PGOPTIONS='-c statement_timeout=120000'
+
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F ',' -c "COPY (
+            SELECT bucket_id,
+                   count(*) AS object_count,
+                   sum(COALESCE((metadata->>'size')::bigint, 0)) AS total_bytes,
+                   round(sum(COALESCE((metadata->>'size')::bigint, 0)) / 1024.0 / 1024.0, 2) AS total_mb,
+                   min(created_at) AS oldest_object,
+                   max(created_at) AS newest_object
+            FROM storage.objects
+            GROUP BY bucket_id
+            ORDER BY total_bytes DESC
+          ) TO STDOUT WITH CSV HEADER" > storage-audit/bucket-summary.csv
+
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F ',' -c "COPY (
+            SELECT split_part(name, '/', 1) AS top_prefix,
+                   count(*) AS object_count,
+                   sum(COALESCE((metadata->>'size')::bigint, 0)) AS total_bytes,
+                   round(sum(COALESCE((metadata->>'size')::bigint, 0)) / 1024.0 / 1024.0, 2) AS total_mb,
+                   round(avg(COALESCE((metadata->>'size')::bigint, 0)) / 1024.0, 2) AS avg_kb,
+                   min(created_at) AS oldest_object,
+                   max(created_at) AS newest_object
+            FROM storage.objects
+            WHERE bucket_id = '${SUPABASE_BUCKET}'
+            GROUP BY split_part(name, '/', 1)
+            ORDER BY total_bytes DESC
+          ) TO STDOUT WITH CSV HEADER" > storage-audit/prefix-summary.csv
+
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F ',' -c "COPY (
+            SELECT name,
+                   created_at,
+                   COALESCE((metadata->>'size')::bigint, 0) AS bytes,
+                   round(COALESCE((metadata->>'size')::bigint, 0) / 1024.0 / 1024.0, 2) AS mb,
+                   metadata->>'mimetype' AS mime_type
+            FROM storage.objects
+            WHERE bucket_id = '${SUPABASE_BUCKET}'
+            ORDER BY COALESCE((metadata->>'size')::bigint, 0) DESC, created_at
+            LIMIT 250
+          ) TO STDOUT WITH CSV HEADER" > storage-audit/largest-objects.csv
+
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F ',' -c "COPY (
+            SELECT CASE
+                     WHEN created_at >= now() - interval '7 days' THEN '00-07 days'
+                     WHEN created_at >= now() - interval '30 days' THEN '08-30 days'
+                     WHEN created_at >= now() - interval '60 days' THEN '31-60 days'
+                     WHEN created_at >= now() - interval '90 days' THEN '61-90 days'
+                     ELSE '90+ days'
+                   END AS age_band,
+                   count(*) AS object_count,
+                   sum(COALESCE((metadata->>'size')::bigint, 0)) AS total_bytes,
+                   round(sum(COALESCE((metadata->>'size')::bigint, 0)) / 1024.0 / 1024.0, 2) AS total_mb
+            FROM storage.objects
+            WHERE bucket_id = '${SUPABASE_BUCKET}'
+            GROUP BY 1
+            ORDER BY 1
+          ) TO STDOUT WITH CSV HEADER" > storage-audit/age-summary.csv
+
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F ',' -c "COPY (
+            SELECT lower(COALESCE(metadata->>'mimetype', 'unknown')) AS mime_type,
+                   count(*) AS object_count,
+                   sum(COALESCE((metadata->>'size')::bigint, 0)) AS total_bytes,
+                   round(sum(COALESCE((metadata->>'size')::bigint, 0)) / 1024.0 / 1024.0, 2) AS total_mb,
+                   round(avg(COALESCE((metadata->>'size')::bigint, 0)) / 1024.0, 2) AS avg_kb
+            FROM storage.objects
+            WHERE bucket_id = '${SUPABASE_BUCKET}'
+            GROUP BY 1
+            ORDER BY total_bytes DESC
+          ) TO STDOUT WITH CSV HEADER" > storage-audit/mime-summary.csv
+
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F ',' -c "COPY (
+            SELECT COALESCE((metadata->>'size')::bigint, 0) AS bytes,
+                   COALESCE(metadata->>'mimetype', 'unknown') AS mime_type,
+                   count(*) AS candidate_count,
+                   min(created_at) AS first_seen,
+                   max(created_at) AS last_seen,
+                   string_agg(name, ' | ' ORDER BY name) AS object_names
+            FROM storage.objects
+            WHERE bucket_id = '${SUPABASE_BUCKET}'
+              AND COALESCE((metadata->>'size')::bigint, 0) > 0
+            GROUP BY 1, 2
+            HAVING count(*) > 1
+            ORDER BY candidate_count DESC, bytes DESC
+            LIMIT 500
+          ) TO STDOUT WITH CSV HEADER" > storage-audit/duplicate-size-candidates.csv
+
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F ',' -c "COPY (
+            SELECT table_schema,
+                   table_name,
+                   column_name,
+                   data_type
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND data_type IN ('text', 'character varying')
+              AND (
+                column_name ILIKE '%receipt%'
+                OR column_name ILIKE '%proof%'
+                OR column_name ILIKE '%image%'
+                OR column_name ILIKE '%storage%path%'
+                OR column_name ILIKE '%file%path%'
+              )
+            ORDER BY table_name, column_name
+          ) TO STDOUT WITH CSV HEADER" > storage-audit/reference-columns.csv
+
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F ',' -c "COPY (
+            SELECT schemaname,
+                   relname AS table_name,
+                   n_live_tup AS estimated_rows,
+                   pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname)) AS total_bytes,
+                   pg_size_pretty(pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname))) AS total_size
+            FROM pg_stat_user_tables
+            ORDER BY total_bytes DESC
+            LIMIT 100
+          ) TO STDOUT WITH CSV HEADER" > storage-audit/largest-tables.csv
+
+      - name: Calculate thresholds and write summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import csv
+          import os
+          from pathlib import Path
+
+          root = Path('storage-audit')
+          bucket = os.environ['SUPABASE_BUCKET']
+          rows = list(csv.DictReader((root / 'bucket-summary.csv').open(encoding='utf-8')))
+          match = next((row for row in rows if row['bucket_id'] == bucket), None)
+          total_bytes = int(match['total_bytes'] or 0) if match else 0
+          object_count = int(match['object_count'] or 0) if match else 0
+          total_gb = total_bytes / 1024 / 1024 / 1024
+          warning = float(os.environ['WARNING_GB'])
+          critical = float(os.environ['CRITICAL_GB'])
+          status = 'OK'
+          if total_gb >= critical:
+              status = 'CRITICAL'
+          elif total_gb >= warning:
+              status = 'WARNING'
+
+          largest = list(csv.DictReader((root / 'largest-objects.csv').open(encoding='utf-8')))
+          oversized = [row for row in largest if int(row['bytes'] or 0) > 1_000_000]
+          duplicate_groups = list(csv.DictReader((root / 'duplicate-size-candidates.csv').open(encoding='utf-8')))
+
+          summary = (
+              f'bucket={bucket}\n'
+              f'status={status}\n'
+              f'objects={object_count}\n'
+              f'bytes={total_bytes}\n'
+              f'gb={total_gb:.4f}\n'
+              f'warning_gb={warning}\n'
+              f'critical_gb={critical}\n'
+              f'objects_over_1mb_in_top_250={len(oversized)}\n'
+              f'duplicate_size_candidate_groups={len(duplicate_groups)}\n'
+          )
+          (root / 'audit-summary.txt').write_text(summary, encoding='utf-8')
+          print(summary)
+
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as out:
+              out.write('## Supabase delivery storage audit\n')
+              out.write(f'- Bucket: `{bucket}`\n')
+              out.write(f'- Status: **{status}**\n')
+              out.write(f'- Objects: **{object_count:,}**\n')
+              out.write(f'- Size: **{total_gb:.4f} GB** ({total_bytes:,} bytes)\n')
+              out.write(f'- Warning threshold: {warning:.2f} GB\n')
+              out.write(f'- Critical threshold: {critical:.2f} GB\n')
+              out.write(f'- Objects above 1 MB among largest 250: **{len(oversized)}**\n')
+              out.write(f'- Duplicate-size candidate groups: **{len(duplicate_groups)}**\n')
+              out.write('- Mode: **read-only audit; no files or database rows changed**\n')
+
+          if status == 'CRITICAL':
+              print('::error title=Supabase storage critical::Storage bucket exceeded the critical threshold')
+          elif status == 'WARNING':
+              print('::warning title=Supabase storage warning::Storage bucket exceeded the warning threshold')
+          PY
+
+      - name: Upload audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: delivery-storage-audit-${{ github.run_id }}
+          path: storage-audit/
+          retention-days: 30
+          if-no-files-found: error
