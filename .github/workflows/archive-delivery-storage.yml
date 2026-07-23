@@ -1,0 +1,238 @@
+name: Archive delivery storage to Google Drive
+
+on:
+  workflow_dispatch:
+    inputs:
+      cutoff:
+        description: Archive objects created before this UTC timestamp
+        required: true
+        default: "2026-06-30T00:00:00Z"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: delivery-storage-archive
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      TZ: Africa/Cairo
+      SUPABASE_PROJECT_REF: qlugjplnnkjzxcbhwopg
+      SUPABASE_BUCKET: delivery-receipts
+      DRIVE_FOLDER_ID: 1igkeNEMib9oxgqtO78JxGs9rJibhTUG7
+      CUTOFF: ${{ inputs.cutoff }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        shell: bash
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          RCLONE_CONFIG_GDRIVE: ${{ secrets.RCLONE_CONFIG_GDRIVE }}
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_DB_URL" || { echo "Missing SUPABASE_DB_URL"; exit 1; }
+          test -n "$RCLONE_CONFIG_GDRIVE" || { echo "Missing RCLONE_CONFIG_GDRIVE"; exit 1; }
+
+      - name: Install tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y postgresql-client
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          rclone version
+          psql --version
+
+      - name: Configure Google Drive remote
+        shell: bash
+        env:
+          RCLONE_CONFIG_GDRIVE: ${{ secrets.RCLONE_CONFIG_GDRIVE }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.config/rclone"
+          printf '%s' "$RCLONE_CONFIG_GDRIVE" > "$HOME/.config/rclone/rclone.conf"
+          chmod 600 "$HOME/.config/rclone/rclone.conf"
+          rclone lsd gdrive: --max-depth 1 >/dev/null
+
+      - name: Build immutable archive manifest
+        shell: bash
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p archive-output
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 \
+            -v cutoff="$CUTOFF" \
+            -c "COPY (
+              SELECT name,
+                     created_at,
+                     COALESCE((metadata->>'size')::bigint, 0) AS expected_bytes
+              FROM storage.objects
+              WHERE bucket_id = '${SUPABASE_BUCKET}'
+                AND created_at < :'cutoff'::timestamptz
+              ORDER BY created_at, name
+            ) TO STDOUT WITH CSV HEADER" > archive-output/source-manifest.csv
+
+          rows="$(( $(wc -l < archive-output/source-manifest.csv) - 1 ))"
+          test "$rows" -gt 0 || { echo "No objects matched cutoff $CUTOFF"; exit 1; }
+          echo "ARCHIVE_ROWS=$rows" >> "$GITHUB_ENV"
+
+      - name: Download, upload, link, and verify every object
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import csv
+          import os
+          import pathlib
+          import subprocess
+          import time
+          import urllib.parse
+          import urllib.request
+
+          project_ref = os.environ["SUPABASE_PROJECT_REF"]
+          bucket = os.environ["SUPABASE_BUCKET"]
+          root_id = os.environ["DRIVE_FOLDER_ID"]
+          source_manifest = pathlib.Path("archive-output/source-manifest.csv")
+          result_manifest = pathlib.Path("archive-output/archive-result.csv")
+          work_root = pathlib.Path("/tmp/delivery-storage-archive")
+          work_root.mkdir(parents=True, exist_ok=True)
+
+          def run(cmd: list[str], attempts: int = 4) -> str:
+              last = None
+              for attempt in range(1, attempts + 1):
+                  try:
+                      return subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT).strip()
+                  except subprocess.CalledProcessError as exc:
+                      last = exc
+                      if attempt == attempts:
+                          raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{exc.output}") from exc
+                      time.sleep(attempt * 10)
+              raise last  # pragma: no cover
+
+          with source_manifest.open(newline="", encoding="utf-8") as src, result_manifest.open("w", newline="", encoding="utf-8") as dst:
+              reader = csv.DictReader(src)
+              fields = ["name", "created_at", "expected_bytes", "downloaded_bytes", "drive_path", "drive_public_link", "status"]
+              writer = csv.DictWriter(dst, fieldnames=fields)
+              writer.writeheader()
+
+              for index, row in enumerate(reader, start=1):
+                  name = row["name"]
+                  expected = int(row["expected_bytes"] or 0)
+                  quoted = urllib.parse.quote(name, safe="/")
+                  source_url = f"https://{project_ref}.supabase.co/storage/v1/object/public/{bucket}/{quoted}"
+                  local_path = work_root / name
+                  local_path.parent.mkdir(parents=True, exist_ok=True)
+
+                  downloaded = False
+                  for attempt in range(1, 5):
+                      try:
+                          request = urllib.request.Request(source_url, headers={"User-Agent": "dawaa-storage-archive/1.0"})
+                          with urllib.request.urlopen(request, timeout=180) as response, local_path.open("wb") as output:
+                              while True:
+                                  chunk = response.read(1024 * 1024)
+                                  if not chunk:
+                                      break
+                                  output.write(chunk)
+                          downloaded = True
+                          break
+                      except Exception:
+                          if attempt == 4:
+                              raise
+                          time.sleep(attempt * 10)
+
+                  if not downloaded:
+                      raise RuntimeError(f"Unable to download {name}")
+
+                  actual = local_path.stat().st_size
+                  if expected > 0 and actual != expected:
+                      raise RuntimeError(f"Size mismatch for {name}: expected {expected}, downloaded {actual}")
+
+                  drive_path = f"storage-archive/{bucket}/{name}"
+                  remote = f"gdrive:{drive_path}"
+                  run([
+                      "rclone", "copyto", str(local_path), remote,
+                      "--drive-root-folder-id", root_id,
+                      "--checksum", "--retries", "5", "--low-level-retries", "20"
+                  ])
+
+                  lsjson = run(["rclone", "lsjson", remote, "--drive-root-folder-id", root_id, "--files-only"])
+                  import json
+                  remote_rows = json.loads(lsjson)
+                  if not remote_rows or int(remote_rows[0]["Size"]) != actual:
+                      raise RuntimeError(f"Google Drive verification failed for {name}")
+
+                  public_link = run(["rclone", "link", remote, "--drive-root-folder-id", root_id])
+                  writer.writerow({
+                      "name": name,
+                      "created_at": row["created_at"],
+                      "expected_bytes": expected,
+                      "downloaded_bytes": actual,
+                      "drive_path": drive_path,
+                      "drive_public_link": public_link,
+                      "status": "verified",
+                  })
+                  dst.flush()
+                  local_path.unlink(missing_ok=True)
+                  print(f"[{index}] archived and verified: {name}")
+          PY
+
+      - name: Verify manifest totals
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import csv
+          from pathlib import Path
+
+          source = list(csv.DictReader(Path("archive-output/source-manifest.csv").open(encoding="utf-8")))
+          result = list(csv.DictReader(Path("archive-output/archive-result.csv").open(encoding="utf-8")))
+          assert len(source) == len(result), (len(source), len(result))
+          assert all(row["status"] == "verified" for row in result)
+          source_bytes = sum(int(row["expected_bytes"] or 0) for row in source)
+          result_bytes = sum(int(row["downloaded_bytes"] or 0) for row in result)
+          assert source_bytes == result_bytes, (source_bytes, result_bytes)
+          Path("archive-output/verification-summary.txt").write_text(
+              f"objects={len(result)}\nbytes={result_bytes}\ncutoff={__import__('os').environ['CUTOFF']}\n",
+              encoding="utf-8",
+          )
+          print(f"Verified {len(result)} objects and {result_bytes} bytes")
+          PY
+
+      - name: Upload manifests to Google Drive
+        shell: bash
+        run: |
+          set -euo pipefail
+          stamp="$(date +'%Y-%m-%d_%H-%M-%S')"
+          destination="gdrive:storage-archive/manifests/${stamp}"
+          rclone copy archive-output "$destination" \
+            --drive-root-folder-id "$DRIVE_FOLDER_ID" \
+            --checksum --retries 5 --low-level-retries 20
+
+      - name: Upload protected GitHub artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: delivery-storage-archive-${{ github.run_id }}
+          path: archive-output/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Write archive summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Delivery Storage archive"
+            echo "- Cutoff: $CUTOFF"
+            echo "- Matching objects: ${ARCHIVE_ROWS:-not calculated}"
+            echo "- Mode: archive and verify only"
+            echo "- Supabase deletion: disabled"
+            echo "- Database links: unchanged"
+          } >> "$GITHUB_STEP_SUMMARY"
