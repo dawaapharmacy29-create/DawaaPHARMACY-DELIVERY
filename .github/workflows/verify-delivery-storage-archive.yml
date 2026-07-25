@@ -1,0 +1,322 @@
+name: Verify delivery storage archive and restore readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      sample_size:
+        description: Number of archived objects to download from both locations and checksum
+        required: true
+        default: "10"
+      manifest_folder:
+        description: Optional manifest folder name under storage-archive/manifests; leave blank for latest
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: delivery-storage-archive-verification
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      TZ: Africa/Cairo
+      SUPABASE_PROJECT_REF: qlugjplnnkjzxcbhwopg
+      SUPABASE_BUCKET: delivery-receipts
+      DRIVE_FOLDER_ID: 1igkeNEMib9oxgqtO78JxGs9rJibhTUG7
+      SAMPLE_SIZE: ${{ inputs.sample_size }}
+      MANIFEST_FOLDER: ${{ inputs.manifest_folder }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets and inputs
+        shell: bash
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          RCLONE_CONFIG_GDRIVE: ${{ secrets.RCLONE_CONFIG_GDRIVE }}
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_DB_URL" || { echo "Missing SUPABASE_DB_URL"; exit 1; }
+          test -n "$RCLONE_CONFIG_GDRIVE" || { echo "Missing RCLONE_CONFIG_GDRIVE"; exit 1; }
+          [[ "$SAMPLE_SIZE" =~ ^[0-9]+$ ]] || { echo "sample_size must be an integer"; exit 1; }
+          test "$SAMPLE_SIZE" -ge 1 || { echo "sample_size must be at least 1"; exit 1; }
+          test "$SAMPLE_SIZE" -le 50 || { echo "sample_size must not exceed 50"; exit 1; }
+
+      - name: Install tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y postgresql-client
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          rclone version
+          psql --version
+
+      - name: Configure Google Drive remote
+        shell: bash
+        env:
+          RCLONE_CONFIG_GDRIVE: ${{ secrets.RCLONE_CONFIG_GDRIVE }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.config/rclone"
+          printf '%s' "$RCLONE_CONFIG_GDRIVE" > "$HOME/.config/rclone/rclone.conf"
+          chmod 600 "$HOME/.config/rclone/rclone.conf"
+          rclone lsd gdrive: --max-depth 1 >/dev/null
+
+      - name: Resolve and download archive manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p archive-verification/manifests archive-verification/work
+          manifests_root="gdrive:storage-archive/manifests"
+
+          if [ -n "$MANIFEST_FOLDER" ]; then
+            selected="$MANIFEST_FOLDER"
+          else
+            selected="$(rclone lsf "$manifests_root" \
+              --drive-root-folder-id "$DRIVE_FOLDER_ID" \
+              --dirs-only | sed 's#/$##' | sort | tail -n 1)"
+          fi
+
+          test -n "$selected" || { echo "No archive manifest folder found"; exit 1; }
+          remote="$manifests_root/$selected"
+          rclone copy "$remote" archive-verification/manifests \
+            --drive-root-folder-id "$DRIVE_FOLDER_ID" \
+            --include 'archive-result.csv' \
+            --include 'source-manifest.csv' \
+            --include 'verification-summary.txt' \
+            --retries 5 --low-level-retries 20
+
+          test -s archive-verification/manifests/archive-result.csv || {
+            echo "archive-result.csv was not found in $selected"
+            exit 1
+          }
+          echo "SELECTED_MANIFEST=$selected" >> "$GITHUB_ENV"
+
+      - name: Build database reference map
+        shell: bash
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          export PGOPTIONS='-c statement_timeout=120000'
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F ',' -c "COPY (
+            WITH refs AS (
+              SELECT receipt_image_path AS object_name, 'delivery_orders.receipt_image_path' AS reference_source, id::text AS record_id
+              FROM public.delivery_orders
+              WHERE NULLIF(trim(receipt_image_path), '') IS NOT NULL
+              UNION ALL
+              SELECT proof_image_path, 'internal_trips.proof_image_path', id::text
+              FROM public.internal_trips
+              WHERE NULLIF(trim(proof_image_path), '') IS NOT NULL
+              UNION ALL
+              SELECT storage_path, 'internal_trips.storage_path', id::text
+              FROM public.internal_trips
+              WHERE NULLIF(trim(storage_path), '') IS NOT NULL
+              UNION ALL
+              SELECT storage_path, 'delivery_trips.storage_path', id::text
+              FROM public.delivery_trips
+              WHERE NULLIF(trim(storage_path), '') IS NOT NULL
+            )
+            SELECT object_name,
+                   count(*) AS reference_count,
+                   string_agg(DISTINCT reference_source, ' | ' ORDER BY reference_source) AS reference_sources,
+                   string_agg(record_id, ' | ' ORDER BY record_id) AS record_ids
+            FROM refs
+            GROUP BY object_name
+            ORDER BY object_name
+          ) TO STDOUT WITH CSV HEADER" > archive-verification/database-references.csv
+
+      - name: Verify every Drive object and checksum a sample
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import csv
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import random
+          import subprocess
+          import time
+          import urllib.parse
+          import urllib.request
+
+          root = pathlib.Path('archive-verification')
+          manifest_path = root / 'manifests' / 'archive-result.csv'
+          references_path = root / 'database-references.csv'
+          work = root / 'work'
+          work.mkdir(parents=True, exist_ok=True)
+
+          project_ref = os.environ['SUPABASE_PROJECT_REF']
+          bucket = os.environ['SUPABASE_BUCKET']
+          drive_root = os.environ['DRIVE_FOLDER_ID']
+          sample_size = int(os.environ['SAMPLE_SIZE'])
+
+          with references_path.open(encoding='utf-8', newline='') as fh:
+              refs = {row['object_name']: row for row in csv.DictReader(fh)}
+          with manifest_path.open(encoding='utf-8', newline='') as fh:
+              rows = list(csv.DictReader(fh))
+
+          if not rows:
+              raise RuntimeError('Archive manifest is empty')
+
+          def run(cmd, attempts=4):
+              last = None
+              for attempt in range(1, attempts + 1):
+                  proc = subprocess.run(cmd, text=True, capture_output=True)
+                  if proc.returncode == 0:
+                      return proc.stdout.strip()
+                  last = RuntimeError(f"Command failed: {' '.join(cmd)}\n{proc.stderr}")
+                  if attempt < attempts:
+                      time.sleep(attempt * 5)
+              raise last
+
+          verification_rows = []
+          remote_failures = []
+          for index, row in enumerate(rows, start=1):
+              name = row['name']
+              drive_path = row.get('drive_path') or f'storage-archive/{bucket}/{name}'
+              expected = int(row.get('downloaded_bytes') or row.get('expected_bytes') or 0)
+              remote = f'gdrive:{drive_path}'
+              try:
+                  payload = json.loads(run([
+                      'rclone', 'lsjson', remote,
+                      '--drive-root-folder-id', drive_root,
+                      '--files-only'
+                  ]))
+                  actual = int(payload[0]['Size']) if payload else -1
+                  status = 'verified' if actual == expected else 'size_mismatch'
+              except Exception as exc:
+                  actual = -1
+                  status = 'missing_or_unreadable'
+                  remote_failures.append((name, str(exc)))
+
+              ref = refs.get(name)
+              verification_rows.append({
+                  'name': name,
+                  'expected_bytes': expected,
+                  'drive_bytes': actual,
+                  'drive_status': status,
+                  'reference_count': int(ref['reference_count']) if ref else 0,
+                  'reference_sources': ref['reference_sources'] if ref else '',
+                  'record_ids': ref['record_ids'] if ref else '',
+                  'deletion_readiness': (
+                      'blocked_app_reference' if ref
+                      else 'low_risk_unreferenced_after_manual_review'
+                  ),
+              })
+              print(f'[{index}/{len(rows)}] {status}: {name}')
+
+          valid_for_sample = [r for r in verification_rows if r['drive_status'] == 'verified']
+          random.Random(20260725).shuffle(valid_for_sample)
+          sample = valid_for_sample[:min(sample_size, len(valid_for_sample))]
+
+          def sha256_file(path):
+              digest = hashlib.sha256()
+              with path.open('rb') as fh:
+                  for chunk in iter(lambda: fh.read(1024 * 1024), b''):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          checksum_rows = []
+          for index, row in enumerate(sample, start=1):
+              name = row['name']
+              quoted = urllib.parse.quote(name, safe='/')
+              source_url = f'https://{project_ref}.supabase.co/storage/v1/object/public/{bucket}/{quoted}'
+              supabase_file = work / f'supabase-{index}.bin'
+              drive_file = work / f'drive-{index}.bin'
+              request = urllib.request.Request(source_url, headers={'User-Agent': 'dawaa-archive-restore-verifier/1.0'})
+              with urllib.request.urlopen(request, timeout=180) as response, supabase_file.open('wb') as output:
+                  while chunk := response.read(1024 * 1024):
+                      output.write(chunk)
+
+              drive_path = next(r.get('drive_path') for r in rows if r['name'] == name)
+              run([
+                  'rclone', 'copyto', f'gdrive:{drive_path}', str(drive_file),
+                  '--drive-root-folder-id', drive_root,
+                  '--retries', '5', '--low-level-retries', '20'
+              ])
+              source_hash = sha256_file(supabase_file)
+              drive_hash = sha256_file(drive_file)
+              status = 'checksum_match' if source_hash == drive_hash else 'checksum_mismatch'
+              checksum_rows.append({
+                  'name': name,
+                  'supabase_bytes': supabase_file.stat().st_size,
+                  'drive_bytes': drive_file.stat().st_size,
+                  'supabase_sha256': source_hash,
+                  'drive_sha256': drive_hash,
+                  'status': status,
+              })
+              supabase_file.unlink(missing_ok=True)
+              drive_file.unlink(missing_ok=True)
+              print(f'[sample {index}/{len(sample)}] {status}: {name}')
+
+          with (root / 'archive-object-verification.csv').open('w', encoding='utf-8', newline='') as fh:
+              writer = csv.DictWriter(fh, fieldnames=verification_rows[0].keys())
+              writer.writeheader()
+              writer.writerows(verification_rows)
+          with (root / 'checksum-sample.csv').open('w', encoding='utf-8', newline='') as fh:
+              fields = ['name', 'supabase_bytes', 'drive_bytes', 'supabase_sha256', 'drive_sha256', 'status']
+              writer = csv.DictWriter(fh, fieldnames=fields)
+              writer.writeheader()
+              writer.writerows(checksum_rows)
+
+          verified_count = sum(r['drive_status'] == 'verified' for r in verification_rows)
+          referenced_count = sum(r['reference_count'] > 0 for r in verification_rows)
+          unreferenced_count = len(verification_rows) - referenced_count
+          checksum_matches = sum(r['status'] == 'checksum_match' for r in checksum_rows)
+          ready = (
+              verified_count == len(verification_rows)
+              and checksum_matches == len(checksum_rows)
+          )
+          summary = (
+              f'manifest_objects={len(verification_rows)}\n'
+              f'drive_verified={verified_count}\n'
+              f'drive_failed={len(verification_rows)-verified_count}\n'
+              f'checksum_sample_size={len(checksum_rows)}\n'
+              f'checksum_matches={checksum_matches}\n'
+              f'referenced_objects={referenced_count}\n'
+              f'unreferenced_objects={unreferenced_count}\n'
+              f'archive_integrity_ready={str(ready).lower()}\n'
+              f'supabase_deletion_enabled=false\n'
+          )
+          (root / 'verification-summary.txt').write_text(summary, encoding='utf-8')
+          print(summary)
+
+          with pathlib.Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as out:
+              out.write('## Delivery archive restore-readiness verification\n')
+              out.write(f'- Manifest: `{os.environ.get("SELECTED_MANIFEST", "")}`\n')
+              out.write(f'- Manifest objects: **{len(verification_rows):,}**\n')
+              out.write(f'- Drive size verification: **{verified_count:,}/{len(verification_rows):,}**\n')
+              out.write(f'- Downloaded checksum sample: **{checksum_matches}/{len(checksum_rows)} matched**\n')
+              out.write(f'- Objects still referenced by the live app: **{referenced_count:,}**\n')
+              out.write(f'- Unreferenced archived objects: **{unreferenced_count:,}**\n')
+              out.write('- Supabase deletion: **disabled**\n')
+              out.write('- Referenced files must not be deleted until the app supports archive fallback or restore-on-demand.\n')
+
+          if verified_count != len(verification_rows):
+              raise RuntimeError('One or more Google Drive archive objects failed size verification')
+          if checksum_matches != len(checksum_rows):
+              raise RuntimeError('One or more sampled objects failed SHA-256 comparison')
+          PY
+
+      - name: Upload protected verification artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: delivery-storage-archive-verification-${{ github.run_id }}
+          path: |
+            archive-verification/archive-object-verification.csv
+            archive-verification/checksum-sample.csv
+            archive-verification/database-references.csv
+            archive-verification/verification-summary.txt
+            archive-verification/manifests/
+          retention-days: 30
+          if-no-files-found: error
