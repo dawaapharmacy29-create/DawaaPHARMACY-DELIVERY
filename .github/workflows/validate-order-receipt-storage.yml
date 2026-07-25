@@ -41,13 +41,16 @@ jobs:
         run: |
           set -euo pipefail
           grep -Fq "storage-capacity-guard: compressed stable order receipt upload" src/pages/rider/RiderDashboard.tsx
-          grep -Fq 'const path = `orders/${rider.id}/${activeWorkDate}/${safeInvoice}.jpg`;' src/pages/rider/RiderDashboard.tsx
           grep -Fq 'upsert: true' src/pages/rider/RiderDashboard.tsx
           grep -Fq 'contentType: "image/jpeg"' src/pages/rider/RiderDashboard.tsx
           ! grep -Fq '${Date.now()}-${safeInvoice}' src/pages/rider/RiderDashboard.tsx
+          ! grep -Fq 'no_invoice.jpg' src/pages/rider/RiderDashboard.tsx
 
       - name: Typecheck
-        run: pnpm typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm exec tsc --noEmit --pretty false 2>&1 | tee typecheck.log
 
       - name: Build
         run: pnpm build
