@@ -9,13 +9,7 @@ function replaceOnce(before, after, label) {
   source = source.replace(before, after)
 }
 
-replaceOnce(
-  "function normalizeOrderInvoice(order: DeliveryOrder): string {\n  return normalizeInvoice((order as any).invoice_number || (order as any).invoice_no)\n}",
-  `function normalizeOrderInvoice(order: DeliveryOrder): string {
-  return normalizeInvoice((order as any).invoice_number || (order as any).invoice_no)
-}
-
-function orderTimestampValue(order: DeliveryOrder): string | null {
+const helpers = `function orderTimestampValue(order: DeliveryOrder): string | null {
   const row = order as any
   return row.rider_registered_at || row.order_received_at || order.registered_at || row.created_at || row.updated_at || null
 }
@@ -36,9 +30,21 @@ function formatOrderTimestamp(order: DeliveryOrder): string {
     minute: '2-digit',
     hour12: true,
   }).format(date)
-}`,
-  'timestamp helpers',
-)
+}
+
+`
+
+if (!source.includes('function orderTimestampValue(order: DeliveryOrder)')) {
+  const smartAnchor = 'function customerNamesDiffer(appName: unknown, systemName: unknown): boolean {'
+  const basicAnchor = 'function normalizeOrderInvoice(order: DeliveryOrder): string {\n  return normalizeInvoice((order as any).invoice_number || (order as any).invoice_no)\n}\n\n'
+  if (source.includes(smartAnchor)) {
+    source = source.replace(smartAnchor, `${helpers}${smartAnchor}`)
+  } else if (source.includes(basicAnchor)) {
+    source = source.replace(basicAnchor, `${basicAnchor}${helpers}`)
+  } else {
+    throw new Error('Order timestamp helper anchor not found')
+  }
+}
 
 replaceOnce(
   `<span className="text-lg font-black">فاتورة {inv}</span>
