@@ -1,0 +1,326 @@
+name: Prepare delivery storage cleanup dry run
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: Maximum unreferenced archived objects to include in the proposed cleanup batch
+        required: true
+        default: "5"
+      manifest_folder:
+        description: Optional manifest timestamp folder; leave blank to use the newest archive manifest
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: delivery-storage-cleanup-dry-run
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TZ: Africa/Cairo
+      SUPABASE_PROJECT_REF: qlugjplnnkjzxcbhwopg
+      SUPABASE_BUCKET: delivery-receipts
+      DRIVE_FOLDER_ID: 1igkeNEMib9oxgqtO78JxGs9rJibhTUG7
+      BATCH_SIZE: ${{ inputs.batch_size }}
+      MANIFEST_FOLDER: ${{ inputs.manifest_folder }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate inputs and secrets
+        shell: bash
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          RCLONE_CONFIG_GDRIVE: ${{ secrets.RCLONE_CONFIG_GDRIVE }}
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_DB_URL" || { echo "Missing SUPABASE_DB_URL"; exit 1; }
+          test -n "$RCLONE_CONFIG_GDRIVE" || { echo "Missing RCLONE_CONFIG_GDRIVE"; exit 1; }
+          [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || { echo "batch_size must be a positive integer"; exit 1; }
+          test "$BATCH_SIZE" -ge 1 || { echo "batch_size must be at least 1"; exit 1; }
+          test "$BATCH_SIZE" -le 25 || { echo "batch_size cannot exceed 25 in dry-run mode"; exit 1; }
+
+      - name: Install tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y postgresql-client
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          psql --version
+          rclone version
+
+      - name: Configure Google Drive remote
+        shell: bash
+        env:
+          RCLONE_CONFIG_GDRIVE: ${{ secrets.RCLONE_CONFIG_GDRIVE }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.config/rclone"
+          printf '%s' "$RCLONE_CONFIG_GDRIVE" > "$HOME/.config/rclone/rclone.conf"
+          chmod 600 "$HOME/.config/rclone/rclone.conf"
+          rclone lsd gdrive: --drive-root-folder-id "$DRIVE_FOLDER_ID" --max-depth 1 >/dev/null
+
+      - name: Select archive manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p cleanup-output
+          if [ -n "$MANIFEST_FOLDER" ]; then
+            selected="$MANIFEST_FOLDER"
+          else
+            selected="$(rclone lsf gdrive:storage-archive/manifests \
+              --drive-root-folder-id "$DRIVE_FOLDER_ID" \
+              --dirs-only | sed 's:/$::' | sort | tail -n 1)"
+          fi
+          test -n "$selected" || { echo "No archive manifest folder found"; exit 1; }
+          echo "SELECTED_MANIFEST=$selected" >> "$GITHUB_ENV"
+          rclone copyto \
+            "gdrive:storage-archive/manifests/$selected/archive-result.csv" \
+            cleanup-output/archive-result.csv \
+            --drive-root-folder-id "$DRIVE_FOLDER_ID"
+          test -s cleanup-output/archive-result.csv || { echo "Archive result manifest is empty"; exit 1; }
+
+      - name: Export current live storage references
+        shell: bash
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          export PGOPTIONS='-c statement_timeout=120000'
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F ',' <<'SQL' > cleanup-output/live-references.csv
+          DO $$
+          BEGIN
+            CREATE TEMP TABLE live_storage_references (
+              storage_path text PRIMARY KEY,
+              reference_count bigint NOT NULL DEFAULT 0,
+              reference_sources text NOT NULL DEFAULT ''
+            ) ON COMMIT DROP;
+
+            IF to_regclass('public.delivery_orders') IS NOT NULL THEN
+              INSERT INTO live_storage_references(storage_path, reference_count, reference_sources)
+              SELECT trim(receipt_image_path), count(*), 'delivery_orders.receipt_image_path'
+              FROM public.delivery_orders
+              WHERE nullif(trim(receipt_image_path), '') IS NOT NULL
+              GROUP BY trim(receipt_image_path)
+              ON CONFLICT (storage_path) DO UPDATE
+              SET reference_count = live_storage_references.reference_count + EXCLUDED.reference_count,
+                  reference_sources = concat_ws(' | ', live_storage_references.reference_sources, EXCLUDED.reference_sources);
+            END IF;
+
+            IF to_regclass('public.internal_trips') IS NOT NULL THEN
+              INSERT INTO live_storage_references(storage_path, reference_count, reference_sources)
+              SELECT trim(proof_image_path), count(*), 'internal_trips.proof_image_path'
+              FROM public.internal_trips
+              WHERE nullif(trim(proof_image_path), '') IS NOT NULL
+              GROUP BY trim(proof_image_path)
+              ON CONFLICT (storage_path) DO UPDATE
+              SET reference_count = live_storage_references.reference_count + EXCLUDED.reference_count,
+                  reference_sources = concat_ws(' | ', live_storage_references.reference_sources, EXCLUDED.reference_sources);
+            END IF;
+
+            IF to_regclass('public.delivery_trips') IS NOT NULL THEN
+              BEGIN
+                INSERT INTO live_storage_references(storage_path, reference_count, reference_sources)
+                SELECT trim(proof_image_path), count(*), 'delivery_trips.proof_image_path'
+                FROM public.delivery_trips
+                WHERE nullif(trim(proof_image_path), '') IS NOT NULL
+                GROUP BY trim(proof_image_path)
+                ON CONFLICT (storage_path) DO UPDATE
+                SET reference_count = live_storage_references.reference_count + EXCLUDED.reference_count,
+                    reference_sources = concat_ws(' | ', live_storage_references.reference_sources, EXCLUDED.reference_sources);
+              EXCEPTION WHEN undefined_column THEN
+                NULL;
+              END;
+            END IF;
+
+            COPY live_storage_references TO STDOUT WITH CSV HEADER;
+          END $$;
+          SQL
+
+      - name: Build and verify proposed cleanup batch
+        shell: bash
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import csv
+          import os
+          import pathlib
+          import subprocess
+          import urllib.parse
+          import urllib.request
+
+          root = pathlib.Path('cleanup-output')
+          archive_rows = list(csv.DictReader((root / 'archive-result.csv').open(encoding='utf-8')))
+          reference_rows = list(csv.DictReader((root / 'live-references.csv').open(encoding='utf-8')))
+          references = {row['storage_path']: row for row in reference_rows if row.get('storage_path')}
+          batch_size = int(os.environ['BATCH_SIZE'])
+          project_ref = os.environ['SUPABASE_PROJECT_REF']
+          bucket = os.environ['SUPABASE_BUCKET']
+          drive_root = os.environ['DRIVE_FOLDER_ID']
+
+          candidates = []
+          for row in archive_rows:
+              name = (row.get('name') or '').strip()
+              if not name or row.get('status') != 'verified' or name in references:
+                  continue
+              expected = int(row.get('expected_bytes') or row.get('downloaded_bytes') or 0)
+              drive_path = (row.get('drive_path') or f'storage-archive/{bucket}/{name}').strip()
+              candidates.append({
+                  'name': name,
+                  'expected_bytes': expected,
+                  'drive_path': drive_path,
+                  'created_at': row.get('created_at', ''),
+              })
+
+          candidates.sort(key=lambda row: (row['created_at'], row['name']))
+          proposed = candidates[:batch_size]
+          if not proposed:
+              raise SystemExit('No currently unreferenced archived objects are available for a dry-run batch')
+
+          fields = [
+              'name', 'created_at', 'expected_bytes', 'drive_path',
+              'supabase_present', 'supabase_bytes', 'drive_present', 'drive_bytes',
+              'currently_referenced', 'eligible_for_manual_cleanup_review'
+          ]
+          output_path = root / 'proposed-cleanup-batch.csv'
+          verified_rows = []
+
+          for row in proposed:
+              name = row['name']
+              quoted = urllib.parse.quote(name, safe='/')
+              source_url = f'https://{project_ref}.supabase.co/storage/v1/object/public/{bucket}/{quoted}'
+              req = urllib.request.Request(source_url, method='HEAD', headers={'User-Agent': 'dawaa-cleanup-dry-run/1.0'})
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as response:
+                      supabase_present = True
+                      supabase_bytes = int(response.headers.get('Content-Length') or 0)
+              except Exception as exc:
+                  raise RuntimeError(f'Supabase object is not readable: {name}: {exc}')
+
+              remote = f"gdrive:{row['drive_path']}"
+              completed = subprocess.run([
+                  'rclone', 'lsjson', remote,
+                  '--drive-root-folder-id', drive_root,
+                  '--files-only'
+              ], text=True, capture_output=True)
+              if completed.returncode != 0:
+                  raise RuntimeError(f'Unable to verify Drive object {row["drive_path"]}: {completed.stderr}')
+              import json
+              drive_rows = json.loads(completed.stdout or '[]')
+              if not drive_rows:
+                  raise RuntimeError(f'Drive object missing: {row["drive_path"]}')
+              drive_bytes = int(drive_rows[0].get('Size') or 0)
+              expected = row['expected_bytes']
+              if expected and drive_bytes != expected:
+                  raise RuntimeError(f'Drive size mismatch for {name}: expected {expected}, found {drive_bytes}')
+              if expected and supabase_bytes and supabase_bytes != expected:
+                  raise RuntimeError(f'Supabase size mismatch for {name}: expected {expected}, found {supabase_bytes}')
+
+              verified_rows.append({
+                  **row,
+                  'supabase_present': 'true',
+                  'supabase_bytes': supabase_bytes,
+                  'drive_present': 'true',
+                  'drive_bytes': drive_bytes,
+                  'currently_referenced': 'false',
+                  'eligible_for_manual_cleanup_review': 'true',
+              })
+
+          with output_path.open('w', newline='', encoding='utf-8') as handle:
+              writer = csv.DictWriter(handle, fieldnames=fields)
+              writer.writeheader()
+              writer.writerows(verified_rows)
+
+          total_bytes = sum(int(row['expected_bytes'] or row['drive_bytes'] or 0) for row in verified_rows)
+          (root / 'cleanup-summary.txt').write_text(
+              f"manifest={os.environ['SELECTED_MANIFEST']}\n"
+              f"total_unreferenced_archived_objects={len(candidates)}\n"
+              f"proposed_batch_objects={len(verified_rows)}\n"
+              f"proposed_batch_bytes={total_bytes}\n"
+              f"deletion_enabled=false\n",
+              encoding='utf-8'
+          )
+          print(f'Prepared {len(verified_rows)} safe-review candidates totaling {total_bytes} bytes')
+          PY
+
+      - name: Recheck references immediately before publishing report
+        shell: bash
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import csv
+          import os
+          import pathlib
+          import subprocess
+
+          path = pathlib.Path('cleanup-output/proposed-cleanup-batch.csv')
+          rows = list(csv.DictReader(path.open(encoding='utf-8')))
+          names = [row['name'] for row in rows]
+          if not names:
+              raise SystemExit('No proposed rows')
+
+          sql_values = ','.join("'" + name.replace("'", "''") + "'" for name in names)
+          query = f"""
+          SELECT count(*) FROM (
+            SELECT receipt_image_path AS path FROM public.delivery_orders WHERE receipt_image_path IN ({sql_values})
+            UNION ALL
+            SELECT proof_image_path AS path FROM public.internal_trips WHERE proof_image_path IN ({sql_values})
+          ) refs;
+          """
+          result = subprocess.run(
+              ['psql', os.environ['SUPABASE_DB_URL'], '-v', 'ON_ERROR_STOP=1', '-At', '-c', query],
+              text=True, capture_output=True
+          )
+          if result.returncode != 0:
+              raise RuntimeError(result.stderr)
+          count = int((result.stdout or '0').strip())
+          if count != 0:
+              raise RuntimeError(f'Safety stop: {count} proposed objects became referenced during the dry run')
+          print('Final live-reference recheck passed: 0 references')
+          PY
+
+      - name: Write dry-run summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import csv
+          import pathlib
+          import os
+
+          root = pathlib.Path('cleanup-output')
+          rows = list(csv.DictReader((root / 'proposed-cleanup-batch.csv').open(encoding='utf-8')))
+          total = sum(int(row['expected_bytes'] or row['drive_bytes'] or 0) for row in rows)
+          mb = total / 1024 / 1024
+          with pathlib.Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as out:
+              out.write('## Delivery storage cleanup dry run\n')
+              out.write(f'- Manifest: `{os.environ["SELECTED_MANIFEST"]}`\n')
+              out.write(f'- Proposed objects: **{len(rows)}**\n')
+              out.write(f'- Expected space recovery: **{mb:.2f} MB** ({total:,} bytes)\n')
+              out.write('- Supabase presence: **verified**\n')
+              out.write('- Google Drive archive presence and size: **verified**\n')
+              out.write('- Current live references: **0**\n')
+              out.write('- Deletion: **disabled — report only**\n')
+              out.write('- Next step: manually review the generated CSV before creating any deletion workflow.\n')
+          PY
+
+      - name: Upload protected dry-run artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: delivery-storage-cleanup-dry-run-${{ github.run_id }}
+          path: cleanup-output/
+          retention-days: 30
+          if-no-files-found: error
