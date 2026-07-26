@@ -9,11 +9,18 @@ async function patchSafe() {
     if (!source.includes(anchor)) throw new Error('ReconciliationSafe import anchor not found')
     source = source.replace(anchor, `${anchor}\n${importLine}`)
   }
-  const renderAnchor = '<div ref={rootRef}>\n      <Reconciliation />'
-  const renderReplacement = '<div ref={rootRef}>\n      <div className="mx-auto max-w-7xl px-4 pt-4"><ReconciliationCycleSummary /></div>\n      <Reconciliation />'
-  if (!source.includes(renderReplacement)) {
-    if (!source.includes(renderAnchor)) throw new Error('ReconciliationSafe render anchor not found')
-    source = source.replace(renderAnchor, renderReplacement)
+
+  const summaryLine = '      <div className="mx-auto max-w-7xl px-4 pt-4"><ReconciliationCycleSummary /></div>'
+  if (!source.includes(summaryLine)) {
+    const withMismatch = '<div ref={rootRef}>\n      <CustomerNameMismatchPanel />\n      <Reconciliation />'
+    const withoutMismatch = '<div ref={rootRef}>\n      <Reconciliation />'
+    if (source.includes(withMismatch)) {
+      source = source.replace(withMismatch, `<div ref={rootRef}>\n${summaryLine}\n      <CustomerNameMismatchPanel />\n      <Reconciliation />`)
+    } else if (source.includes(withoutMismatch)) {
+      source = source.replace(withoutMismatch, `<div ref={rootRef}>\n${summaryLine}\n      <Reconciliation />`)
+    } else {
+      throw new Error('ReconciliationSafe render anchor not found')
+    }
   }
   await writeFile(file, source, 'utf8')
 }
