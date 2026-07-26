@@ -44,12 +44,21 @@ jobs:
         continue-on-error: true
         shell: bash
         run: pnpm run typecheck 2>&1 | tee typecheck-output.txt
-      - name: Upload typecheck diagnostics
+      - name: Production build
+        id: production_build
+        shell: bash
+        run: |
+          set +e
+          pnpm run build > build-output.txt 2>&1
+          code=$?
+          cat build-output.txt
+          exit $code
+      - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: incremental-reconciliation-typecheck-${{ github.run_id }}
-          path: typecheck-output.txt
+          name: incremental-reconciliation-diagnostics-${{ github.run_id }}
+          path: |
+            typecheck-output.txt
+            build-output.txt
           if-no-files-found: ignore
-      - name: Production build
-        run: pnpm run build
