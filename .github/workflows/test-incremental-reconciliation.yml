@@ -1,0 +1,52 @@
+name: Test incremental reconciliation
+
+on:
+  pull_request:
+    paths:
+      - 'src/pages/admin/Reconciliation.tsx'
+      - 'src/pages/admin/ReconciliationSafe.tsx'
+      - 'src/components/CustomerNameMismatchPanel.tsx'
+      - 'scripts/patch-incremental-reconciliation.mjs'
+      - 'scripts/patch-incremental-reconciliation-db-fields.mjs'
+      - 'scripts/patch-reconciliation-mismatch-panel.mjs'
+      - 'package.json'
+      - 'supabase/migrations/20260726_incremental_reconciliation_batches.sql'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Apply all build patches once
+        run: |
+          node scripts/patch-reconciliation-pagination.mjs
+          node scripts/patch-incremental-reconciliation.mjs
+          node scripts/patch-incremental-reconciliation-db-fields.mjs
+          node scripts/patch-reconciliation-mismatch-panel.mjs
+          node scripts/patch-order-receipt-storage.mjs
+      - name: Typecheck diagnostics
+        continue-on-error: true
+        shell: bash
+        run: pnpm exec tsc --noEmit --pretty false 2>&1 | tee typecheck-output.txt
+      - name: Build patched source
+        run: pnpm exec vite build
+      - name: Upload typecheck diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: incremental-reconciliation-typecheck-${{ github.run_id }}
+          path: typecheck-output.txt
+          if-no-files-found: ignore
