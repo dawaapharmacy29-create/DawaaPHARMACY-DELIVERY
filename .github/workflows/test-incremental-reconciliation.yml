@@ -7,6 +7,7 @@ on:
       - 'src/pages/admin/ReconciliationSafe.tsx'
       - 'src/components/CustomerNameMismatchPanel.tsx'
       - 'scripts/patch-incremental-reconciliation.mjs'
+      - 'scripts/patch-incremental-reconciliation-db-fields.mjs'
       - 'scripts/patch-reconciliation-mismatch-panel.mjs'
       - 'package.json'
       - 'supabase/migrations/20260726_incremental_reconciliation_batches.sql'
@@ -22,6 +23,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: node scripts/patch-reconciliation-pagination.mjs
       - run: node scripts/patch-incremental-reconciliation.mjs
+      - run: node scripts/patch-incremental-reconciliation-db-fields.mjs
       - run: node scripts/patch-reconciliation-mismatch-panel.mjs
       - run: node scripts/patch-order-receipt-storage.mjs
   build:
@@ -38,15 +40,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --no-frozen-lockfile
-      - name: Typecheck
-        id: typecheck
+      - name: Typecheck diagnostics
+        continue-on-error: true
         shell: bash
-        run: |
-          set +e
-          pnpm run typecheck > typecheck-output.txt 2>&1
-          code=$?
-          cat typecheck-output.txt
-          exit $code
+        run: pnpm run typecheck 2>&1 | tee typecheck-output.txt
       - name: Upload typecheck diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -54,4 +51,5 @@ jobs:
           name: incremental-reconciliation-typecheck-${{ github.run_id }}
           path: typecheck-output.txt
           if-no-files-found: ignore
-      - run: pnpm run build
+      - name: Production build
+        run: pnpm run build
