@@ -15,13 +15,9 @@ async function patchPage() {
   if (!source.includes(summaryLine)) {
     const panelLine = '        <CustomerNameMismatchPanel />'
     const cycleLine = '        <CycleSelector from={selectedFrom} to={selectedTo} onApply={handleCycleApply} />'
-    if (source.includes(panelLine)) {
-      source = source.replace(panelLine, `${summaryLine}\n\n${panelLine}`)
-    } else if (source.includes(cycleLine)) {
-      source = source.replace(cycleLine, `${cycleLine}\n\n${summaryLine}`)
-    } else {
-      throw new Error('Reconciliation summary insertion anchor not found')
-    }
+    if (source.includes(panelLine)) source = source.replace(panelLine, `${summaryLine}\n\n${panelLine}`)
+    else if (source.includes(cycleLine)) source = source.replace(cycleLine, `${cycleLine}\n\n${summaryLine}`)
+    else throw new Error('Reconciliation summary insertion anchor not found')
   }
 
   const replacements = [
@@ -34,6 +30,7 @@ async function patchPage() {
     ['<Kpi label="غير موجودة ببي كونكت" value={notFoundTotal} tone="red" />', '<Kpi label="غير موجودة بأي ملف مرفوع" value={notFoundTotal} tone="red" />'],
     ["  const riskTotal = failedTotal + notFoundTotal + duplicateTotal + deletedTotal", "  const riskTotal = orders.filter(o => Boolean((o as any).deleted_at) || o.status === 'failed' || o.bconnect_match_status === 'invoice_not_found' || duplicateInvoiceSet.has(normalizeOrderInvoice(o)) || o.is_duplicate_invoice).length"],
     ['<Kpi label="مؤشر مخاطر" value={riskTotal} tone="red" />', '<Kpi label="حالات تحتاج مراجعة" value={riskTotal} tone="red" />'],
+    ['        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">', '        <div id="reconciliation-orders-list" className="scroll-mt-24 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">'],
   ]
 
   for (const [before, after] of replacements) {
