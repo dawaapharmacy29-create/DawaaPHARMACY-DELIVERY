@@ -1,0 +1,144 @@
+name: Archive one delivery cycle to Google Drive
+
+on:
+  workflow_dispatch:
+    inputs:
+      period_start:
+        description: Cycle start date (YYYY-MM-DD, normally day 26)
+        required: true
+      period_end:
+        description: Cycle end date (YYYY-MM-DD, normally day 25)
+        required: true
+      max_objects:
+        description: Safety cap per run
+        required: true
+        default: "5000"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: delivery-cycle-storage-archive
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      TZ: Africa/Cairo
+      SUPABASE_PROJECT_REF: qlugjplnnkjzxcbhwopg
+      SUPABASE_BUCKET: delivery-receipts
+      DRIVE_FOLDER_ID: 1igkeNEMib9oxgqtO78JxGs9rJibhTUG7
+      PERIOD_START: ${{ inputs.period_start }}
+      PERIOD_END: ${{ inputs.period_end }}
+      MAX_OBJECTS: ${{ inputs.max_objects }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate inputs and secrets
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          RCLONE_CONFIG_GDRIVE: ${{ secrets.RCLONE_CONFIG_GDRIVE }}
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_DB_URL"
+          test -n "$RCLONE_CONFIG_GDRIVE"
+          [[ "$PERIOD_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+          [[ "$PERIOD_END" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+          [[ "$MAX_OBJECTS" =~ ^[0-9]+$ ]]
+          test "$MAX_OBJECTS" -ge 1 && test "$MAX_OBJECTS" -le 10000
+      - name: Install tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y postgresql-client
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+      - name: Configure Google Drive
+        env:
+          RCLONE_CONFIG_GDRIVE: ${{ secrets.RCLONE_CONFIG_GDRIVE }}
+        run: |
+          mkdir -p "$HOME/.config/rclone"
+          printf '%s' "$RCLONE_CONFIG_GDRIVE" > "$HOME/.config/rclone/rclone.conf"
+          chmod 600 "$HOME/.config/rclone/rclone.conf"
+          rclone lsd gdrive: --drive-root-folder-id "$DRIVE_FOLDER_ID" --max-depth 1 >/dev/null
+      - name: Build cycle inventory
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p cycle-archive
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -F ',' -c "COPY (
+            SELECT * FROM public.get_delivery_cycle_storage_inventory('${PERIOD_START}'::date, '${PERIOD_END}'::date)
+            ORDER BY operational_date, storage_path
+            LIMIT ${MAX_OBJECTS}
+          ) TO STDOUT WITH CSV HEADER" > cycle-archive/inventory.csv
+          rows=$(( $(wc -l < cycle-archive/inventory.csv) - 1 ))
+          test "$rows" -gt 0 || { echo 'No cycle images found'; exit 1; }
+          echo "OBJECT_ROWS=$rows" >> "$GITHUB_ENV"
+      - name: Resolve cycle id
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          cycle_id="$(psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -At -c "select id from public.delivery_cycles where period_start='${PERIOD_START}' and period_end='${PERIOD_END}' limit 1")"
+          test -n "$cycle_id" || { echo 'Create the cycle in delivery_cycles first'; exit 1; }
+          echo "CYCLE_ID=$cycle_id" >> "$GITHUB_ENV"
+      - name: Archive and verify each image
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import csv, hashlib, json, os, pathlib, subprocess, urllib.parse, urllib.request
+          root=pathlib.Path('cycle-archive'); work=pathlib.Path('/tmp/cycle-archive'); work.mkdir(parents=True,exist_ok=True)
+          rows=list(csv.DictReader((root/'inventory.csv').open(encoding='utf-8')))
+          out=[]; seen=set(); cycle_key=f"{os.environ['PERIOD_START']}_to_{os.environ['PERIOD_END']}"
+          def run(cmd):
+            p=subprocess.run(cmd,text=True,capture_output=True)
+            if p.returncode: raise RuntimeError(p.stderr)
+            return p.stdout.strip()
+          for row in rows:
+            name=row['storage_path'].strip()
+            if not name or name in seen: continue
+            seen.add(name)
+            local=work/pathlib.Path(name).name
+            url=f"https://{os.environ['SUPABASE_PROJECT_REF']}.supabase.co/storage/v1/object/public/{os.environ['SUPABASE_BUCKET']}/{urllib.parse.quote(name,safe='/')}"
+            with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'dawaa-cycle-archive/1.0'}),timeout=180) as r, local.open('wb') as f:
+              while chunk:=r.read(1024*1024): f.write(chunk)
+            size=local.stat().st_size; sha=hashlib.sha256(local.read_bytes()).hexdigest()
+            drive_path=f"storage-archive/cycles/{cycle_key}/{name}"
+            remote=f"gdrive:{drive_path}"
+            run(['rclone','copyto',str(local),remote,'--drive-root-folder-id',os.environ['DRIVE_FOLDER_ID'],'--checksum','--retries','5'])
+            meta=json.loads(run(['rclone','lsjson',remote,'--drive-root-folder-id',os.environ['DRIVE_FOLDER_ID'],'--files-only']))
+            if not meta or int(meta[0].get('Size') or -1)!=size: raise RuntimeError(f'Drive verification failed: {name}')
+            link=run(['rclone','link',remote,'--drive-root-folder-id',os.environ['DRIVE_FOLDER_ID']])
+            file_id=str(meta[0].get('ID') or '')
+            sql="select public.mark_cycle_archive_asset_verified(" + ','.join([
+              f"'{os.environ['CYCLE_ID']}'::uuid",
+              "'"+row['source_table'].replace("'","''")+"'",
+              f"'{row['source_record_id']}'::uuid",
+              "'"+row['source_column'].replace("'","''")+"'",
+              "'"+name.replace("'","''")+"'",
+              str(size), "'"+sha+"'", "'"+drive_path.replace("'","''")+"'",
+              "'"+file_id.replace("'","''")+"'", "'"+link.replace("'","''")+"'",
+              "jsonb_build_object('period_start','"+os.environ['PERIOD_START']+"','period_end','"+os.environ['PERIOD_END']+"')"
+            ])+");"
+            run(['psql',os.environ['SUPABASE_DB_URL'],'-v','ON_ERROR_STOP=1','-At','-c',sql])
+            out.append({**row,'bytes':size,'sha256':sha,'drive_path':drive_path,'drive_link':link,'status':'verified'})
+            local.unlink(missing_ok=True)
+          fields=list(out[0].keys())
+          with (root/'archive-result.csv').open('w',newline='',encoding='utf-8') as f:
+            w=csv.DictWriter(f,fieldnames=fields); w.writeheader(); w.writerows(out)
+          total=sum(int(r['bytes']) for r in out)
+          (root/'summary.txt').write_text(f"cycle={cycle_key}\nobjects={len(out)}\nbytes={total}\ndeleted_from_supabase=false\n",encoding='utf-8')
+          with pathlib.Path(os.environ['GITHUB_STEP_SUMMARY']).open('a',encoding='utf-8') as f:
+            f.write(f"## Cycle storage archive\n- Cycle: **{cycle_key}**\n- Archived and verified: **{len(out)}**\n- Bytes protected: **{total:,}**\n- Supabase deletion: **disabled**\n")
+          PY
+      - name: Upload manifests to Drive
+        run: |
+          stamp="$(date +'%Y-%m-%d_%H-%M-%S')"
+          rclone copy cycle-archive "gdrive:storage-archive/cycle-manifests/${PERIOD_START}_to_${PERIOD_END}/${stamp}" --drive-root-folder-id "$DRIVE_FOLDER_ID" --checksum
+      - uses: actions/upload-artifact@v4
+        with:
+          name: delivery-cycle-archive-${{ github.run_id }}
+          path: cycle-archive/
+          retention-days: 30
