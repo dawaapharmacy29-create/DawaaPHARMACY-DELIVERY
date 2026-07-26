@@ -3,8 +3,8 @@ import Reconciliation from './Reconciliation'
 import { supabase } from '../../lib/supabase'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const BULK_INSERT_TABLES = new Set(['monthly_system_invoices', 'monthly_invoice_reconciliation_results'])
-const RETRYABLE_MESSAGE = /(timeout|network|fetch|connection|انتهى|شبكة)/i
+const BULK_WRITE_TABLES = new Set(['monthly_system_invoices', 'monthly_invoice_reconciliation_results'])
+const RETRYABLE_MESSAGE = /(timeout|network|fetch|connection|statement timeout|انتهى|شبكة)/i
 const INLINE_ACTION_LABELS = [
   'اعتماد يدوي',
   'استبعاد',
@@ -14,6 +14,8 @@ const INLINE_ACTION_LABELS = [
   'حفظ التعديل',
   'تعديل البيانات',
 ]
+
+type BulkWriteMode = 'insert' | 'upsert'
 
 function findBatchId(value: unknown): string | null {
   if (typeof value === 'string') return UUID_RE.test(value) ? value : null
@@ -33,8 +35,6 @@ function findBatchId(value: unknown): string | null {
     if (typeof direct === 'string' && UUID_RE.test(direct)) return direct
   }
 
-  // لا نبحث داخل كل قيم الكائن عشوائياً؛ قد يحتوي رد الـ RPC على UUID آخر
-  // مثل uploaded_by أو auth_user_id، واستخدامه كـ batch_id يسبب خطأ foreign key.
   return null
 }
 
@@ -98,7 +98,7 @@ function createGate(maxConcurrent: number) {
   }
 }
 
-const runLimited = createGate(5)
+const runLimited = createGate(4)
 
 function wrapBuilder(builder: any): any {
   return new Proxy(builder, {
@@ -119,21 +119,53 @@ function wrapBuilder(builder: any): any {
   })
 }
 
-async function insertInChunks(tableName: string, rows: unknown[], options?: unknown) {
-  const chunkSize = tableName === 'monthly_system_invoices' ? 75 : 60
-  let inserted = 0
+function chunkSizeFor(tableName: string, mode: BulkWriteMode) {
+  if (tableName === 'monthly_system_invoices') return mode === 'upsert' ? 25 : 40
+  return 40
+}
+
+async function writeChunk(tableName: string, mode: BulkWriteMode, rows: unknown[], options?: unknown): Promise<any> {
+  const table = (supabase as any).__reconciliationOriginalFrom(tableName)
+  const run = () => Promise.resolve(mode === 'upsert' ? table.upsert(rows, options) : table.insert(rows, options))
+  const result: any = await withRetry(run, 4)
+
+  if (!result?.error) return result
+  const retryable = RETRYABLE_MESSAGE.test(messageOf(result.error))
+  if (!retryable || rows.length === 1) return result
+
+  const middle = Math.ceil(rows.length / 2)
+  const left = await writeChunk(tableName, mode, rows.slice(0, middle), options)
+  if (left?.error) return left
+  const right = await writeChunk(tableName, mode, rows.slice(middle), options)
+  if (right?.error) return right
+
+  return {
+    data: null,
+    error: null,
+    count: Number(left?.count || rows.slice(0, middle).length) + Number(right?.count || rows.slice(middle).length),
+    status: 201,
+    statusText: mode === 'upsert' ? 'Upserted' : 'Created',
+  }
+}
+
+async function writeInChunks(tableName: string, mode: BulkWriteMode, rows: unknown[], options?: unknown) {
+  const chunkSize = chunkSizeFor(tableName, mode)
+  let written = 0
 
   for (let index = 0; index < rows.length; index += chunkSize) {
     const chunk = rows.slice(index, index + chunkSize)
-    const result: any = await withRetry(
-      () => Promise.resolve((supabase as any).__reconciliationOriginalFrom(tableName).insert(chunk, options)),
-      4,
-    )
+    const result = await writeChunk(tableName, mode, chunk, options)
     if (result?.error) return result
-    inserted += chunk.length
+    written += chunk.length
   }
 
-  return { data: null, error: null, count: inserted, status: 201, statusText: 'Created' }
+  return {
+    data: null,
+    error: null,
+    count: written,
+    status: 201,
+    statusText: mode === 'upsert' ? 'Upserted' : 'Created',
+  }
 }
 
 const client = supabase as any
@@ -165,10 +197,13 @@ if (!client.__reconciliationNetworkPatched) {
     const query = originalFrom(tableName)
     return new Proxy(query, {
       get(target, property, receiver) {
-        if (property === 'insert' && BULK_INSERT_TABLES.has(tableName)) {
+        if ((property === 'insert' || property === 'upsert') && BULK_WRITE_TABLES.has(tableName)) {
           return (values: unknown, options?: unknown) => {
-            if (Array.isArray(values) && values.length > 60) return insertInChunks(tableName, values, options)
-            return wrapBuilder(target.insert(values, options))
+            if (Array.isArray(values) && values.length > chunkSizeFor(tableName, property as BulkWriteMode)) {
+              return writeInChunks(tableName, property as BulkWriteMode, values, options)
+            }
+            const builder = property === 'upsert' ? (target as any).upsert(values, options) : (target as any).insert(values, options)
+            return wrapBuilder(builder)
           }
         }
 
