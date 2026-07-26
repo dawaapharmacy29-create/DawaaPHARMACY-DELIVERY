@@ -29,12 +29,16 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --no-frozen-lockfile
-      - name: Run patches twice to verify idempotency
+      - name: Patch complete data loading
+        run: node scripts/patch-reconciliation-pagination.mjs
+      - name: Patch cumulative reconciliation
+        run: node scripts/patch-incremental-reconciliation.mjs
+      - name: Patch customer mismatch panel
+        run: node scripts/patch-reconciliation-mismatch-panel.mjs
+      - name: Patch image storage
+        run: node scripts/patch-order-receipt-storage.mjs
+      - name: Verify patch idempotency
         run: |
-          node scripts/patch-reconciliation-pagination.mjs
-          node scripts/patch-incremental-reconciliation.mjs
-          node scripts/patch-reconciliation-mismatch-panel.mjs
-          node scripts/patch-order-receipt-storage.mjs
           node scripts/patch-reconciliation-pagination.mjs
           node scripts/patch-incremental-reconciliation.mjs
           node scripts/patch-reconciliation-mismatch-panel.mjs
