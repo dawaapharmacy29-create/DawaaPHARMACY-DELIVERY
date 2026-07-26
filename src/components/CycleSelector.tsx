@@ -1,75 +1,111 @@
-import { useMemo, useState, useEffect } from 'react'
-
-type CycleOption = {
-  label: string
-  start: string
-  end: string
-}
+import { useEffect, useMemo, useState } from 'react'
+import { CalendarDays, CalendarRange, ChevronDown, Clock3 } from 'lucide-react'
+import {
+  cycleForDate,
+  currentWeekRange,
+  getDeliveryCycleOptions,
+  lastCyclesRange,
+  todayRange,
+  type DeliveryCycleRange,
+} from '../lib/deliveryCycles'
 
 type CycleSelectorProps = {
   from: string
   to: string
   onApply: (from: string, to: string) => void
-}
-
-function pad(value: number) {
-  return String(value).padStart(2, '0')
-}
-
-function iso(date: Date) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
-
-function currentCycle(): CycleOption {
-  const now = new Date()
-  const start = now.getDate() >= 26 ? new Date(now.getFullYear(), now.getMonth(), 26) : new Date(now.getFullYear(), now.getMonth() - 1, 26)
-  const end = new Date(start.getFullYear(), start.getMonth() + 1, 25)
-  return { label: 'الدورة الحالية', start: iso(start), end: iso(end) }
-}
-
-function shiftCycle(base: CycleOption, months: number, label: string): CycleOption {
-  const baseDate = new Date(`${base.start}T00:00:00`)
-  const start = new Date(baseDate.getFullYear(), baseDate.getMonth() + months, 26)
-  const end = new Date(start.getFullYear(), start.getMonth() + 1, 25)
-  return { label, start: iso(start), end: iso(end) }
+  compact?: boolean
+  showSmartRanges?: boolean
 }
 
 export function getCycleOptions(count = 12) {
-  const base = currentCycle()
-  return Array.from({ length: count }, (_, index) => shiftCycle(base, -index, index === 0 ? 'الدورة الحالية' : `دورة سابقة ${index}`))
+  return getDeliveryCycleOptions(count)
 }
 
-export default function CycleSelector({ from, to, onApply }: CycleSelectorProps) {
-  const cycles = useMemo(() => getCycleOptions(12), [])
+function rangeLabel(from: string, to: string) {
+  return from === to ? from : `${from} إلى ${to}`
+}
+
+export default function CycleSelector({ from, to, onApply, compact = false, showSmartRanges = true }: CycleSelectorProps) {
+  const cycles = useMemo(() => getDeliveryCycleOptions(18), [])
   const [manualFrom, setManualFrom] = useState(from)
   const [manualTo, setManualTo] = useState(to)
+  const [expanded, setExpanded] = useState(!compact)
 
   useEffect(() => {
     setManualFrom(from)
     setManualTo(to)
   }, [from, to])
 
+  function applyCycle(cycle: DeliveryCycleRange) {
+    setManualFrom(cycle.start)
+    setManualTo(cycle.end)
+    onApply(cycle.start, cycle.end)
+  }
+
+  function applyRange(start: string, end: string) {
+    setManualFrom(start)
+    setManualTo(end)
+    onApply(start, end)
+  }
+
+  const current = cycleForDate()
+  const selectedCycle = cycles.find(cycle => cycle.start === from && cycle.end === to)
+
   return (
-    <div className="rounded-3xl border border-teal-100 bg-white p-4 shadow-sm" dir="rtl">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-lg font-black text-[#061827]">اختيار الدورة</h2>
-          <p className="text-xs font-bold text-slate-500">راجع أي دورة من 26 إلى 25 أو اختر فترة مخصصة.</p>
+    <section className="rounded-[28px] border border-teal-100 bg-white p-4 shadow-sm" dir="rtl">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="rounded-2xl bg-teal-50 p-3 text-[#008E92]"><CalendarRange size={22} /></div>
+          <div>
+            <h2 className="text-lg font-black text-[#061827]">الفترة التشغيلية</h2>
+            <p className="text-xs font-bold text-slate-500">الدورة الرسمية تبدأ يوم 26 وتنتهي يوم 25.</p>
+          </div>
         </div>
-        <span className="rounded-full bg-teal-50 px-4 py-2 text-xs font-black text-teal-700">{from} إلى {to}</span>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {cycles.slice(0, 6).map(cycle => (
-          <button key={`${cycle.start}-${cycle.end}`} onClick={() => onApply(cycle.start, cycle.end)} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-teal-100 hover:text-teal-800">
-            {cycle.label}: {cycle.start} / {cycle.end}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-2xl bg-[#EAF8F8] px-4 py-2 text-xs font-black text-[#008E92]">
+            {selectedCycle?.label || rangeLabel(from, to)}
+          </span>
+          <button type="button" onClick={() => setExpanded(value => !value)} className="inline-flex items-center gap-2 rounded-2xl border px-4 py-2 text-xs font-black text-slate-600">
+            {expanded ? 'إخفاء الاختيارات' : 'تغيير الفترة'}
+            <ChevronDown size={15} className={expanded ? 'rotate-180 transition' : 'transition'} />
           </button>
-        ))}
+        </div>
       </div>
-      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-        <input type="date" value={manualFrom} onChange={e => setManualFrom(e.target.value)} className="dawaa-input" />
-        <input type="date" value={manualTo} onChange={e => setManualTo(e.target.value)} className="dawaa-input" />
-        <button onClick={() => onApply(manualFrom, manualTo)} className="rounded-2xl bg-[#008E92] px-5 py-3 font-black text-white hover:bg-[#05777B]">تطبيق الفترة</button>
-      </div>
-    </div>
+
+      {expanded && <div className="mt-4 space-y-4">
+        {showSmartRanges && <div>
+          <p className="mb-2 text-xs font-black text-slate-400">اختيارات سريعة</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => { const r = todayRange(); applyRange(r.start, r.end) }} className="inline-flex items-center gap-2 rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 hover:bg-teal-50 hover:text-teal-700"><Clock3 size={15}/> اليوم</button>
+            <button type="button" onClick={() => { const r = currentWeekRange(); applyRange(r.start, r.end) }} className="inline-flex items-center gap-2 rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 hover:bg-teal-50 hover:text-teal-700"><CalendarDays size={15}/> هذا الأسبوع</button>
+            <button type="button" onClick={() => applyCycle(current)} className="rounded-2xl bg-[#008E92] px-4 py-2 text-sm font-black text-white">الدورة الحالية</button>
+            <button type="button" onClick={() => applyCycle(cycles[1])} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 hover:bg-teal-50 hover:text-teal-700">الدورة السابقة</button>
+            <button type="button" onClick={() => { const r = lastCyclesRange(3); applyRange(r.start, r.end) }} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 hover:bg-teal-50 hover:text-teal-700">آخر 3 دورات</button>
+          </div>
+        </div>}
+
+        <div>
+          <p className="mb-2 text-xs font-black text-slate-400">الدورات الجاهزة</p>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {cycles.slice(0, 9).map(cycle => {
+              const active = cycle.start === from && cycle.end === to
+              return <button key={cycle.key} type="button" onClick={() => applyCycle(cycle)} className={`rounded-2xl border p-3 text-right transition ${active ? 'border-[#008E92] bg-teal-50 ring-2 ring-teal-100' : 'border-slate-100 bg-slate-50 hover:border-teal-200 hover:bg-teal-50'}`}>
+                <span className="block font-black text-slate-800">{cycle.label}</span>
+                <span className="mt-1 block text-xs font-bold text-slate-400" dir="ltr">{cycle.start} → {cycle.end}</span>
+              </button>
+            })}
+          </div>
+        </div>
+
+        <div>
+          <p className="mb-2 text-xs font-black text-slate-400">فترة مخصصة</p>
+          <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+            <input aria-label="بداية الفترة" type="date" value={manualFrom} onChange={event => setManualFrom(event.target.value)} className="dawaa-input" />
+            <input aria-label="نهاية الفترة" type="date" value={manualTo} onChange={event => setManualTo(event.target.value)} className="dawaa-input" />
+            <button type="button" disabled={!manualFrom || !manualTo || manualFrom > manualTo} onClick={() => applyRange(manualFrom, manualTo)} className="rounded-2xl bg-[#008E92] px-5 py-3 font-black text-white disabled:cursor-not-allowed disabled:opacity-40">تطبيق الفترة</button>
+          </div>
+        </div>
+      </div>}
+    </section>
   )
 }
