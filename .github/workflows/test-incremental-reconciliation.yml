@@ -16,7 +16,22 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  patches:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/patch-reconciliation-pagination.mjs
+      - run: node scripts/patch-incremental-reconciliation.mjs
+      - run: node scripts/patch-reconciliation-mismatch-panel.mjs
+      - run: node scripts/patch-order-receipt-storage.mjs
+      - name: Verify idempotency
+        run: |
+          node scripts/patch-reconciliation-pagination.mjs
+          node scripts/patch-incremental-reconciliation.mjs
+          node scripts/patch-reconciliation-mismatch-panel.mjs
+          node scripts/patch-order-receipt-storage.mjs
+  build:
+    needs: patches
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -29,19 +44,5 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --no-frozen-lockfile
-      - name: Patch complete data loading
-        run: node scripts/patch-reconciliation-pagination.mjs
-      - name: Patch cumulative reconciliation
-        run: node scripts/patch-incremental-reconciliation.mjs
-      - name: Patch customer mismatch panel
-        run: node scripts/patch-reconciliation-mismatch-panel.mjs
-      - name: Patch image storage
-        run: node scripts/patch-order-receipt-storage.mjs
-      - name: Verify patch idempotency
-        run: |
-          node scripts/patch-reconciliation-pagination.mjs
-          node scripts/patch-incremental-reconciliation.mjs
-          node scripts/patch-reconciliation-mismatch-panel.mjs
-          node scripts/patch-order-receipt-storage.mjs
-      - run: pnpm exec tsc --noEmit
-      - run: pnpm exec vite build
+      - run: pnpm run typecheck
+      - run: pnpm run build
