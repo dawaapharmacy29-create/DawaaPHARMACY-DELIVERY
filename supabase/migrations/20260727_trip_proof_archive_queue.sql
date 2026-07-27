@@ -46,11 +46,10 @@ $$;
 
 create or replace function public.queue_approved_trip_proof()
 returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  requested_at_value timestamptz := coalesce(new.proof_archive_requested_at, now());
 begin
   if new.status = 'approved' and nullif(trim(coalesce(new.proof_image_url,'')), '') is not null then
-    new.proof_archive_status := coalesce(new.proof_archive_status, 'queued');
-    new.proof_archive_requested_at := coalesce(new.proof_archive_requested_at, now());
-
     insert into public.trip_proof_archive_queue(trip_id, source_url, storage_bucket, storage_path, status, requested_at, updated_at)
     values (
       new.id,
@@ -58,7 +57,7 @@ begin
       public.extract_storage_bucket(new.proof_image_url),
       public.extract_storage_path(new.proof_image_url),
       'queued',
-      coalesce(new.proof_archive_requested_at, now()),
+      requested_at_value,
       now()
     )
     on conflict (trip_id) do update set
@@ -69,6 +68,12 @@ begin
       requested_at = excluded.requested_at,
       updated_at = now(),
       last_error = null;
+
+    update public.internal_trips
+    set proof_archive_status = case when proof_archive_status in ('verified','deleted') then proof_archive_status else 'queued' end,
+        proof_archive_requested_at = coalesce(proof_archive_requested_at, requested_at_value),
+        proof_archive_error = null
+    where id = new.id;
   end if;
   return new;
 end;
@@ -76,7 +81,7 @@ $$;
 
 drop trigger if exists internal_trips_queue_proof_archive on public.internal_trips;
 create trigger internal_trips_queue_proof_archive
-before insert or update of status, proof_image_url on public.internal_trips
+after insert or update of status, proof_image_url on public.internal_trips
 for each row execute function public.queue_approved_trip_proof();
 
 insert into public.trip_proof_archive_queue(trip_id, source_url, storage_bucket, storage_path, status, requested_at)
