@@ -18,7 +18,8 @@ replaceOnce(
     const result = await loginWithPin(managerUsername, pin)
 
     if (!result?.success || !result.account_id) {
-      throw new Error(friendlyRiderError(result))
+      const message = friendlyRiderError(result)
+      throw new Error(typeof message === 'string' ? message : 'تعذر التحقق من حساب الإدارة بالـ PIN')
     }
 
     const role = result.role || ''
@@ -50,44 +51,37 @@ replaceOnce(
 )
 
 const adminFallbackAfter = `      if (looksLikeAdmin) {
-        if (shouldTryPinFirst) {
-          try {
-            await handleAdminLogin()
-          } catch (adminError: any) {
-            const message = String(adminError?.message || '')
-            if (!message.includes('Invalid login') && !message.includes('invalid_credentials')) throw adminError
-            await handleManagerPinLogin()
-          }
-        } else {
-          await handleAdminLogin()
-        }
-      } else if (shouldTryPinFirst) {`
+         if (shouldTryPinFirst) {
+           try {
+             await handleAdminLogin()
+           } catch (adminError: any) {
+             // لو Supabase Auth رجّع خطأ فارغًا أو غير مفهوم، نجرب PIN الإدارة مباشرة.
+             // هذا مهم على الأجهزة الجديدة، ومع مفاتيح publishable الحديثة، وأخطاء الشبكة الجزئية.
+             await handleManagerPinLogin()
+           }
+         } else {
+           await handleAdminLogin()
+         }
+       } else if (shouldTryPinFirst) {`
 
 if (!source.includes(adminFallbackAfter)) {
-  const adminFallbackAnchors = [
-    `      if (looksLikeAdmin) {
-        // aliases الإدارة تُعامل كإدارة على كل الأجهزة حتى لو كلمة السر أرقام.
-        await handleAdminLogin()
-      } else if (shouldTryPinFirst) {`,
-    `      if (looksLikeAdmin) {
-        // لو الاسم أدمن معروف مثل د معاذ أو dr.moaz، ندخله Supabase Auth حتى لو الباسورد أرقام.
-        await handleAdminLogin()
-      } else if (shouldTryPinFirst) {`,
-  ]
-  const anchor = adminFallbackAnchors.find(value => source.includes(value))
-  if (!anchor) throw new Error('General manager login anchor not found: admin PIN fallback')
-  source = source.replace(anchor, adminFallbackAfter)
+  const adminFallbackPattern = /      if \(looksLikeAdmin\) \{[\s\S]*?      \} else if \(shouldTryPinFirst\) \{/
+  const match = source.match(adminFallbackPattern)
+  if (!match) throw new Error('General manager login anchor not found: admin PIN fallback')
+  source = source.replace(adminFallbackPattern, adminFallbackAfter)
 }
 
-replaceOnce(
-  `      if (msg.includes('Invalid login') || msg.includes('invalid_credentials')) {
+if (!source.includes("msg.includes('PIN غير صحيح')")) {
+  replaceOnce(
+    `      if (msg.includes('Invalid login') || msg.includes('invalid_credentials')) {
         setError('اسم المستخدم أو كلمة السر مش صح')`,
-  `      if (msg.includes('PIN غير صحيح') || msg.includes('wrong_pin')) {
+    `      if (msg.includes('PIN غير صحيح') || msg.includes('wrong_pin')) {
         setError('PIN غير صحيح')
       } else if (msg.includes('Invalid login') || msg.includes('invalid_credentials')) {
         setError('اسم المستخدم أو كلمة السر مش صح')`,
-  'friendly PIN error',
-)
+    'friendly PIN error',
+  )
+}
 
 await writeFile(file, source, 'utf8')
-console.log('General manager can now use the same PIN on a fresh mobile device')
+console.log('General manager numeric PIN always falls back safely when Supabase Auth fails')
