@@ -1,0 +1,122 @@
+name: Archive approved trip proofs
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: Maximum queued images to process
+        required: false
+        default: '50'
+  schedule:
+    - cron: '17 * * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON }}
+      GOOGLE_DRIVE_TRIP_ARCHIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_TRIP_ARCHIVE_FOLDER_ID }}
+      PROCESS_LIMIT: ${{ inputs.limit || '50' }}
+    steps:
+      - name: Check archive configuration
+        id: config
+        shell: bash
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] || [ -z "$GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" ] || [ -z "$GOOGLE_DRIVE_TRIP_ARCHIVE_FOLDER_ID" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Archive secrets are not configured; leaving the queue untouched."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install archive client
+        if: steps.config.outputs.configured == 'true'
+        run: python -m pip install --quiet requests google-api-python-client google-auth
+
+      - name: Upload, verify, then delete storage object
+        if: steps.config.outputs.configured == 'true'
+        shell: bash
+        run: |
+          cat > /tmp/archive_trip_proofs.py <<'PY'
+          import hashlib, io, json, os, sys, requests
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaIoBaseUpload
+
+          base = os.environ['SUPABASE_URL'].rstrip('/')
+          key = os.environ['SUPABASE_SERVICE_ROLE_KEY']
+          folder = os.environ['GOOGLE_DRIVE_TRIP_ARCHIVE_FOLDER_ID']
+          limit = max(1, min(200, int(os.environ.get('PROCESS_LIMIT', '50'))))
+          headers = {'apikey': key, 'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'}
+          creds = service_account.Credentials.from_service_account_info(
+              json.loads(os.environ['GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON']),
+              scopes=['https://www.googleapis.com/auth/drive.file'],
+          )
+          drive = build('drive', 'v3', credentials=creds, cache_discovery=False)
+
+          queue_url = f"{base}/rest/v1/trip_proof_archive_queue"
+          params = {
+              'select': '*', 'status': 'eq.queued', 'order': 'requested_at.asc', 'limit': str(limit)
+          }
+          response = requests.get(queue_url, headers=headers, params=params, timeout=60)
+          response.raise_for_status()
+          rows = response.json()
+          print(f'Queued proofs: {len(rows)}')
+
+          def patch_queue(queue_id, payload):
+              r = requests.patch(f"{queue_url}?id=eq.{queue_id}", headers={**headers, 'Prefer':'return=minimal'}, data=json.dumps(payload), timeout=60)
+              r.raise_for_status()
+
+          def patch_trip(trip_id, payload):
+              r = requests.patch(f"{base}/rest/v1/internal_trips?id=eq.{trip_id}", headers={**headers, 'Prefer':'return=minimal'}, data=json.dumps(payload), timeout=60)
+              r.raise_for_status()
+
+          for row in rows:
+              qid, trip_id = row['id'], row['trip_id']
+              try:
+                  patch_queue(qid, {'status':'processing','processing_started_at':'now()','attempts':int(row.get('attempts') or 0)+1,'last_error':None})
+                  bucket, path = row.get('storage_bucket'), row.get('storage_path')
+                  if not bucket or not path:
+                      raise RuntimeError('Could not extract storage bucket/path from proof URL')
+                  object_url = f"{base}/storage/v1/object/authenticated/{bucket}/{path}"
+                  download = requests.get(object_url, headers={'apikey':key,'Authorization':f'Bearer {key}'}, timeout=120)
+                  download.raise_for_status()
+                  content = download.content
+                  source_bytes = len(content)
+                  digest = hashlib.sha256(content).hexdigest()
+                  filename = path.rsplit('/', 1)[-1] or f'{trip_id}.jpg'
+                  media = MediaIoBaseUpload(io.BytesIO(content), mimetype=download.headers.get('content-type','image/jpeg'), resumable=False)
+                  created = drive.files().create(
+                      body={'name': filename, 'parents':[folder], 'description':f'Dawaa approved trip proof {trip_id} SHA256 {digest}'},
+                      media_body=media, fields='id,size,webViewLink'
+                  ).execute()
+                  drive_size = int(created.get('size') or 0)
+                  if drive_size != source_bytes:
+                      drive.files().delete(fileId=created['id']).execute()
+                      raise RuntimeError(f'Drive verification failed: source={source_bytes}, drive={drive_size}')
+                  patch_queue(qid, {'status':'verified','drive_file_id':created['id'],'drive_url':created.get('webViewLink'),'source_bytes':source_bytes,'drive_bytes':drive_size,'sha256':digest,'verified_at':'now()'})
+                  delete = requests.delete(object_url, headers={'apikey':key,'Authorization':f'Bearer {key}'}, timeout=60)
+                  if delete.status_code not in (200,204,404):
+                      raise RuntimeError(f'Storage delete failed: {delete.status_code} {delete.text[:200]}')
+                  patch_queue(qid, {'status':'deleted','deleted_at':'now()'})
+                  patch_trip(trip_id, {
+                      'proof_archive_status':'deleted', 'proof_archive_drive_file_id':created['id'],
+                      'proof_archive_drive_url':created.get('webViewLink'), 'proof_archive_verified_at':'now()',
+                      'proof_image_deleted_at':'now()', 'proof_image_url':None, 'proof_archive_error':None
+                  })
+                  print(f'Archived and deleted trip {trip_id}')
+              except Exception as exc:
+                  print(f'Failed trip {trip_id}: {exc}', file=sys.stderr)
+                  try:
+                      patch_queue(qid, {'status':'failed','last_error':str(exc)[:1000]})
+                      patch_trip(trip_id, {'proof_archive_status':'failed','proof_archive_error':str(exc)[:1000]})
+                  except Exception:
+                      pass
+          PY
+          python /tmp/archive_trip_proofs.py
