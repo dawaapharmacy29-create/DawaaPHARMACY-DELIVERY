@@ -48,7 +48,11 @@ replaceOnce(
     reportWindow.document.close(); reportWindow.focus(); setTimeout(() => reportWindow.print(), 350)
   }
 
-  function exportMonthlyReport() {`,
+  function exportMonthlyReport() {
+    return exportMonthlySummary()
+  }
+
+  function exportMonthlyReportLegacy() {`,
   'summary export insertion',
 )
 
@@ -65,4 +69,4 @@ replaceOnce(
 )
 
 await writeFile(file, source, 'utf8')
-console.log('Rider PDF export now produces a financial summary only, without order or trip detail rows')
+console.log('All rider PDF export paths now force the financial summary only')
