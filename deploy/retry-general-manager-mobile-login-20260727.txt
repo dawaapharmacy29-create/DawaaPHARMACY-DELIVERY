@@ -1,0 +1,2 @@
+Retry production deployment for general manager mobile PIN login fix.
+Commit source: b4816dbd4c8d2eae5ef2e79bb10561f2133fb760
