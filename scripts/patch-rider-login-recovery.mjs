@@ -22,12 +22,9 @@ function normalizePin(value: string) {
     .replace(/[۰-۹]/g, digit => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
 }`
 
-// السكربتات السابقة قد تغيّر تعليق أو تنسيق الدالتين؛ نستبدل جسمهما بالـ regex بدل anchor حرفي.
 if (!login.includes(".replace(/[٠-٩]/g")) {
   const helperPattern = /function normalizeUsername\(value: string\) \{[\s\S]*?\n\}\s*\n\s*function normalizePin\(value: string\) \{[\s\S]*?\n\}/
-  if (!helperPattern.test(login)) {
-    throw new Error('Rider login recovery anchor not found: normalization helpers')
-  }
+  if (!helperPattern.test(login)) throw new Error('Rider login recovery anchor not found: normalization helpers')
   login = login.replace(helperPattern, normalizedHelpers)
 }
 
@@ -37,31 +34,32 @@ const staleSessionBlock = `    // ننهي أي جلسة Auth قديمة قبل 
 
     const result = await loginWithPin(riderUsername, pin)`
 
-if (!login.includes(staleSessionBlock)) {
+if (!login.includes('ننهي أي جلسة Auth قديمة قبل دخول الدليفري')) {
   const loginCall = '    const result = await loginWithPin(riderUsername, pin)'
-  if (!login.includes(loginCall)) {
-    throw new Error('Rider login recovery anchor not found: rider login call')
-  }
+  if (!login.includes(loginCall)) throw new Error('Rider login recovery anchor not found: rider login call')
   login = login.replace(loginCall, staleSessionBlock)
 }
 
-const timeoutBlock = `       if (isRiderRoute && s?.session_token) {
-          // لا نترك شاشة "جاري استعادة الجلسة" معلقة لو الشبكة أو RPC تأخر.
-          const validation = validateStoredRiderSession()
-          const timeout = new Promise<null>(resolve => window.setTimeout(() => resolve(null), 8000))
-          const validated = await Promise.race([validation, timeout])
-          if (!validated) {
-            finish(false, '/rider-login')
-            return
-          }
-          s = validated
-        }`
-
 if (!protectedRoute.includes('const validated = await Promise.race([validation, timeout])')) {
-  const sessionPattern = /       if \(isRiderRoute && s\?\.session_token\) \{\s*s = await validateStoredRiderSession\(\)\s*if \(!s\) \{\s*finish\(false, '\/rider-login'\)\s*return\s*\}\s*\}/
-  if (!sessionPattern.test(protectedRoute)) {
-    throw new Error('Rider login recovery anchor not found: session validation')
-  }
+  const sessionPattern = /(?<indent>\s*)if \(isRiderRoute && s\?\.session_token\) \{\s*s = await validateStoredRiderSession\(\)\s*if \(!s\) \{\s*finish\(false, '\/rider-login'\)\s*return\s*\}\s*\}/
+  const match = protectedRoute.match(sessionPattern)
+  if (!match) throw new Error('Rider login recovery anchor not found: session validation')
+
+  const indent = match.groups?.indent || '      '
+  const inner = indent + '  '
+  const deeper = inner + '  '
+  const timeoutBlock = `${indent}if (isRiderRoute && s?.session_token) {
+${inner}// لا نترك شاشة "جاري استعادة الجلسة" معلقة لو الشبكة أو RPC تأخر.
+${inner}const validation = validateStoredRiderSession()
+${inner}const timeout = new Promise<null>(resolve => window.setTimeout(() => resolve(null), 8000))
+${inner}const validated = await Promise.race([validation, timeout])
+${inner}if (!validated) {
+${deeper}finish(false, '/rider-login')
+${deeper}return
+${inner}}
+${inner}s = validated
+${indent}}`
+
   protectedRoute = protectedRoute.replace(sessionPattern, timeoutBlock)
 }
 
