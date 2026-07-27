@@ -49,15 +49,8 @@ replaceOnce(
   'manager PIN handler',
 )
 
-replaceOnce(
-  `      if (looksLikeAdmin) {
-        // لو الاسم أدمن معروف مثل د معاذ أو dr.moaz، ندخله Supabase Auth حتى لو الباسورد أرقام.
-        await handleAdminLogin()
-      } else if (shouldTryPinFirst) {`,
-  `      if (looksLikeAdmin) {
+const adminFallbackAfter = `      if (looksLikeAdmin) {
         if (shouldTryPinFirst) {
-          // الهاتف الجديد لا يملك جلسة Supabase Auth محفوظة. نجرب كلمة سر الإدارة أولاً،
-          // ثم نستخدم PIN حساب general_manager لو كانت كلمة سر Auth غير صالحة.
           try {
             await handleAdminLogin()
           } catch (adminError: any) {
@@ -68,9 +61,23 @@ replaceOnce(
         } else {
           await handleAdminLogin()
         }
+      } else if (shouldTryPinFirst) {`
+
+if (!source.includes(adminFallbackAfter)) {
+  const adminFallbackAnchors = [
+    `      if (looksLikeAdmin) {
+        // aliases الإدارة تُعامل كإدارة على كل الأجهزة حتى لو كلمة السر أرقام.
+        await handleAdminLogin()
       } else if (shouldTryPinFirst) {`,
-  'admin PIN fallback',
-)
+    `      if (looksLikeAdmin) {
+        // لو الاسم أدمن معروف مثل د معاذ أو dr.moaz، ندخله Supabase Auth حتى لو الباسورد أرقام.
+        await handleAdminLogin()
+      } else if (shouldTryPinFirst) {`,
+  ]
+  const anchor = adminFallbackAnchors.find(value => source.includes(value))
+  if (!anchor) throw new Error('General manager login anchor not found: admin PIN fallback')
+  source = source.replace(anchor, adminFallbackAfter)
+}
 
 replaceOnce(
   `      if (msg.includes('Invalid login') || msg.includes('invalid_credentials')) {
