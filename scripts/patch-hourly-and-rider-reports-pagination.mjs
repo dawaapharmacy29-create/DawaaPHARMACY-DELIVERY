@@ -44,6 +44,13 @@ await patchFile('src/pages/admin/HourlyDeliveryAnalytics.tsx', source => {
 
   source = replaceOnce(
     source,
+    "      const rawOrders = [byDeliveryDate, byWorkDate].flatMap((result: any) => result.status === 'fulfilled' && !result.value.error ? (result.value.data || []) : [])\n      const rows = uniqueById(rawOrders).filter(row => inRange(pickDate(row), from, to))\n      const logRows = editLogs.status === 'fulfilled' && !(editLogs.value as any).error ? ((editLogs.value as any).data || []) : []",
+    "      const rawOrders = [byDeliveryDate, byWorkDate].flatMap(result => result.status === 'fulfilled' ? (result.value as OrderRow[]) : [])\n      const rows = uniqueById(rawOrders).filter(row => inRange(pickDate(row), from, to))\n      const logRows = editLogs.status === 'fulfilled' ? (editLogs.value as OrderRow[]) : []",
+    'hourly paginated result handling',
+  )
+
+  source = replaceOnce(
+    source,
     "          <button onClick={loadData} disabled={loading} className=\"rounded-2xl border bg-white p-2 text-slate-600 transition hover:bg-slate-50 active:scale-95\">\n            <RefreshCw size={17} className={loading ? 'animate-spin' : ''} />\n          </button>",
     "          <div className=\"flex items-center gap-2\">\n            <button onClick={() => navigate('/admin/rider-monthly-reports')} className=\"rounded-2xl bg-[#008E92] px-3 py-2 text-xs font-black text-white shadow-sm transition hover:bg-[#00777b] active:scale-95\">تقرير المناديب PDF</button>\n            <button onClick={loadData} disabled={loading} className=\"rounded-2xl border bg-white p-2 text-slate-600 transition hover:bg-slate-50 active:scale-95\">\n              <RefreshCw size={17} className={loading ? 'animate-spin' : ''} />\n            </button>\n          </div>",
     'hourly report button',
