@@ -113,8 +113,8 @@ replaceOnce(
 )
 
 replaceOnce(
-`            ['الأوردرات المحتسبة', summary.countedOrders], ['المشاوير المعتمدة', summary.approvedTrips], ['قيمة الأوردرات', \`${money(summary.orderValue)} ج\`], ['قيمة المشاوير', \`${money(summary.tripValue)} ج\`], ['الصافي النهائي', \`${money(summary.net)} ج\`],`,
-`            ['الأوردرات المحتسبة', summary.countedOrders], ['العادية / ×1.5', \`${summary.normalOrders} / ${summary.multiplierOrders}\`], ['المشاوير المعتمدة', summary.approvedTrips], ['قيمة الأوردرات', \`${money(summary.orderValue)} ج\`], ['قيمة المشاوير', \`${money(summary.tripValue)} ج\`], ['الصافي النهائي', \`${money(summary.net)} ج\`],`,
+`            ['الأوردرات المحتسبة', summary.countedOrders], ['المشاوير المعتمدة', summary.approvedTrips], ['قيمة الأوردرات', \`\${money(summary.orderValue)} ج\`], ['قيمة المشاوير', \`\${money(summary.tripValue)} ج\`], ['الصافي النهائي', \`\${money(summary.net)} ج\`],`,
+`            ['الأوردرات المحتسبة', summary.countedOrders], ['العادية / ×1.5', String(summary.normalOrders) + ' / ' + String(summary.multiplierOrders)], ['المشاوير المعتمدة', summary.approvedTrips], ['قيمة الأوردرات', \`\${money(summary.orderValue)} ج\`], ['قيمة المشاوير', \`\${money(summary.tripValue)} ج\`], ['الصافي النهائي', \`\${money(summary.net)} ج\`],`,
 'expanded summary cards',
 )
 
