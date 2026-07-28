@@ -12,37 +12,9 @@ function replaceOnce(before, after, label) {
   source = source.replace(before, after)
 }
 
-replaceOnce(
-  "  const [bulkCounting, setBulkCounting] = useState(false)",
-  "  const [bulkCounting, setBulkCounting] = useState(false)\n  const [showRiderSummary, setShowRiderSummary] = useState(false)",
-  'collapsible rider summary state',
-)
-
-replaceOnce(
-  `<div className="rounded-3xl bg-white p-5 shadow-sm">
-          <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">`,
-  `<div className="rounded-3xl bg-white p-5 shadow-sm">
-          <button type="button" onClick={() => setShowRiderSummary(value => !value)} className="flex w-full items-center justify-between gap-3 text-right">
-            <div><h2 className="text-xl font-black text-[#061827]">ملخص المناديب</h2><p className="mt-1 text-sm font-bold text-slate-500">ملخص سريع فقط، والتفاصيل الكاملة موجودة في ملف أداء كل مندوب.</p></div>
-            <span className="rounded-full bg-slate-100 px-4 py-2 text-xs font-black text-slate-700">{showRiderSummary ? 'إخفاء' : 'عرض'}</span>
-          </button>
-          {showRiderSummary && <div className="mt-4">
-          <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">`,
-  'collapse rider summary start',
-)
-
-replaceOnce(
-  `          <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-xs font-bold leading-6 text-slate-600">
-             مثال: «304 محتسب» يعني 304 أوردر صحيح يدخل في الحساب. «25 غير موجود» يعني رقم الفاتورة لم يظهر في ملفات السيستم المرفوعة للدورة. «190 مشوار معلق» لا يخص الفواتير؛ هو عدد المشاوير التي لم تُغلق أو تُعتمد بعد.
-          </div>
-        </div>`,
-  `          <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-xs font-bold leading-6 text-slate-600">
-             المحتسب يدخل في حساب المندوب، أما المراجعة والمشاوير المعلقة فلا تدخل حتى يتم حسمها.
-          </div>
-          </div>}
-        </div>`,
-  'collapse rider summary end',
-)
+// Keep the rider summary structure unchanged here. The previous cleanup tried to
+// patch its opening and closing JSX independently, which could leave invalid JSX
+// when only one anchor matched after earlier build-time patches.
 
 replaceOnce(
   `{report && (
@@ -99,4 +71,4 @@ replaceOnce(
 )
 
 await writeFile(file, source, 'utf8')
-console.log('Reconciliation cleanup completed; unavailable cosmetic anchors were safely skipped')
+console.log('Reconciliation cleanup completed safely without partial paired JSX patches')
