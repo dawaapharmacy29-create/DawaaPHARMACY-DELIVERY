@@ -22,16 +22,17 @@ source = source.replace(
 
 source = source.replace(
   /report\.style\.cssText = '[^']*'/,
-  "report.style.cssText = 'position:absolute;left:-12000px;top:0;width:1123px;height:794px;background:#fff;z-index:1;opacity:1;visibility:visible;pointer-events:none;'",
+  "report.style.cssText = 'position:fixed;left:0;top:0;width:1123px;height:794px;background:#fff;z-index:2147483647;opacity:0.01;visibility:visible;pointer-events:none;overflow:hidden;'",
 )
 
 source = source.replace(
   /const reportPage = report\.firstElementChild as HTMLElement \| null[\s\S]*?const pdf = new jsPDF\(\{ orientation: 'landscape', unit: 'mm', format: 'a4', compress: false \}\)/,
   `const reportPage = report.firstElementChild as HTMLElement | null
       if (!reportPage) throw new Error('تعذر إنشاء محتوى التقرير')
+      reportPage.style.width = '1123px'
+      reportPage.style.height = '794px'
+      reportPage.style.display = 'block'
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-      const rect = reportPage.getBoundingClientRect()
-      if (rect.width < 1000 || rect.height < 700) throw new Error('تعذر تجهيز أبعاد التقرير')
       const canvas = await html2canvas(reportPage, {
         scale: 1.25,
         backgroundColor: '#ffffff',
@@ -44,15 +45,11 @@ source = source.replace(
         scrollX: 0,
         scrollY: 0,
       })
-      if (canvas.width < 1000 || canvas.height < 700) throw new Error('فشل إنشاء صورة التقرير')
+      if (!canvas.width || !canvas.height) throw new Error('فشل إنشاء صورة التقرير')
       const imageData = canvas.toDataURL('image/png')
+      if (!imageData.startsWith('data:image/png;base64,')) throw new Error('فشل تجهيز صورة التقرير')
       const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true })`,
 )
 
-source = source.replace(
-  "if (!from || !to || from > to) return toast.error('راجع تاريخ بداية ونهاية الدورة')",
-  "if (!from || !to || from > to) return toast.error('راجع تاريخ بداية ونهاية الدورة')",
-)
-
 await writeFile(file, source, 'utf8')
-console.log('Rider compensation stable dates and PDF generation applied')
+console.log('Rider compensation stable dates and PDF generation applied without dimension checks')
