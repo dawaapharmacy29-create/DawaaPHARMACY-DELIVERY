@@ -75,3 +75,4 @@ if (!source.includes(after)) {
 
 await writeFile(file, source, 'utf8')
 console.log('Large trip approvals are now written safely in small chunks with partial-progress recovery')
+await import('./patch-trip-rejection-reasons.mjs')
