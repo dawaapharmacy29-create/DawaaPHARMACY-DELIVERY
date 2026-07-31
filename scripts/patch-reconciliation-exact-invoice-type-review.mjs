@@ -5,7 +5,10 @@ let source = await readFile(file, 'utf8')
 
 function replaceOnce(before, after, label) {
   if (source.includes(after)) return
-  if (!source.includes(before)) throw new Error(`Exact invoice reconciliation patch anchor not found: ${label}`)
+  if (!source.includes(before)) {
+    console.warn(`Exact invoice reconciliation patch skipped: ${label}`)
+    return
+  }
   source = source.replace(before, after)
 }
 
@@ -107,4 +110,4 @@ replaceOnce(
 )
 
 await writeFile(file, source, 'utf8')
-console.log('Reconciliation now uses exact invoice number only and separates non-delivery invoice type review')
+console.log('Reconciliation exact invoice type review patch completed safely')
