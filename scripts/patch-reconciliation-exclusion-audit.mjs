@@ -40,7 +40,7 @@ replaceOnce(
         is_countable: false,
         final_count_status: 'excluded_invoice_not_found',
         count_exclusion_reason: 'marked_not_found_by_admin',
-        reconciliation_notes: previousNotes ? previousNotes + '\\n' + exclusionAudit : exclusionAudit,
+        reconciliation_notes: previousNotes ? previousNotes + '\n' + exclusionAudit : exclusionAudit,
         updated_at: excludedAt,
       }).eq('id', orderId)
       if (error) throw error
@@ -63,3 +63,4 @@ replaceOnce(
 
 await writeFile(file, source, 'utf8')
 console.log('Reconciliation exclusions now record and display the acting administrator')
+await import('./patch-reconciliation-filtered-xlsx-export.mjs')
