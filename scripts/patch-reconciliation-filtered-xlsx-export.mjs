@@ -89,8 +89,9 @@ replaceOnce(
     XLSX.utils.book_append_sheet(workbook, summarySheet, 'ملخص التصدير')
 
     const safeLabel = filterLabels[filter].replace(/\\s+/g, '_')
-    XLSX.writeFile(workbook, `مطابقة_الأوردرات_${safeLabel}_${selectedFrom}_${selectedTo}.xlsx`)
-    toast.success(`تم تصدير ${filteredOrders.length} أوردر إلى Excel`)
+    const fileName = 'مطابقة_الأوردرات_' + safeLabel + '_' + selectedFrom + '_' + selectedTo + '.xlsx'
+    XLSX.writeFile(workbook, fileName)
+    toast.success('تم تصدير ' + filteredOrders.length + ' أوردر إلى Excel')
   }
 
   async function readImportFile(file: File): Promise<Record<string, unknown>[]> {`,
