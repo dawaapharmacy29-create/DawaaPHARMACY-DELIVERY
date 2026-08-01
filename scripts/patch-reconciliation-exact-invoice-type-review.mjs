@@ -109,5 +109,27 @@ replaceOnce(
   'invoice type review badge',
 )
 
+// Final build guard: some earlier reconciliation patches can change the original anchor
+// after the branch using exactInvoiceAnyType has already been inserted. In that case,
+// guarantee the variable is declared in the same block immediately after `match`.
+const usageMarker = `        } else if (!match && exactInvoiceAnyType) {`
+const declarationMarker = `        const exactInvoiceAnyType = inv ? allInvoiceMap.get(inv) : null`
+const matchMarker = `        const match = inv ? bconnectMap.get(inv) : null`
+
+if (source.includes(usageMarker)) {
+  const usageIndex = source.indexOf(usageMarker)
+  const declarationIndex = source.lastIndexOf(declarationMarker, usageIndex)
+  const matchIndex = source.lastIndexOf(matchMarker, usageIndex)
+
+  if (declarationIndex < matchIndex && matchIndex >= 0) {
+    const insertionPoint = matchIndex + matchMarker.length
+    source = `${source.slice(0, insertionPoint)}\n${declarationMarker}${source.slice(insertionPoint)}`
+  }
+}
+
+if (source.includes(usageMarker) && !source.includes(declarationMarker)) {
+  throw new Error('Exact invoice reconciliation safety check failed: exactInvoiceAnyType is used without a declaration')
+}
+
 await writeFile(file, source, 'utf8')
 console.log('Reconciliation exact invoice type review patch completed safely')
