@@ -109,26 +109,44 @@ replaceOnce(
   'invoice type review badge',
 )
 
-// Final build guard: some earlier reconciliation patches can change the original anchor
-// after the branch using exactInvoiceAnyType has already been inserted. In that case,
-// guarantee the variable is declared in the same block immediately after `match`.
-const usageMarker = `        } else if (!match && exactInvoiceAnyType) {`
-const declarationMarker = `        const exactInvoiceAnyType = inv ? allInvoiceMap.get(inv) : null`
-const matchMarker = `        const match = inv ? bconnectMap.get(inv) : null`
+// Earlier build patches may transform the matching code before this script runs.
+// If the review branch already exists but its variable declaration was lost,
+// insert a declaration after the nearest preceding `const match = ...` line.
+const usageMarker = `} else if (!match && exactInvoiceAnyType) {`
+const declarationPattern = /const\s+exactInvoiceAnyType(?:\s*:\s*BConnectRow\s*\|\s*null)?\s*=/
 
 if (source.includes(usageMarker)) {
   const usageIndex = source.indexOf(usageMarker)
-  const declarationIndex = source.lastIndexOf(declarationMarker, usageIndex)
-  const matchIndex = source.lastIndexOf(matchMarker, usageIndex)
+  const beforeUsage = source.slice(0, usageIndex)
+  const hasNearbyDeclaration = declarationPattern.test(beforeUsage.slice(Math.max(0, beforeUsage.length - 5000)))
 
-  if (declarationIndex < matchIndex && matchIndex >= 0) {
-    const insertionPoint = matchIndex + matchMarker.length
-    source = `${source.slice(0, insertionPoint)}\n${declarationMarker}${source.slice(insertionPoint)}`
+  if (!hasNearbyDeclaration) {
+    const matchLinePattern = /^[ \t]*const\s+match\s*=.*$/gm
+    let nearestMatch = null
+    for (const candidate of beforeUsage.matchAll(matchLinePattern)) nearestMatch = candidate
+
+    if (!nearestMatch || nearestMatch.index == null) {
+      throw new Error('Exact invoice reconciliation safety check failed: could not locate the matching declaration block')
+    }
+
+    const matchLine = nearestMatch[0]
+    const indent = matchLine.match(/^[ \t]*/)?.[0] || ''
+    const insertionPoint = nearestMatch.index + matchLine.length
+    const canUseAllInvoiceMap = /const\s+allInvoiceMap\s*=/.test(beforeUsage)
+    const declaration = canUseAllInvoiceMap
+      ? `${indent}const exactInvoiceAnyType: BConnectRow | null = inv ? allInvoiceMap.get(inv) ?? null : null`
+      : `${indent}const exactInvoiceAnyType: BConnectRow | null = null`
+
+    source = `${source.slice(0, insertionPoint)}\n${declaration}${source.slice(insertionPoint)}`
   }
 }
 
-if (source.includes(usageMarker) && !source.includes(declarationMarker)) {
-  throw new Error('Exact invoice reconciliation safety check failed: exactInvoiceAnyType is used without a declaration')
+if (source.includes(usageMarker)) {
+  const usageIndex = source.indexOf(usageMarker)
+  const beforeUsage = source.slice(0, usageIndex)
+  if (!declarationPattern.test(beforeUsage.slice(Math.max(0, beforeUsage.length - 5000)))) {
+    throw new Error('Exact invoice reconciliation safety check failed: exactInvoiceAnyType is used without a nearby declaration')
+  }
 }
 
 await writeFile(file, source, 'utf8')
