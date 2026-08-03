@@ -1,9 +1,11 @@
 import { readFile, writeFile } from 'node:fs/promises'
 
 const loginFile = new URL('../src/pages/Login.tsx', import.meta.url)
+const authFile = new URL('../src/lib/auth.ts', import.meta.url)
 const protectedRouteFile = new URL('../src/components/ProtectedRoute.tsx', import.meta.url)
 
 let login = await readFile(loginFile, 'utf8')
+let auth = await readFile(authFile, 'utf8')
 let protectedRoute = await readFile(protectedRouteFile, 'utf8')
 
 const normalizedHelpers = `function normalizeUsername(value: string) {
@@ -40,6 +42,34 @@ if (!login.includes('ننهي أي جلسة Auth قديمة قبل دخول ال
   login = login.replace(loginCall, staleSessionBlock)
 }
 
+// مهم: لا نمسح device id المحلي عند رفض الجهاز. مسحه ينشئ id جديدًا في كل محاولة
+// ويجعل نفس الهاتف يظهر للسيرفر كأنه أجهزة متعددة.
+login = login.replace(
+  /\s*\/\/ لو المشكلة في الـ device، نوضح الخطوة التالية\s*if \(result\?\.error === 'device_not_approved'\) \{[\s\S]*?localStorage\.removeItem\('dawaa_device_label_v1'\)\s*\}/,
+  ''
+)
+
+// أي استثناء شبكة/متصفح مؤقت أثناء فحص الجلسة لا يجب أن يطرد الدليفري.
+// إلغاء الجلسة يتم فقط عندما RPC يرجع valid=false بشكل صريح.
+const unsafeValidationCatch = `  } catch {
+    // فشل الشبكة المؤقت لا يساوي انتهاء الجلسة؛ نحتفظ بها حتى يعود الاتصال.
+    if (navigator.onLine) {
+      clearRiderSession()
+      return null
+    }
+    return local
+  }`
+
+const safeValidationCatch = `  } catch {
+    // أي خطأ مؤقت في الشبكة أو RPC لا يساوي انتهاء الجلسة.
+    // الخروج يتم فقط عند رد صريح valid=false من السيرفر.
+    return local
+  }`
+
+if (auth.includes(unsafeValidationCatch)) {
+  auth = auth.replace(unsafeValidationCatch, safeValidationCatch)
+}
+
 if (!protectedRoute.includes('const validated = await Promise.race([validation, timeout])')) {
   const sessionPattern = /(?<indent>\s*)if \(isRiderRoute && s\?\.session_token\) \{\s*s = await validateStoredRiderSession\(\)\s*if \(!s\) \{\s*finish\(false, '\/rider-login'\)\s*return\s*\}\s*\}/
   const match = protectedRoute.match(sessionPattern)
@@ -64,5 +94,6 @@ ${indent}}`
 }
 
 await writeFile(loginFile, login, 'utf8')
+await writeFile(authFile, auth, 'utf8')
 await writeFile(protectedRouteFile, protectedRoute, 'utf8')
-console.log('Rider login recovery and Arabic PIN normalization applied')
+console.log('Rider login recovery, stable device binding, and safe session validation applied')
