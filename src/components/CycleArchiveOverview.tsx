@@ -3,6 +3,7 @@ import { ChevronLeft, History, PackageCheck, Route, ShieldCheck } from 'lucide-r
 import { useNavigate } from 'react-router-dom'
 import { fetchAllRows } from '../lib/fetchAllRows'
 import { getOperationalPeriod } from '../lib/helpers'
+import EmptyState from './ui/EmptyState'
 
 type OrderRow = { id: string; delivery_date?: string | null; work_date?: string | null; registered_at?: string | null; created_at?: string | null; status?: string | null; delivered_at?: string | null; failed_reason?: string | null; invoice_amount?: number | null }
 type TripRow = { id: string; trip_date?: string | null; work_date?: string | null; registered_at?: string | null; created_at?: string | null; status?: string | null; proof_image_url?: string | null; proof_exception_status?: string | null; audit_status?: string | null }
@@ -82,7 +83,7 @@ export default function CycleArchiveOverview() {
 
   return <section className="rounded-[2rem] border border-white/80 bg-white p-5 shadow-sm" dir="rtl">
     <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><p className="flex items-center gap-2 text-xs font-black text-[#008E92]"><History size={16} /> أرشيف آخر الدورات</p><h2 className="mt-1 text-xl font-black text-[#102a32]">أرشيف الأوردرات والمشاوير</h2><p className="mt-1 text-xs font-bold text-slate-400">يشمل آخر الدورات: أوردرات + مشاوير + صور الإثبات + الاستثناءات</p></div>{loading && <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-500">جاري التحميل...</span>}</div>
-    {rows.length === 0 ? <div className="rounded-2xl bg-slate-50 p-6 text-center text-sm font-bold text-slate-400">لا توجد بيانات أرشيف بعد</div> : <div className="grid gap-3 lg:grid-cols-2">{rows.map(row => {
+    {rows.length === 0 ? <EmptyState title="لا توجد بيانات أرشيف بعد" /> : <div className="grid gap-3 lg:grid-cols-2">{rows.map(row => {
       const success = row.orders ? Math.round(row.delivered / row.orders * 100) : 0
       const proofRate = row.trips ? Math.round(row.tripsWithProof / row.trips * 100) : 0
       return <article key={row.key} className="rounded-3xl border border-slate-100 bg-slate-50 p-4"><div className="mb-3 flex items-center justify-between gap-3"><div><b className="text-[#102a32]">{row.key}</b><p className="mt-1 text-xs font-bold text-slate-400">مبيعات {money(row.sales)}</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-black text-emerald-700">نجاح {success}%</span></div><div className="grid gap-2 sm:grid-cols-3"><Mini icon={<PackageCheck size={14} />} label="أوردرات" value={row.orders} hint={`${row.delivered} تم · ${row.failed} فشل`} /><Mini icon={<Route size={14} />} label="مشاوير" value={row.trips} hint={`${row.pendingTrips} مستني اعتماد`} /><Mini icon={<ShieldCheck size={14} />} label="التزام الصور" value={`${proofRate}%`} hint={`${row.tripsWithProof} بصورة · ${row.exceptions} استثناء`} /></div><div className="mt-3 flex flex-wrap gap-2"><button onClick={() => navigate(`/admin/reconciliation?from=${row.start}&to=${row.end}`)} className="rounded-2xl bg-white px-3 py-2 text-xs font-black text-[#008E92]">مطابقة الدورة</button><button onClick={() => navigate('/admin/trips')} className="inline-flex items-center gap-1 rounded-2xl bg-white px-3 py-2 text-xs font-black text-rose-700">مشاوير الدورة <ChevronLeft size={13} /></button></div></article>

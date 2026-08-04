@@ -3,6 +3,9 @@ import { AlertTriangle, BatteryCharging, CheckCircle2, LogIn, RefreshCw, Send, S
 import { toast } from 'sonner'
 import { supabase } from '../lib/supabase'
 import { getRiderSession } from '../lib/auth'
+import Badge from './ui/Badge'
+import EmptyState from './ui/EmptyState'
+import type { BadgeTone } from './ui/Badge'
 
 type LiveRow = {
   account_id: string; username: string; rider_id: string; rider_name: string; branch_name?: string | null
@@ -24,13 +27,13 @@ type BatteryRow = {
   battery_alert_message?: string | null
 }
 
-function batteryTone(level?: string | null) {
-  if (level === 'critical') return 'bg-rose-50 text-rose-700'
-  if (level === 'low') return 'bg-amber-50 text-amber-700'
-  if (level === 'charging') return 'bg-sky-50 text-sky-700'
-  if (level === 'offline') return 'bg-slate-100 text-slate-500'
-  if (level === 'unsupported') return 'bg-slate-50 text-slate-400'
-  return 'bg-emerald-50 text-emerald-700'
+function batteryTone(level?: string | null): BadgeTone {
+  if (level === 'critical') return 'danger'
+  if (level === 'low') return 'warning'
+  if (level === 'charging') return 'info'
+  if (level === 'offline') return 'neutral'
+  if (level === 'unsupported') return 'neutral'
+  return 'success'
 }
 
 function batteryText(row?: BatteryRow) {
@@ -101,7 +104,80 @@ export default function RiderOperationsHealth() {
   const duplicateSessions = rows.filter(r => Number(r.active_sessions_count) > 1)
   const lowBattery = batteryRows.filter(b => ['low', 'critical'].includes(String(b.battery_alert_level)))
 
-  return <section className="rounded-[1.8rem] border border-slate-100 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-teal-50 text-teal-700"><Stethoscope/></span><div><h2 className="font-black text-[#102a32]">صحة تشغيل الدليفري</h2><p className="mt-1 text-xs font-bold text-slate-400">Login، الشيفت، الجلسات، البطارية، والأوردرات غير المرتبطة</p></div></div><div className="flex gap-2"><button onClick={() => void action('cleanup')} disabled={!!busy} className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-black text-amber-700">إغلاق الجلسات القديمة</button><button onClick={() => void load()} className="rounded-xl border p-2 text-slate-500"><RefreshCw size={17} className={loading ? 'animate-spin' : ''}/></button></div></div><div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-6"><Health label="مسجلون الآن" value={logged.length} icon={<LogIn/>}/><Health label="داخل شيفت" value={open.length} tone="green" icon={<CheckCircle2/>}/><Health label="Login بلا شيفت" value={noShift.length} tone="red" icon={<AlertTriangle/>}/><Health label="Sessions مكررة" value={duplicateSessions.length} tone="amber" icon={<AlertTriangle/>}/><Health label="بطارية منخفضة" value={lowBattery.length} tone={lowBattery.length ? 'amber' : 'green'} icon={<BatteryCharging/>}/><Health label="أوردرات بلا شيفت" value={missingOrders} tone="amber" icon={<AlertTriangle/>}/></div><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[980px] text-sm"><thead className="bg-slate-50 text-[10px] font-black text-slate-500"><tr><th className="p-3 text-right">الدليفري</th><th>الحالة</th><th>البطارية</th><th>آخر ظهور</th><th>Sessions</th><th>بداية الشيفت</th><th>أوردرات</th><th>مشاوير</th><th>آخر Login</th><th>آخر أوردر</th><th>إجراء</th></tr></thead><tbody>{rows.map(r => { const b = batteryMap.get(r.rider_id); return <tr key={r.account_id} className="border-t border-slate-50"><td className="p-3"><b>{r.rider_name}</b><p className="text-[10px] text-slate-400">{r.username} · {r.branch_name || '—'}</p></td><td><span className={`rounded-full px-2 py-1 text-[10px] font-black ${r.shift_status === 'shift_open' ? 'bg-emerald-50 text-emerald-700' : r.shift_status === 'no_open_shift' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-500'}`}>{r.shift_status === 'shift_open' ? 'داخل شيفت' : r.shift_status === 'no_open_shift' ? 'Login بلا شيفت' : 'غير متصل'}</span></td><td><span title={b?.battery_alert_message || ''} className={`rounded-full px-2 py-1 text-[10px] font-black ${batteryTone(b?.battery_alert_level)}`}>{batteryText(b)}</span></td><td className="text-xs">{b?.last_seen_at ? new Date(b.last_seen_at).toLocaleString('ar-EG') : '—'}</td><td className={Number(r.active_sessions_count) > 1 ? 'font-black text-rose-600' : 'font-black'}>{r.active_sessions_count}</td><td>{r.check_in_time ? new Date(r.check_in_time).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : '—'}</td><td>{r.current_shift_orders || 0}</td><td>{r.current_shift_trips || 0}</td><td className="text-xs">{r.latest_session_at ? new Date(r.latest_session_at).toLocaleString('ar-EG') : '—'}</td><td className="text-xs">{r.last_order_at ? new Date(r.last_order_at).toLocaleString('ar-EG') : '—'}</td><td><div className="flex flex-wrap gap-1">{r.shift_status === 'no_open_shift' && <button onClick={() => void action('open', r.rider_id)} disabled={!!busy} className="rounded-lg bg-teal-600 px-2 py-1 text-[10px] font-black text-white">فتح شيفت</button>}<button onClick={() => void action('cleanup', r.rider_id)} disabled={!!busy} className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-black">مزامنة</button>{b && ['low','critical'].includes(String(b.battery_alert_level)) && <button onClick={() => void sendBatteryAlert(r)} disabled={!!busy} className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-2 py-1 text-[10px] font-black text-white"><Send size={11}/> شحن</button>}</div></td></tr> })}</tbody></table>{!loading && !rows.length && <p className="py-8 text-center text-xs font-bold text-slate-400">طبّق Migration 57 لإظهار صحة التشغيل</p>}</div></section>
+  return (
+    <section className="rounded-[1.8rem] border border-slate-100 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-teal-50 text-teal-700"><Stethoscope /></span>
+          <div>
+            <h2 className="font-black text-[#102a32]">صحة تشغيل الدليفري</h2>
+            <p className="mt-1 text-xs font-bold text-slate-400">Login، الشيفت، الجلسات، البطارية، والأوردرات غير المرتبطة</p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => void action('cleanup')} disabled={!!busy} className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-black text-amber-700 disabled:opacity-60">إغلاق الجلسات القديمة</button>
+          <button onClick={() => void load()} className="rounded-xl border p-2 text-slate-500"><RefreshCw size={17} className={loading ? 'animate-spin' : ''} /></button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-6">
+        <Health label="مسجلون الآن" value={logged.length} icon={<LogIn />} />
+        <Health label="داخل شيفت" value={open.length} tone="green" icon={<CheckCircle2 />} />
+        <Health label="Login بلا شيفت" value={noShift.length} tone="red" icon={<AlertTriangle />} />
+        <Health label="Sessions مكررة" value={duplicateSessions.length} tone="amber" icon={<AlertTriangle />} />
+        <Health label="بطارية منخفضة" value={lowBattery.length} tone={lowBattery.length ? 'amber' : 'green'} icon={<BatteryCharging />} />
+        <Health label="أوردرات بلا شيفت" value={missingOrders} tone="amber" icon={<AlertTriangle />} />
+      </div>
+
+      {!loading && !rows.length ? (
+        <div className="mt-4"><EmptyState title="لا تتوفر بيانات صحة تشغيل بعد" description="طبّق Migration 57 لإظهار هذه البيانات" /></div>
+      ) : (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[980px] text-sm">
+            <thead className="bg-slate-50 text-[10px] font-black text-slate-500">
+              <tr>
+                <th className="p-3 text-right">الدليفري</th><th>الحالة</th><th>البطارية</th><th>آخر ظهور</th><th>Sessions</th><th>بداية الشيفت</th><th>أوردرات</th><th>مشاوير</th><th>آخر Login</th><th>آخر أوردر</th><th>إجراء</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => {
+                const b = batteryMap.get(r.rider_id)
+                return (
+                  <tr key={r.account_id} className="border-t border-slate-50">
+                    <td className="p-3"><b>{r.rider_name}</b><p className="text-[10px] text-slate-400">{r.username} · {r.branch_name || '—'}</p></td>
+                    <td>
+                      <Badge tone={r.shift_status === 'shift_open' ? 'success' : r.shift_status === 'no_open_shift' ? 'danger' : 'neutral'}>
+                        {r.shift_status === 'shift_open' ? 'داخل شيفت' : r.shift_status === 'no_open_shift' ? 'Login بلا شيفت' : 'غير متصل'}
+                      </Badge>
+                    </td>
+                    <td><span title={b?.battery_alert_message || ''}><Badge tone={batteryTone(b?.battery_alert_level)}>{batteryText(b)}</Badge></span></td>
+                    <td className="text-xs">{b?.last_seen_at ? new Date(b.last_seen_at).toLocaleString('ar-EG') : '—'}</td>
+                    <td className={Number(r.active_sessions_count) > 1 ? 'font-black text-rose-600' : 'font-black'}>{r.active_sessions_count}</td>
+                    <td>{r.check_in_time ? new Date(r.check_in_time).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                    <td>{r.current_shift_orders || 0}</td>
+                    <td>{r.current_shift_trips || 0}</td>
+                    <td className="text-xs">{r.latest_session_at ? new Date(r.latest_session_at).toLocaleString('ar-EG') : '—'}</td>
+                    <td className="text-xs">{r.last_order_at ? new Date(r.last_order_at).toLocaleString('ar-EG') : '—'}</td>
+                    <td>
+                      <div className="flex flex-wrap gap-1">
+                        {r.shift_status === 'no_open_shift' && (
+                          <button onClick={() => void action('open', r.rider_id)} disabled={!!busy} className="rounded-lg bg-teal-600 px-2 py-1 text-[10px] font-black text-white disabled:opacity-60">فتح شيفت</button>
+                        )}
+                        <button onClick={() => void action('cleanup', r.rider_id)} disabled={!!busy} className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-black disabled:opacity-60">مزامنة</button>
+                        {b && ['low', 'critical'].includes(String(b.battery_alert_level)) && (
+                          <button onClick={() => void sendBatteryAlert(r)} disabled={!!busy} className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-2 py-1 text-[10px] font-black text-white disabled:opacity-60"><Send size={11} /> شحن</button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
 }
 
 function Health({ label, value, icon, tone = 'slate' }: { label: string; value: number; icon: React.ReactNode; tone?: 'slate' | 'green' | 'amber' | 'red' }) { const cls = { slate: 'bg-slate-50 text-slate-600', green: 'bg-emerald-50 text-emerald-700', amber: 'bg-amber-50 text-amber-700', red: 'bg-rose-50 text-rose-700' }[tone]; return <div className={`rounded-2xl p-3 ${cls}`}><div className="flex items-center gap-2 text-[10px] font-black">{icon}{label}</div><p className="mt-2 text-2xl font-black">{value}</p></div> }
