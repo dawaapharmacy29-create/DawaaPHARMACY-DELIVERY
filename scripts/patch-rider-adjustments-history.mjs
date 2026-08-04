@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 
+// Repairs cycle filtering and keeps every rider adjustment visible in the current cycle.
 const file = 'src/pages/admin/PenaltyIncentiveManagement.tsx'
 let source = fs.readFileSync(file, 'utf8')
 
