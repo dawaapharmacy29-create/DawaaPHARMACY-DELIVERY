@@ -20,12 +20,8 @@ replaceOnce(
 
 const oldCycleBlock = `      const cycleStart = new Date()\n      cycleStart.setDate(cycleStart.getDate() >= 26 ? 26 : 26 - 30)\n      const cycleEnd = new Date(cycleStart)\n      cycleEnd.setMonth(cycleEnd.getMonth() + 1)\n      cycleEnd.setDate(25)\n\n      const cycleStartStr = cycleStart.toISOString().slice(0, 10)\n      const cycleEndStr = cycleEnd.toISOString().slice(0, 10)`
 const newCycleBlock = `      const { start: cycleStartStr, end: cycleEndStr } = getCompensationCycle()`
-let replacements = 0
-while (source.includes(oldCycleBlock)) {
-  source = source.replace(oldCycleBlock, newCycleBlock)
-  replacements += 1
-}
-if (replacements === 0 && !source.includes(newCycleBlock)) throw new Error('Missing old cycle blocks')
+while (source.includes(oldCycleBlock)) source = source.replace(oldCycleBlock, newCycleBlock)
+if (!source.includes(newCycleBlock)) throw new Error('Cycle calculation patch failed')
 
 replaceOnce("        .limit(50)", "        .limit(500)", 'record limit')
 replaceOnce('آخر 50 سجلًا من الدورة الحالية', 'كل سجلات الدورة الحالية (حتى 500 سجل)', 'records subtitle')
@@ -33,10 +29,6 @@ source = source.replaceAll(
   'formatMoney(Math.abs(record.final_amount))',
   'formatMoney(Math.abs(Number(record.final_amount ?? record.amount ?? 0)))',
 )
-
-const initialEffect = `  useEffect(() => {\n    void loadData()\n  }, [])`
-const realtimeEffect = `  useEffect(() => {\n    void loadData()\n\n    const channel = supabase\n      .channel('rider-adjustments-management')\n      .on('postgres_changes', { event: '*', schema: 'public', table: 'rider_adjustments' }, () => {\n        void loadData()\n      })\n      .subscribe()\n\n    return () => {\n      void supabase.removeChannel(channel)\n    }\n  }, [])`
-replaceOnce(initialEffect, realtimeEffect, 'realtime refresh')
 
 if (!source.includes('.limit(500)')) throw new Error('Record limit patch failed')
 if (source.includes('26 - 30')) throw new Error('Legacy cycle calculation still exists')
