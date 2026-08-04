@@ -1,10 +1,12 @@
+import type { AppRole } from './permissions'
+
 export interface UserProfile {
   id: string
   auth_user_id: string
   username: string
   email: string
   display_name: string
-  role: 'admin' | 'shift_manager' | 'rider'
+  role: AppRole
   status: 'active' | 'inactive' | 'suspended'
   branch_id: string | null
   created_at: string

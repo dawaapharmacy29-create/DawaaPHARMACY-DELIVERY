@@ -39,6 +39,7 @@ const ROLE_OPTIONS = [
   { value: 'rider', label: 'دليفري' },
   { value: 'branch_manager', label: 'مدير فرع' },
   { value: 'shift_manager', label: 'مسؤول شيفت' },
+  { value: 'customer_service_manager', label: 'مديرة خدمة العملاء' },
   { value: 'operations_manager', label: 'مدير تشغيل' },
   { value: 'branches_manager', label: 'مدير فروع' },
   { value: 'general_manager', label: 'مدير عام' },
@@ -52,7 +53,7 @@ function roleLabel(role?: string | null) {
 function roleTone(role?: string | null) {
   if (['general_manager', 'admin'].includes(String(role || ''))) return 'bg-purple-100 text-purple-700'
   if (['operations_manager', 'branches_manager'].includes(String(role || ''))) return 'bg-sky-100 text-sky-700'
-  if (['branch_manager', 'shift_manager'].includes(String(role || ''))) return 'bg-amber-100 text-amber-700'
+  if (['branch_manager', 'shift_manager', 'customer_service_manager'].includes(String(role || ''))) return 'bg-amber-100 text-amber-700'
   return 'bg-emerald-100 text-emerald-700'
 }
 

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { RefreshCw, Smartphone, AlertTriangle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { APP_VERSION } from '../lib/appVersion'
+import EmptyState from './ui/EmptyState'
+import Badge from './ui/Badge'
 
 type Row = {
   rider_id: string
@@ -75,7 +77,7 @@ export default function RiderAppVersionStatus() {
 
       <div className="max-h-[360px] space-y-2 overflow-auto">
         {rows.length === 0 ? (
-          <div className="rounded-2xl bg-slate-50 p-4 text-center text-sm font-bold text-slate-500">لا توجد بيانات أجهزة حتى الآن.</div>
+          <EmptyState title="لا توجد بيانات أجهزة حتى الآن" />
         ) : rows.map(row => {
           const status = !row.app_version ? 'unknown' : row.app_version === APP_VERSION ? 'ok' : 'old'
           return (
@@ -86,9 +88,7 @@ export default function RiderAppVersionStatus() {
                   <p className="mt-1 truncate text-[11px] font-bold text-slate-400">{row.branch_name || '—'} · {ageText(row.last_seen_at)}</p>
                   <p className="mt-1 truncate text-[11px] font-bold text-slate-400">{row.device_label || row.platform || row.device_user_agent || 'جهاز غير معروف'}</p>
                 </div>
-                <span className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-black ${status === 'ok' ? 'bg-emerald-100 text-emerald-700' : status === 'old' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
-                  {row.app_version || 'غير معروفة'}
-                </span>
+                <Badge tone={status === 'ok' ? 'success' : status === 'old' ? 'danger' : 'warning'}>{row.app_version || 'غير معروفة'}</Badge>
               </div>
               {status !== 'ok' && <p className="mt-2 flex items-center gap-1 text-[11px] font-black text-amber-700"><AlertTriangle size={13} /> يحتاج فتح التطبيق بعد التحديث أو تحديث النسخة.</p>}
             </article>

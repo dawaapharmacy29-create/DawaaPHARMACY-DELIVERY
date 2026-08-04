@@ -3,6 +3,7 @@ import { Camera, ChevronLeft, Users } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { getOperationalPeriod } from '../lib/helpers'
 import { fetchAllRows } from '../lib/fetchAllRows'
+import EmptyState from './ui/EmptyState'
 
 type TripRow = {
   id: string
@@ -203,7 +204,7 @@ export default function DashboardTripCustomerInsights() {
           </div>
           <div className="mt-3 rounded-2xl bg-white p-3">
             <p className="mb-2 text-xs font-black text-slate-500">أعلى العملاء طلبًا</p>
-            {customerStats.topCustomers.length === 0 ? <p className="text-center text-xs font-bold text-slate-400">لا توجد بيانات عملاء بعد</p> : <div className="space-y-2">{customerStats.topCustomers.slice(0, 4).map((customer) => <button type="button" onClick={openCustomers} key={customer.key} className="flex w-full items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 text-right transition hover:bg-teal-50"><div className="min-w-0"><p className="truncate text-sm font-black text-slate-700">{customer.customer_name}</p><p className="text-[11px] font-bold text-slate-400">{customer.customer_code || '—'} · آخر طلب {customer.last_order_date || '—'}</p></div><div className="text-left"><b className="block text-sm text-[#008E92]">{customer.invoices_count} طلب</b><span className="text-[11px] font-bold text-slate-400">{money(customer.total_sales)}</span></div></button>)}</div>}
+            {customerStats.topCustomers.length === 0 ? <EmptyState title="لا توجد بيانات عملاء بعد" /> : <div className="space-y-2">{customerStats.topCustomers.slice(0, 4).map((customer) => <button type="button" onClick={openCustomers} key={customer.key} className="flex w-full items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 text-right transition hover:bg-teal-50"><div className="min-w-0"><p className="truncate text-sm font-black text-slate-700">{customer.customer_name}</p><p className="text-[11px] font-bold text-slate-400">{customer.customer_code || '—'} · آخر طلب {customer.last_order_date || '—'}</p></div><div className="text-left"><b className="block text-sm text-[#008E92]">{customer.invoices_count} طلب</b><span className="text-[11px] font-bold text-slate-400">{money(customer.total_sales)}</span></div></button>)}</div>}
           </div>
         </div>
       </div>
