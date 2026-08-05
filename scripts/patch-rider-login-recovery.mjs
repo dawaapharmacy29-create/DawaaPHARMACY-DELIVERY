@@ -32,15 +32,17 @@ if (!login.includes(".replace(/[٠-٩]/g")) {
   login = login.replace(helperPattern, normalizedHelpers)
 }
 
-const staleSessionBlock = `    await supabase.auth.signOut().catch(() => undefined)
-    clearRiderSession()
+// Rider PIN login must not touch Supabase Auth first. Some Android WebViews deny
+// auth storage access and throw SecurityError before the rider RPC is called.
+login = login.replace(
+  /\s*await supabase\.auth\.signOut\(\)\.catch\(\(\) => undefined\)\s*clearRiderSession\(\)\s*\n\s*const result = await loginWithPin\(riderUsername, pin\)/,
+  `    clearRiderSession()\n\n    const result = await loginWithPin(riderUsername, pin)`
+)
 
-    const result = await loginWithPin(riderUsername, pin)`
-
-if (!login.includes('await supabase.auth.signOut().catch')) {
+if (!login.includes('clearRiderSession()\n\n    const result = await loginWithPin')) {
   const loginCall = '    const result = await loginWithPin(riderUsername, pin)'
   if (!login.includes(loginCall)) throw new Error('Rider login recovery anchor not found: rider login call')
-  login = login.replace(loginCall, staleSessionBlock)
+  login = login.replace(loginCall, `    clearRiderSession()\n\n${loginCall}`)
 }
 
 login = login.replace(
