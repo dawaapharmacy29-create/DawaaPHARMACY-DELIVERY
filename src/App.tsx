@@ -2,6 +2,7 @@ import { lazy, Suspense, type ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import ErrorBoundary from './components/ErrorBoundary'
+import CacheRecovery from './components/CacheRecovery'
 import ProtectedRoute from './components/ProtectedRoute'
 import AdminShell from './components/AdminShell'
 import type { PageKey } from './lib/permissions'
@@ -56,7 +57,7 @@ function AdminRoute({ pageKey, children }: { pageKey: PageKey; children: ReactNo
 }
 
 function App() {
-  return <ErrorBoundary><BrowserRouter><Toaster richColors position="top-center" dir="rtl" /><AdminQuickPreviewButton /><Suspense fallback={<PageLoader />}><Routes>
+  return <ErrorBoundary><BrowserRouter><CacheRecovery /><Toaster richColors position="top-center" dir="rtl" /><AdminQuickPreviewButton /><Suspense fallback={<PageLoader />}><Routes>
     <Route path="/health" element={<Health />} /><Route path="/safe-admin" element={<SafeAdmin />} /><Route path="/login" element={<Login />} /><Route path="/rider-login" element={<RiderLogin />} />
     <Route path="/rider" element={<ProtectedRoute pageKey="rider"><RiderDashboard /></ProtectedRoute>} />
     <Route path="/admin" element={<AdminRoute pageKey="dashboard"><AdminDashboard /></AdminRoute>} /><Route path="/admin/executive" element={<AdminRoute pageKey="dashboard"><ExecutiveDashboard /></AdminRoute>} /><Route path="/admin/ops" element={<AdminRoute pageKey="dashboard"><OperationsBoard /></AdminRoute>} /><Route path="/admin/reports" element={<AdminRoute pageKey="dashboard"><CycleArchiveLite /></AdminRoute>} /><Route path="/admin/cycles" element={<AdminRoute pageKey="dashboard"><CycleArchiveLite /></AdminRoute>} /><Route path="/admin/cycle-closing" element={<AdminRoute pageKey="dashboard"><CycleClosingCenter /></AdminRoute>} /><Route path="/admin/storage-archive" element={<AdminRoute pageKey="dashboard"><StorageArchiveCenter /></AdminRoute>} />
