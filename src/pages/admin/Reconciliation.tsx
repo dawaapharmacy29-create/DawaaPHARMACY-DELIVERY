@@ -250,6 +250,9 @@ export default function Reconciliation() {
     return out
   }, [searchParams])
   const hasDrillFilters = Object.keys(activeDrillFilters).length > 0
+  const selectedBranchParam = searchParams.get('branch')
+  const selectedBranch = selectedBranchParam ? normalizeBranchName(selectedBranchParam) : 'all'
+  const selectedRider = searchParams.get('rider_id') || 'all'
 
   useEffect(() => {
     const incoming = searchParams.get('filter') as FilterKey | null
@@ -265,7 +268,7 @@ export default function Reconciliation() {
   function applyMainFilter(nextFilter: FilterKey) {
     setFilter(nextFilter)
     const next = new URLSearchParams()
-    ;['date', 'from', 'to'].forEach(key => {
+    ;['date', 'from', 'to', 'branch', 'rider_id'].forEach(key => {
       const value = searchParams.get(key)
       if (value) next.set(key, value)
     })
@@ -278,6 +281,14 @@ export default function Reconciliation() {
     setFilter('all')
     setSearchTerm('')
     setSearchParams({}, { replace: true })
+  }
+
+  function applyScopeFilter(key: 'branch' | 'rider_id', value: string) {
+    const next = new URLSearchParams(searchParams)
+    if (value === 'all') next.delete(key)
+    else next.set(key, value)
+    if (key === 'branch') next.delete('rider_id')
+    setSearchParams(next, { replace: true })
   }
 
   function handleCycleApply(from: string, to: string) {
@@ -345,6 +356,25 @@ export default function Reconciliation() {
   }
 
   const riderMap = new Map(riders.map(r => [r.id, r]))
+  const branchOptions = useMemo(() => {
+    const branches = new Map<string, string>()
+    const riderLookup = new Map(riders.map(rider => [rider.id, rider]))
+    orders.forEach(order => {
+      const rider = riderLookup.get(order.rider_id)
+      const raw = String((order as any).branch_name || rider?.branch_name || '')
+      const key = normalizeBranchName(raw)
+      if (key && !branches.has(key)) branches.set(key, raw || key)
+    })
+    riders.forEach(rider => {
+      const raw = String(rider.branch_name || '')
+      const key = normalizeBranchName(raw)
+      if (key && !branches.has(key)) branches.set(key, raw || key)
+    })
+    return [...branches.entries()].sort((a, b) => a[1].localeCompare(b[1], 'ar'))
+  }, [orders, riders])
+  const riderOptions = useMemo(() => riders
+    .filter(rider => selectedBranch === 'all' || normalizeBranchName(rider.branch_name || '') === selectedBranch)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ar')), [riders, selectedBranch])
   const duplicateInvoiceSet = useMemo(() => {
     const counts = new Map<string, number>()
     orders.forEach(o => {
@@ -993,8 +1023,14 @@ export default function Reconciliation() {
 
   if (loading) return <div className="min-h-screen bg-[#F3F7F8] p-8 text-center text-lg font-bold">جاري التحميل...</div>
 
-  const activeOrders = orders.filter(o => !(o as any).deleted_at)
-  const deletedTotal = orders.filter(o => Boolean((o as any).deleted_at)).length
+  const scopedOrders = orders.filter(order => {
+    const rider = riderMap.get(order.rider_id)
+    const branch = normalizeBranchName((order as any).branch_name || rider?.branch_name || '')
+    return (selectedBranch === 'all' || branch === selectedBranch) &&
+      (selectedRider === 'all' || order.rider_id === selectedRider)
+  })
+  const activeOrders = scopedOrders.filter(o => !(o as any).deleted_at)
+  const deletedTotal = scopedOrders.filter(o => Boolean((o as any).deleted_at)).length
   const countedTotal = activeOrders.filter(o => (o as any).is_countable === true || (o as any).final_count_status === 'counted').length
   const failedTotal = activeOrders.filter(o => o.status === 'failed').length
   const notFoundTotal = activeOrders.filter(o => o.bconnect_match_status === 'invoice_not_found').length
@@ -1002,7 +1038,10 @@ export default function Reconciliation() {
   const multiplierTotal = activeOrders.filter(o => (o.order_multiplier ?? 1) >= 1.5).length
   const pendingTotal = activeOrders.filter(o => String((o as any).final_count_status || '').startsWith('pending')).length
   const riskTotal = failedTotal + notFoundTotal + duplicateTotal + deletedTotal
-  const riderSummaryRows = buildRiderSummaryRows()
+  const riderSummaryRows = buildRiderSummaryRows().filter(row =>
+    (selectedBranch === 'all' || normalizeBranchName(row.rider.branch_name || '') === selectedBranch) &&
+    (selectedRider === 'all' || row.rider.id === selectedRider)
+  )
 
   function exportSummaryCsv() {
     downloadCsv(`delivery-summary-${period.start}-${period.end}.csv`, riderSummaryRows.map(row => ({
@@ -1084,7 +1123,7 @@ export default function Reconciliation() {
         <CycleSelector from={selectedFrom} to={selectedTo} onApply={handleCycleApply} />
 
         <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
-          <Kpi label="تسجيلات الدليفري" value={orders.length} />
+          <Kpi label="تسجيلات الدليفري" value={scopedOrders.length} />
           <Kpi label="محتسبة بعد المطابقة" value={countedTotal} tone="green" />
           <Kpi label="فاشلة لا تحتسب" value={failedTotal} tone="red" />
           <Kpi label="غير موجودة ببي كونكت" value={notFoundTotal} tone="red" />
@@ -1220,9 +1259,34 @@ export default function Reconciliation() {
           </div>
         )}
 
+        <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="space-y-2">
+              <span className="block text-sm font-black text-slate-700">فلتر الفرع</span>
+              <select value={selectedBranch} onChange={event => applyScopeFilter('branch', event.target.value)} className="dawaa-input w-full bg-white">
+                <option value="all">كل الفروع</option>
+                {branchOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+              </select>
+            </label>
+            <label className="space-y-2">
+              <span className="block text-sm font-black text-slate-700">فلتر الدليفري</span>
+              <select value={selectedRider} onChange={event => applyScopeFilter('rider_id', event.target.value)} className="dawaa-input w-full bg-white">
+                <option value="all">كل مناديب الدليفري</option>
+                {riderOptions.map(rider => <option key={rider.id} value={rider.id}>{rider.name}{rider.branch_name ? ` — ${rider.branch_name}` : ''}</option>)}
+              </select>
+            </label>
+          </div>
+          {(selectedBranch !== 'all' || selectedRider !== 'all') && (
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl bg-teal-50 px-4 py-3">
+              <span className="text-sm font-black text-teal-800">النتائج الحالية: {scopedOrders.length} أوردر</span>
+              <button type="button" onClick={() => { const next = new URLSearchParams(searchParams); next.delete('branch'); next.delete('rider_id'); setSearchParams(next, { replace: true }) }} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-teal-700 shadow-sm">عرض الكل</button>
+            </div>
+          )}
+        </div>
+
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
-            <FilterButton active={filter === 'all'} onClick={() => applyMainFilter('all')}>الكل ({orders.length})</FilterButton>
+            <FilterButton active={filter === 'all'} onClick={() => applyMainFilter('all')}>الكل ({scopedOrders.length})</FilterButton>
             <FilterButton active={filter === 'counted'} onClick={() => applyMainFilter('counted')}>محتسبة ({countedTotal})</FilterButton>
             <FilterButton active={filter === 'failed'} onClick={() => applyMainFilter('failed')}>فاشلة ({failedTotal})</FilterButton>
             <FilterButton active={filter === 'not_found'} onClick={() => applyMainFilter('not_found')}>غير موجودة ({notFoundTotal})</FilterButton>
