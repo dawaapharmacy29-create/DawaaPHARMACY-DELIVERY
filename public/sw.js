@@ -1,7 +1,7 @@
 /* Dawaa Delivery Service Worker - cache safe version
    الهدف: منع مشكلة Failed to fetch dynamically imported module بعد أي Deploy جديد.
 */
-const CACHE_NAME = 'dawaa-delivery-v19-order-timeline-20260614';
+const CACHE_NAME = 'dawaa-delivery-v20-mobile-recovery-20260806';
 const APP_SHELL = ['/', '/login', '/manifest.webmanifest', '/apple-touch-icon.png', '/pwa-icon-180.png', '/pwa-icon-192.png', '/pwa-icon-512.png', '/dawaa-logo.jpeg'];
 
 self.addEventListener('install', event => {
