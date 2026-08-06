@@ -13,11 +13,43 @@ export default class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error }
   }
 
-  componentDidCatch(_error: Error, _errorInfo: unknown) {
-    // Silent in production — no sensitive info exposed
+  componentDidCatch(error: Error, _errorInfo: unknown) {
+    const alreadyRecovered = new URL(window.location.href).searchParams.has('fresh')
+    if (this.isStaleBundleError(error) && !alreadyRecovered) void this.recoverFreshVersion()
+  }
+
+  isStaleBundleError = (error: Error | null = this.state.error) => {
+    const message = String(error?.message || '').toLowerCase()
+    return message.includes('dynamically imported module') ||
+      message.includes('importing a module script failed') ||
+      message.includes('loading chunk') ||
+      message.includes('chunkloaderror') ||
+      message.includes('failed to fetch')
+  }
+
+  recoverFreshVersion = async () => {
+    try {
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations()
+        await Promise.all(registrations.map(registration => registration.unregister()))
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys()
+        await Promise.all(keys.map(key => caches.delete(key)))
+      }
+    } catch {
+      // Some restricted mobile browsers block cache/storage APIs. Reload still helps.
+    }
+    const url = new URL(window.location.href)
+    url.searchParams.set('fresh', Date.now().toString())
+    window.location.replace(url.toString())
   }
 
   handleRetry = () => {
+    if (this.isStaleBundleError()) {
+      void this.recoverFreshVersion()
+      return
+    }
     if (this.state.retries >= 2) {
       // بعد 3 محاولات — reload كامل
       window.location.reload()
