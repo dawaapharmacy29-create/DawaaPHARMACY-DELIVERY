@@ -27,6 +27,7 @@ export default function CacheRecovery() {
     }
 
     async function recover() {
+      if (new URL(window.location.href).searchParams.has('fresh')) return
       try {
         if ('serviceWorker' in navigator) {
           const regs = await navigator.serviceWorker.getRegistrations()
