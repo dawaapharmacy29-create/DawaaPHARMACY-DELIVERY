@@ -15,6 +15,27 @@ function normalizeSupabaseUrl(value: unknown) {
     .replace(/\/$/, '')
 }
 
+const DELIVERY_PROJECT_REF = 'qlugjplnnkjzxcbhwopg'
+const DELIVERY_FALLBACK_URL = `https://${DELIVERY_PROJECT_REF}.supabase.co`
+// Supabase publishable keys are intended for client-side use. Keep this fallback so a
+// stale/misconfigured Vercel environment can never point the delivery app at another project.
+const DELIVERY_FALLBACK_PUBLISHABLE_KEY = 'sb_publishable_mYRf8RCDQiAPvrNt54FVWQ_--lmwiHA'
+
+const configuredUrl = normalizeSupabaseUrl(import.meta.env.VITE_SUPABASE_URL)
+const configuredKey = cleanEnv(import.meta.env.VITE_SUPABASE_ANON_KEY)
+const configuredProjectIsDelivery = configuredUrl.includes(DELIVERY_PROJECT_REF)
+
+const supabaseUrl = configuredProjectIsDelivery && configuredKey
+  ? configuredUrl
+  : DELIVERY_FALLBACK_URL
+const supabaseAnonKey = configuredProjectIsDelivery && configuredKey
+  ? configuredKey
+  : DELIVERY_FALLBACK_PUBLISHABLE_KEY
+
+if (!configuredProjectIsDelivery && configuredUrl) {
+  console.warn('Dawaa Delivery ignored a non-delivery Supabase project configuration.')
+}
+
 const memoryStorage = new Map<string, string>()
 
 const resilientAuthStorage = {
@@ -54,13 +75,6 @@ const resilientAuthStorage = {
       }
     }
   },
-}
-
-const supabaseUrl = normalizeSupabaseUrl(import.meta.env.VITE_SUPABASE_URL)
-const supabaseAnonKey = cleanEnv(import.meta.env.VITE_SUPABASE_ANON_KEY)
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables')
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
