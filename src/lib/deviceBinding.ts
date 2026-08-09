@@ -1,10 +1,10 @@
 // ربط حساب الدليفري بجهاز واحد موثّق
 // Device ID لا يحتوي على بيانات شخصية، وهو رمز عشوائي محفوظ على نفس المتصفح/الموبايل.
-// نضيف بصمة جهاز مستقرة غير حساسة داخل الـ label حتى نقدر نتعرف على نفس الموبايل
-// لو المتصفح مسح localStorage وولّد Device ID جديد.
+// نحتفظ به في أكثر من مخزن متاح حتى لا يتغير بسبب قيود Android/WebView أو تنظيف مخزن واحد.
 
 const DEVICE_ID_KEY = 'dawaa_device_id_v1'
 const DEVICE_LABEL_KEY = 'dawaa_device_label_v1'
+const DEVICE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 * 3
 
 let memoryDeviceId = ''
 let memoryDeviceLabel = ''
@@ -17,7 +17,7 @@ function randomId() {
   }
 }
 
-function safeGet(key: string) {
+function safeLocalGet(key: string) {
   try {
     return localStorage.getItem(key)
   } catch {
@@ -25,15 +25,15 @@ function safeGet(key: string) {
   }
 }
 
-function safeSet(key: string, value: string) {
+function safeLocalSet(key: string, value: string) {
   try {
     localStorage.setItem(key, value)
   } catch {
-    // Restricted Android WebView/browser: keep the value in memory for this tab.
+    // Restricted Android WebView/browser.
   }
 }
 
-function safeRemove(key: string) {
+function safeLocalRemove(key: string) {
   try {
     localStorage.removeItem(key)
   } catch {
@@ -41,8 +41,64 @@ function safeRemove(key: string) {
   }
 }
 
+function safeSessionGet(key: string) {
+  try {
+    return sessionStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function safeSessionSet(key: string, value: string) {
+  try {
+    sessionStorage.setItem(key, value)
+  } catch {
+    // Ignore restricted session storage.
+  }
+}
+
+function safeSessionRemove(key: string) {
+  try {
+    sessionStorage.removeItem(key)
+  } catch {
+    // Ignore restricted session storage.
+  }
+}
+
+function safeCookieGet(key: string) {
+  try {
+    const prefix = `${encodeURIComponent(key)}=`
+    const part = document.cookie.split('; ').find((entry) => entry.startsWith(prefix))
+    return part ? decodeURIComponent(part.slice(prefix.length)) : null
+  } catch {
+    return null
+  }
+}
+
+function safeCookieSet(key: string, value: string) {
+  try {
+    document.cookie = `${encodeURIComponent(key)}=${encodeURIComponent(value)}; Max-Age=${DEVICE_COOKIE_MAX_AGE}; Path=/; SameSite=Lax; Secure`
+  } catch {
+    // Cookies may be unavailable in some embedded contexts.
+  }
+}
+
+function safeCookieRemove(key: string) {
+  try {
+    document.cookie = `${encodeURIComponent(key)}=; Max-Age=0; Path=/; SameSite=Lax; Secure`
+  } catch {
+    // Ignore cookie restrictions.
+  }
+}
+
+function persistEverywhere(key: string, value: string) {
+  safeLocalSet(key, value)
+  safeSessionSet(key, value)
+  safeCookieSet(key, value)
+}
+
 function stableHash(input: string) {
-  // FNV-1a style deterministic non-cryptographic hash; used only as a stable device hint.
+  // FNV-1a style deterministic non-cryptographic hash; diagnostic hint only.
   let hash = 0x811c9dc5
   for (let i = 0; i < input.length; i += 1) {
     hash ^= input.charCodeAt(i)
@@ -53,7 +109,6 @@ function stableHash(input: string) {
 
 function normalizedUserAgent() {
   const ua = navigator.userAgent || 'Unknown browser'
-  // Browser version updates must not make the same phone look like a new device.
   return ua
     .replace(/(Chrome|CriOS)\/[\d.]+/gi, '$1/*')
     .replace(/(Version)\/[\d.]+/gi, '$1/*')
@@ -85,14 +140,22 @@ function stableDeviceFingerprint() {
 }
 
 export function getOrCreateDeviceId() {
-  const stored = safeGet(DEVICE_ID_KEY)
+  // Prefer the durable stores. If one store survives an Android/WebView issue,
+  // repopulate all the others with the same approved ID.
+  const stored =
+    safeLocalGet(DEVICE_ID_KEY) ||
+    safeCookieGet(DEVICE_ID_KEY) ||
+    safeSessionGet(DEVICE_ID_KEY) ||
+    memoryDeviceId
+
   if (stored) {
     memoryDeviceId = stored
+    persistEverywhere(DEVICE_ID_KEY, stored)
     return stored
   }
 
-  if (!memoryDeviceId) memoryDeviceId = randomId()
-  safeSet(DEVICE_ID_KEY, memoryDeviceId)
+  memoryDeviceId = randomId()
+  persistEverywhere(DEVICE_ID_KEY, memoryDeviceId)
   return memoryDeviceId
 }
 
@@ -100,27 +163,32 @@ export function getDeviceLabel() {
   const platform = navigator.platform || 'Unknown platform'
   const ua = navigator.userAgent || 'Unknown browser'
   const fpMarker = `[dawaa-fp:${stableDeviceFingerprint()}]`
-  const stored = safeGet(DEVICE_LABEL_KEY)
+  const stored =
+    safeLocalGet(DEVICE_LABEL_KEY) ||
+    safeCookieGet(DEVICE_LABEL_KEY) ||
+    safeSessionGet(DEVICE_LABEL_KEY)
 
-  // Old stored labels did not include a stable fingerprint. Upgrade them in place so
-  // an already-approved device learns its stable marker on the next successful login.
   if (stored) {
     const upgraded = stored.includes('[dawaa-fp:') ? stored : `${stored} ${fpMarker}`
     memoryDeviceLabel = upgraded
-    if (upgraded !== stored) safeSet(DEVICE_LABEL_KEY, upgraded)
+    persistEverywhere(DEVICE_LABEL_KEY, upgraded)
     return upgraded
   }
 
   if (!memoryDeviceLabel || !memoryDeviceLabel.includes('[dawaa-fp:')) {
     memoryDeviceLabel = `${platform} | ${ua.slice(0, 120)} ${fpMarker}`
   }
-  safeSet(DEVICE_LABEL_KEY, memoryDeviceLabel)
+  persistEverywhere(DEVICE_LABEL_KEY, memoryDeviceLabel)
   return memoryDeviceLabel
 }
 
 export function clearCurrentDeviceBinding() {
   memoryDeviceId = ''
   memoryDeviceLabel = ''
-  safeRemove(DEVICE_ID_KEY)
-  safeRemove(DEVICE_LABEL_KEY)
+  safeLocalRemove(DEVICE_ID_KEY)
+  safeLocalRemove(DEVICE_LABEL_KEY)
+  safeSessionRemove(DEVICE_ID_KEY)
+  safeSessionRemove(DEVICE_LABEL_KEY)
+  safeCookieRemove(DEVICE_ID_KEY)
+  safeCookieRemove(DEVICE_LABEL_KEY)
 }
