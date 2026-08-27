@@ -9,10 +9,11 @@ function replaceOnce(before, after, label) {
   source = source.replace(before, after)
 }
 
-replaceOnce(
-  `  const handleAdminLogin = async () => {
+if (!source.includes('const handleManagerPinLogin = async () => {')) {
+  replaceOnce(
+    `  const handleAdminLogin = async () => {
     const loginName = resolveAdminLogin(username) || username.trim()`,
-  `  const handleManagerPinLogin = async () => {
+    `  const handleManagerPinLogin = async () => {
     const pin = normalizePin(password)
     const managerUsername = username.trim() || 'dr.moaz'
     const result = await loginWithPin(managerUsername, pin)
@@ -47,8 +48,9 @@ replaceOnce(
 
   const handleAdminLogin = async () => {
     const loginName = resolveAdminLogin(username) || username.trim()`,
-  'manager PIN handler',
-)
+    'manager PIN handler',
+  )
+}
 
 const adminFallbackAfter = `      if (looksLikeAdmin) {
          if (shouldTryPinFirst) {
