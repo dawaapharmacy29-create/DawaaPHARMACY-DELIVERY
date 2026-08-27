@@ -37,15 +37,19 @@ export function resolveAdminLogin(input: string): string | null {
   'robust admin alias resolver',
 )
 
-login = replaceOnce(
-  login,
-  "      if (looksLikeAdmin) {\n        // لو الاسم أدمن معروف مثل د معاذ أو dr.moaz، ندخله Supabase Auth حتى لو الباسورد أرقام.\n        await handleAdminLogin()\n      } else if (shouldTryPinFirst) {",
-  `      if (looksLikeAdmin) {
+// Newer Login.tsx versions already contain the manager PIN fallback. In that
+// case the old single-route patch must be skipped instead of failing the build.
+if (!login.includes('const handleManagerPinLogin = async () =>')) {
+  login = replaceOnce(
+    login,
+    "      if (looksLikeAdmin) {\n        // لو الاسم أدمن معروف مثل د معاذ أو dr.moaz، ندخله Supabase Auth حتى لو الباسورد أرقام.\n        await handleAdminLogin()\n      } else if (shouldTryPinFirst) {",
+    `      if (looksLikeAdmin) {
         // aliases الإدارة تُعامل كإدارة على كل الأجهزة حتى لو كلمة السر أرقام.
         await handleAdminLogin()
       } else if (shouldTryPinFirst) {`,
-  'admin numeric password routing',
-)
+    'admin numeric password routing',
+  )
+}
 
 login = replaceOnce(
   login,
