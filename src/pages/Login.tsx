@@ -87,6 +87,39 @@ export default function Login() {
     navigate(isManagerRole ? (role === 'branch_manager' ? '/admin/branch' : '/admin') : '/rider', { replace: true })
   }
 
+  const handleManagerPinLogin = async () => {
+    const pin = normalizePin(password)
+    const managerUsername = username.trim()
+    const result = await loginWithPin(managerUsername, pin)
+
+    if (!result?.success || !result.account_id) {
+      const message = friendlyRiderError(result)
+      throw new Error(typeof message === 'string' ? message : 'تعذر التحقق من حساب الإدارة بالـ PIN')
+    }
+
+    const role = result.role || ''
+    const managerRoles = ['branch_manager', 'operations_manager', 'branches_manager', 'admin', 'general_manager', 'shift_manager', 'customer_service_manager']
+    if (!managerRoles.includes(role)) {
+      throw new Error('الحساب ليس حساب إدارة')
+    }
+
+    await supabase.auth.signOut().catch(() => undefined)
+    setRiderSession({
+      account_id: result.account_id,
+      rider_id: result.rider_id || '',
+      username: result.username || managerUsername,
+      rider_name: result.rider_name || (result as any).display_name || managerUsername,
+      branch_id: result.branch_id,
+      branch_name: result.branch_name,
+      role,
+      must_change_pin: !!result.must_change_pin,
+      session_token: result.session_token,
+    })
+
+    toast.success(`أهلاً ${result.rider_name || (result as any).display_name || managerUsername} 👋`)
+    navigate(role === 'branch_manager' ? '/admin/branch' : '/admin', { replace: true })
+  }
+
   const handleAdminLogin = async () => {
     const loginName = resolveAdminLogin(username) || username.trim()
     const authData = await loginUnified(loginName, password.trim())
@@ -127,8 +160,17 @@ export default function Login() {
       const shouldTryPinFirst = /^\d{4,6}$/.test(pinCandidate)
 
       if (looksLikeAdmin) {
-        // لو الاسم أدمن معروف مثل د معاذ أو dr.moaz، ندخله Supabase Auth حتى لو الباسورد أرقام.
-        await handleAdminLogin()
+        if (shouldTryPinFirst) {
+          try {
+            await handleAdminLogin()
+          } catch {
+            // على الموبايل الجديد قد لا تتوفر جلسة Supabase Auth أو قد يفشل مسار الإيميل.
+            // في هذه الحالة نجرب نفس حساب الإدارة عبر rider_pin_login بشكل آمن.
+            await handleManagerPinLogin()
+          }
+        } else {
+          await handleAdminLogin()
+        }
       } else if (shouldTryPinFirst) {
         // أرقام فقط = PIN → Rider login
         await handleRiderLogin()
@@ -138,7 +180,9 @@ export default function Login() {
       }
     } catch (err: any) {
       const msg = err?.message ?? ''
-      if (msg.includes('Invalid login') || msg.includes('invalid_credentials')) {
+      if (msg.includes('PIN غير صحيح') || msg.includes('wrong_pin')) {
+        setError('PIN غير صحيح')
+      } else if (msg.includes('Invalid login') || msg.includes('invalid_credentials')) {
         setError('اسم المستخدم أو كلمة السر مش صح')
       } else if (msg.includes('Email not confirmed')) {
         setError('الإيميل محتاج تأكيد. كلم الإدارة.')
