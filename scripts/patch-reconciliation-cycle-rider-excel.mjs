@@ -68,8 +68,8 @@ replaceOnce(
     })
 
     const title = 'صيدليات دواء — تقرير اعتماد الدليفري للدورة'
-    const cycleText = `الدورة: ${selectedFrom} إلى ${selectedTo}`
-    const generatedText = `تاريخ التصدير: ${new Date().toLocaleString('ar-EG')}`
+    const cycleText = 'الدورة: ' + selectedFrom + ' إلى ' + selectedTo
+    const generatedText = 'تاريخ التصدير: ' + new Date().toLocaleString('ar-EG')
     const headers = [
       'م',
       'اسم الدليفري',
@@ -145,7 +145,7 @@ replaceOnce(
       { hpt: 8 },
       { hpt: 34 },
     ]
-    worksheet['!autofilter'] = { ref: `A5:J${lastDataRow}` }
+    worksheet['!autofilter'] = { ref: 'A5:J' + lastDataRow }
     ;(worksheet as any)['!sheetViews'] = [{ rightToLeft: true }]
     ;(worksheet as any)['!freeze'] = { xSplit: 0, ySplit: 5, topLeftCell: 'A6', activePane: 'bottomLeft', state: 'frozen' }
 
@@ -181,21 +181,21 @@ replaceOnce(
       alignment: { horizontal: 'center', vertical: 'center' },
     }
 
-    if (worksheet.A1) worksheet.A1.s = titleStyle
-    if (worksheet.A2) worksheet.A2.s = subtitleStyle
-    if (worksheet.A3) worksheet.A3.s = subtitleStyle
+    if (worksheet.A1) (worksheet.A1 as any).s = titleStyle
+    if (worksheet.A2) (worksheet.A2 as any).s = subtitleStyle
+    if (worksheet.A3) (worksheet.A3 as any).s = subtitleStyle
     for (let col = 0; col < headers.length; col += 1) {
-      const cell = worksheet[XLSX.utils.encode_cell({ r: 4, c: col })]
+      const cell = worksheet[XLSX.utils.encode_cell({ r: 4, c: col })] as any
       if (cell) cell.s = headerStyle
     }
     for (let rowIndex = 5; rowIndex < lastDataRow; rowIndex += 1) {
       for (const colIndex of [6, 7, 9]) {
-        const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })]
+        const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })] as any
         if (cell) cell.s = approvedStyle
       }
     }
     for (let col = 0; col < headers.length; col += 1) {
-      const cell = worksheet[XLSX.utils.encode_cell({ r: totalRow - 1, c: col })]
+      const cell = worksheet[XLSX.utils.encode_cell({ r: totalRow - 1, c: col })] as any
       if (cell) cell.s = totalStyle
     }
 
@@ -210,7 +210,7 @@ replaceOnce(
 
     const notes = XLSX.utils.aoa_to_sheet([
       ['شرح التقرير'],
-      ['الدورة', `${selectedFrom} إلى ${selectedTo}`],
+      ['الدورة', selectedFrom + ' إلى ' + selectedTo],
       ['عدد الأوردرات المعتمدة فعليًا', 'عدد الأوردرات المقبولة بعد المطابقة بدون تأثير معامل ×1.5.'],
       ['إجمالي وحدات الأوردرات المعتمدة', 'أوردر ×1 = وحدة واحدة، وأوردر ×1.5 = 1.5 وحدة. هذا هو الرقم المرجعي للحساب.'],
       ['إجمالي المشاوير المعتمدة', 'المشاوير التي حالتها approved أو completed فقط.'],
@@ -220,9 +220,9 @@ replaceOnce(
     ;(notes as any)['!sheetViews'] = [{ rightToLeft: true }]
     XLSX.utils.book_append_sheet(workbook, notes, 'تعريف الأعمدة')
 
-    const fileName = `تقرير_اعتماد_الدليفري_${selectedFrom}_${selectedTo}.xlsx`
+    const fileName = 'تقرير_اعتماد_الدليفري_' + selectedFrom + '_' + selectedTo + '.xlsx'
     XLSX.writeFile(workbook, fileName, { compression: true, cellStyles: true })
-    toast.success(`تم تصدير تقرير الدورة: ${rows.length} مندوب · ${total.approvedOrderUnits} وحدة أوردر معتمدة · ${total.approvedTrips} مشوار معتمد`)
+    toast.success('تم تصدير تقرير الدورة: ' + rows.length + ' مندوب · ' + total.approvedOrderUnits + ' وحدة أوردر معتمدة · ' + total.approvedTrips + ' مشوار معتمد')
   }
 
   function printMonthlyReport() {`,
