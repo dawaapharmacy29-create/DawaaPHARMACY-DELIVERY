@@ -101,6 +101,9 @@ replaceOnce(
       [cycleText],
       [generatedText],
       [],
+      ['عدد المناديب', '', 'الأوردرات المعتمدة', '', 'وحدات الأوردرات المعتمدة', '', 'المشاوير المعتمدة', '', 'إجمالي المشاوير', ''],
+      [rows.length, '', total.approvedOrders, '', total.approvedOrderUnits, '', total.approvedTrips, '', total.allTrips, ''],
+      [],
       headers,
       ...dataRows,
       [
@@ -115,16 +118,32 @@ replaceOnce(
         total.allTrips,
         total.approvedTrips,
       ],
+      [],
+      ['ملاحظة: إجمالي وحدات الأوردرات المعتمدة = أوردر ×1 بوحدة واحدة + أوردر ×1.5 بوحدة ونصف. المشاوير المعتمدة تحسب فقط للحالات approved / completed.'],
     ]
 
     const worksheet = XLSX.utils.aoa_to_sheet(sheetData)
-    const lastDataRow = 5 + dataRows.length
-    const totalRow = lastDataRow + 1
+    const headerRowIndex = 7
+    const firstDataRowIndex = 8
+    const lastDataRowIndex = firstDataRowIndex + dataRows.length - 1
+    const totalRowIndex = lastDataRowIndex + 1
+    const noteRowIndex = totalRowIndex + 2
 
     worksheet['!merges'] = [
       XLSX.utils.decode_range('A1:J1'),
       XLSX.utils.decode_range('A2:J2'),
       XLSX.utils.decode_range('A3:J3'),
+      XLSX.utils.decode_range('A5:B5'),
+      XLSX.utils.decode_range('C5:D5'),
+      XLSX.utils.decode_range('E5:F5'),
+      XLSX.utils.decode_range('G5:H5'),
+      XLSX.utils.decode_range('I5:J5'),
+      XLSX.utils.decode_range('A6:B6'),
+      XLSX.utils.decode_range('C6:D6'),
+      XLSX.utils.decode_range('E6:F6'),
+      XLSX.utils.decode_range('G6:H6'),
+      XLSX.utils.decode_range('I6:J6'),
+      XLSX.utils.decode_range('A' + (noteRowIndex + 1) + ':J' + (noteRowIndex + 1)),
     ]
     worksheet['!cols'] = [
       { wch: 6 },
@@ -139,65 +158,163 @@ replaceOnce(
       { wch: 27 },
     ]
     worksheet['!rows'] = [
-      { hpt: 30 },
-      { hpt: 24 },
-      { hpt: 22 },
-      { hpt: 8 },
       { hpt: 34 },
+      { hpt: 25 },
+      { hpt: 22 },
+      { hpt: 9 },
+      { hpt: 24 },
+      { hpt: 34 },
+      { hpt: 9 },
+      { hpt: 38 },
     ]
-    worksheet['!autofilter'] = { ref: 'A5:J' + lastDataRow }
+    worksheet['!autofilter'] = { ref: 'A8:J' + (lastDataRowIndex + 1) }
     ;(worksheet as any)['!sheetViews'] = [{ rightToLeft: true }]
-    ;(worksheet as any)['!freeze'] = { xSplit: 0, ySplit: 5, topLeftCell: 'A6', activePane: 'bottomLeft', state: 'frozen' }
+    ;(worksheet as any)['!freeze'] = { xSplit: 0, ySplit: 8, topLeftCell: 'A9', activePane: 'bottomLeft', state: 'frozen' }
+    ;(worksheet as any)['!pageSetup'] = { orientation: 'landscape', fitToWidth: 1, fitToHeight: 0, paperSize: 9 }
+    ;(worksheet as any)['!margins'] = { left: 0.25, right: 0.25, top: 0.45, bottom: 0.45, header: 0.2, footer: 0.2 }
 
+    const thinBorder = {
+      top: { style: 'thin', color: { rgb: 'CBD5E1' } },
+      bottom: { style: 'thin', color: { rgb: 'CBD5E1' } },
+      left: { style: 'thin', color: { rgb: 'CBD5E1' } },
+      right: { style: 'thin', color: { rgb: 'CBD5E1' } },
+    }
     const titleStyle = {
-      font: { bold: true, sz: 18, color: { rgb: 'FFFFFF' } },
-      fill: { fgColor: { rgb: '0F766E' } },
+      font: { bold: true, sz: 20, color: { rgb: 'FFFFFF' } },
+      fill: { fgColor: { rgb: '073B4C' } },
       alignment: { horizontal: 'center', vertical: 'center' },
     }
     const subtitleStyle = {
       font: { bold: true, sz: 12, color: { rgb: '0F172A' } },
-      fill: { fgColor: { rgb: 'CCFBF1' } },
+      fill: { fgColor: { rgb: 'DFF7F5' } },
       alignment: { horizontal: 'center', vertical: 'center' },
     }
+    const kpiLabelStyle = {
+      font: { bold: true, sz: 11, color: { rgb: 'FFFFFF' } },
+      fill: { fgColor: { rgb: '0F766E' } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border: thinBorder,
+    }
+    const kpiValueStyle = {
+      font: { bold: true, sz: 17, color: { rgb: '064E3B' } },
+      fill: { fgColor: { rgb: 'ECFDF5' } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border: thinBorder,
+      numFmt: '#,##0.##',
+    }
     const headerStyle = {
-      font: { bold: true, color: { rgb: 'FFFFFF' } },
+      font: { bold: true, sz: 10, color: { rgb: 'FFFFFF' } },
       fill: { fgColor: { rgb: '0F766E' } },
       alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-      border: {
-        top: { style: 'thin', color: { rgb: 'D1D5DB' } },
-        bottom: { style: 'thin', color: { rgb: 'D1D5DB' } },
-        left: { style: 'thin', color: { rgb: 'D1D5DB' } },
-        right: { style: 'thin', color: { rgb: 'D1D5DB' } },
-      },
+      border: thinBorder,
+    }
+    const bodyStyleA = {
+      font: { sz: 10, color: { rgb: '0F172A' } },
+      fill: { fgColor: { rgb: 'FFFFFF' } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border: thinBorder,
+      numFmt: '#,##0.##',
+    }
+    const bodyStyleB = {
+      font: { sz: 10, color: { rgb: '0F172A' } },
+      fill: { fgColor: { rgb: 'F8FAFC' } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border: thinBorder,
+      numFmt: '#,##0.##',
+    }
+    const nameStyle = {
+      font: { bold: true, sz: 10, color: { rgb: '0F172A' } },
+      alignment: { horizontal: 'right', vertical: 'center' },
+      border: thinBorder,
+    }
+    const multiplierStyle = {
+      font: { bold: true, color: { rgb: '92400E' } },
+      fill: { fgColor: { rgb: 'FEF3C7' } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border: thinBorder,
+      numFmt: '#,##0',
     }
     const approvedStyle = {
       font: { bold: true, color: { rgb: '065F46' } },
       fill: { fgColor: { rgb: 'D1FAE5' } },
       alignment: { horizontal: 'center', vertical: 'center' },
+      border: thinBorder,
+      numFmt: '#,##0.##',
+    }
+    const approvedUnitsStyle = {
+      font: { bold: true, sz: 11, color: { rgb: 'FFFFFF' } },
+      fill: { fgColor: { rgb: '059669' } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border: thinBorder,
+      numFmt: '#,##0.##',
+    }
+    const approvedTripsStyle = {
+      font: { bold: true, color: { rgb: '075985' } },
+      fill: { fgColor: { rgb: 'E0F2FE' } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      border: thinBorder,
+      numFmt: '#,##0',
     }
     const totalStyle = {
-      font: { bold: true, color: { rgb: 'FFFFFF' } },
+      font: { bold: true, sz: 11, color: { rgb: 'FFFFFF' } },
       fill: { fgColor: { rgb: '064E3B' } },
       alignment: { horizontal: 'center', vertical: 'center' },
+      border: thinBorder,
+      numFmt: '#,##0.##',
+    }
+    const noteStyle = {
+      font: { bold: true, sz: 10, color: { rgb: '7C2D12' } },
+      fill: { fgColor: { rgb: 'FFF7ED' } },
+      alignment: { horizontal: 'right', vertical: 'center', wrapText: true },
+      border: thinBorder,
     }
 
     if (worksheet.A1) (worksheet.A1 as any).s = titleStyle
     if (worksheet.A2) (worksheet.A2 as any).s = subtitleStyle
     if (worksheet.A3) (worksheet.A3 as any).s = subtitleStyle
+
+    for (const cellAddress of ['A5','C5','E5','G5','I5']) {
+      const cell = worksheet[cellAddress] as any
+      if (cell) cell.s = kpiLabelStyle
+    }
+    for (const cellAddress of ['A6','C6','E6','G6','I6']) {
+      const cell = worksheet[cellAddress] as any
+      if (cell) cell.s = kpiValueStyle
+    }
+
     for (let col = 0; col < headers.length; col += 1) {
-      const cell = worksheet[XLSX.utils.encode_cell({ r: 4, c: col })] as any
+      const cell = worksheet[XLSX.utils.encode_cell({ r: headerRowIndex, c: col })] as any
       if (cell) cell.s = headerStyle
     }
-    for (let rowIndex = 5; rowIndex < lastDataRow; rowIndex += 1) {
-      for (const colIndex of [6, 7, 9]) {
-        const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })] as any
-        if (cell) cell.s = approvedStyle
+
+    for (let rowIndex = firstDataRowIndex; rowIndex <= lastDataRowIndex; rowIndex += 1) {
+      const baseStyle = (rowIndex - firstDataRowIndex) % 2 === 0 ? bodyStyleA : bodyStyleB
+      for (let col = 0; col < headers.length; col += 1) {
+        const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: col })] as any
+        if (cell) cell.s = baseStyle
       }
+      const nameCell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 1 })] as any
+      if (nameCell) nameCell.s = { ...baseStyle, ...nameStyle, fill: baseStyle.fill }
+      const multiplierCell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })] as any
+      if (multiplierCell) multiplierCell.s = multiplierStyle
+      const approvedCell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 6 })] as any
+      if (approvedCell) approvedCell.s = approvedStyle
+      const approvedUnitsCell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 7 })] as any
+      if (approvedUnitsCell) approvedUnitsCell.s = approvedUnitsStyle
+      const approvedTripsCell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 9 })] as any
+      if (approvedTripsCell) approvedTripsCell.s = approvedTripsStyle
+      ;(worksheet['!rows'] as any[])[rowIndex] = { hpt: 24 }
     }
+
     for (let col = 0; col < headers.length; col += 1) {
-      const cell = worksheet[XLSX.utils.encode_cell({ r: totalRow - 1, c: col })] as any
+      const cell = worksheet[XLSX.utils.encode_cell({ r: totalRowIndex, c: col })] as any
       if (cell) cell.s = totalStyle
     }
+    ;(worksheet['!rows'] as any[])[totalRowIndex] = { hpt: 29 }
+
+    const noteCell = worksheet[XLSX.utils.encode_cell({ r: noteRowIndex, c: 0 })] as any
+    if (noteCell) noteCell.s = noteStyle
+    ;(worksheet['!rows'] as any[])[noteRowIndex] = { hpt: 34 }
 
     const workbook = XLSX.utils.book_new()
     workbook.Props = {
@@ -218,11 +335,20 @@ replaceOnce(
     ])
     notes['!cols'] = [{ wch: 34 }, { wch: 85 }]
     ;(notes as any)['!sheetViews'] = [{ rightToLeft: true }]
+    for (let r = 0; r <= 5; r += 1) {
+      for (let c = 0; c <= 1; c += 1) {
+        const cell = notes[XLSX.utils.encode_cell({ r, c })] as any
+        if (!cell) continue
+        cell.s = r === 0
+          ? { font: { bold: true, sz: 16, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '073B4C' } }, alignment: { horizontal: 'center' } }
+          : { font: { bold: c === 0, color: { rgb: '0F172A' } }, fill: { fgColor: { rgb: r % 2 === 0 ? 'F8FAFC' : 'FFFFFF' } }, alignment: { horizontal: c === 0 ? 'right' : 'right', wrapText: true }, border: thinBorder }
+      }
+    }
     XLSX.utils.book_append_sheet(workbook, notes, 'تعريف الأعمدة')
 
     const fileName = 'تقرير_اعتماد_الدليفري_' + selectedFrom + '_' + selectedTo + '.xlsx'
     XLSX.writeFile(workbook, fileName, { compression: true, cellStyles: true })
-    toast.success('تم تصدير تقرير الدورة: ' + rows.length + ' مندوب · ' + total.approvedOrderUnits + ' وحدة أوردر معتمدة · ' + total.approvedTrips + ' مشوار معتمد')
+    toast.success('تم تصدير تقرير Excel المصمم: ' + rows.length + ' مندوب · ' + total.approvedOrderUnits + ' وحدة أوردر معتمدة · ' + total.approvedTrips + ' مشوار معتمد')
   }
 
   function printMonthlyReport() {`,
@@ -233,8 +359,8 @@ replaceOnce(
 `          <button onClick={printMonthlyReport} className="flex items-center gap-2 rounded-2xl bg-[#061827] px-5 py-3 font-black text-white shadow-sm hover:bg-[#0b2a42]">
             <Printer size={18} /> تصدير تقرير نهاية الدورة PDF
           </button>`,
-`          <button onClick={exportRiderCycleApprovalXlsx} className="flex items-center gap-2 rounded-2xl bg-teal-700 px-5 py-3 font-black text-white shadow-lg ring-2 ring-teal-200 transition hover:bg-teal-800" title="تقرير Excel كامل لكل المناديب: الأوردرات ×1 و×1.5 والمشاوير المعتمدة">
-            <FileSpreadsheet size={19} /> Excel اعتماد الدورة
+`          <button onClick={exportRiderCycleApprovalXlsx} className="flex items-center gap-2 rounded-2xl bg-teal-700 px-5 py-3 font-black text-white shadow-lg ring-2 ring-teal-200 transition hover:bg-teal-800" title="تقرير Excel مصمم للدورة: أوردرات ×1 و×1.5 والمشاوير المعتمدة">
+            <FileSpreadsheet size={19} /> Excel اعتماد الدورة — مصمم
           </button>
           <button onClick={printMonthlyReport} className="flex items-center gap-2 rounded-2xl bg-[#061827] px-5 py-3 font-black text-white shadow-sm hover:bg-[#0b2a42]">
             <Printer size={18} /> تصدير تقرير نهاية الدورة PDF
@@ -243,4 +369,4 @@ replaceOnce(
 )
 
 await writeFile(file, source, 'utf8')
-console.log('Premium rider cycle Excel approval report added to reconciliation')
+console.log('Premium designed rider cycle Excel approval report added to reconciliation')
