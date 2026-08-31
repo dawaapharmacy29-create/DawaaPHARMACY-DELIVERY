@@ -1,0 +1,103 @@
+name: Export previous delivery cycle review orders
+
+on:
+  push:
+    branches: [ops/export-prev-cycle-review-20260831]
+    paths:
+      - '.github/workflows/export-prev-cycle-review-20260831.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Export review orders CSV
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_DB_URL"
+          mkdir -p out
+          cat > /tmp/export.sql <<'SQL'
+          \copy (
+            with o as (
+              select
+                d.*,
+                coalesce(d.work_date,d.delivery_date,(d.created_at at time zone 'Africa/Cairo')::date) as cycle_date,
+                (d.status='failed' or d.review_status='failed' or d.final_count_status='excluded_failed' or d.failed_at is not null) as cat_failed,
+                (coalesce(d.is_duplicate_invoice,false) or coalesce(d.duplicate_warning,false) or d.duplicate_review_status in ('pending','approved') or d.final_count_status like '%duplicate%') as cat_duplicate,
+                (coalesce(d.needs_review,false) or d.final_count_status like 'pending_%') as cat_review,
+                (d.approval_status='pending') as cat_approval
+              from public.delivery_orders d
+              where coalesce(d.work_date,d.delivery_date,(d.created_at at time zone 'Africa/Cairo')::date)
+                    between date '2026-07-26' and date '2026-08-25'
+            )
+            select
+              cycle_date as "تاريخ الدورة",
+              concat_ws(' + ',
+                case when cat_failed then 'فاشل' end,
+                case when cat_duplicate then 'مكرر' end,
+                case when cat_review then 'قيد المراجعة' end,
+                case when cat_approval then 'منتظر اعتماد' end
+              ) as "تصنيفات المطابقة",
+              id as "Order ID",
+              order_no as "رقم الأوردر",
+              coalesce(invoice_number,invoice_no) as "رقم الفاتورة",
+              coalesce(invoice_amount,invoice_value,amount) as "قيمة الفاتورة",
+              coalesce(branch_name,branch) as "الفرع",
+              coalesce(rider_name,driver_name) as "المندوب",
+              coalesce(customer_code_snapshot,customer_code) as "كود العميل",
+              coalesce(customer_name_snapshot,customer_name) as "اسم العميل",
+              coalesce(customer_phone_snapshot,customer_phone) as "تليفون العميل",
+              coalesce(customer_address_snapshot,customer_address,address) as "العنوان",
+              status as "حالة الأوردر",
+              approval_status as "حالة الاعتماد",
+              review_status as "حالة المراجعة",
+              duplicate_review_status as "حالة مراجعة التكرار",
+              final_count_status as "حالة الاحتساب النهائية",
+              bconnect_match_status as "حالة مطابقة BConnect",
+              needs_review as "يحتاج مراجعة",
+              is_duplicate_invoice as "مكرر حسب النظام",
+              duplicate_warning as "تحذير تكرار",
+              coalesce(failed_reason,fail_reason) as "سبب الفشل",
+              duplicate_reason as "سبب التكرار",
+              duplicate_note as "ملاحظة التكرار",
+              review_reason as "سبب المراجعة",
+              is_countable as "قابل للاحتساب",
+              final_count_status as "نتيجة الاحتساب",
+              count_exclusion_reason as "سبب الاستبعاد",
+              is_deleted as "محذوف",
+              deletion_reason as "سبب الحذف",
+              created_at at time zone 'Africa/Cairo' as "وقت الإنشاء",
+              delivered_at at time zone 'Africa/Cairo' as "وقت التسليم",
+              failed_at at time zone 'Africa/Cairo' as "وقت الفشل",
+              matched_at at time zone 'Africa/Cairo' as "وقت المطابقة",
+              reconciliation_notes as "ملاحظات المطابقة"
+            from o
+            where cat_failed or cat_duplicate or cat_review or cat_approval
+            order by cycle_date, coalesce(branch_name,branch), coalesce(rider_name,driver_name), coalesce(invoice_number,invoice_no), id
+          ) to 'out/previous_cycle_review_orders.csv' with (format csv, header true, encoding 'UTF8');
+          SQL
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f /tmp/export.sql
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('out/previous_cycle_review_orders.csv')
+          b=p.read_bytes()
+          if not b.startswith(b'\xef\xbb\xbf'):
+              p.write_bytes(b'\xef\xbb\xbf'+b)
+          print('bytes',p.stat().st_size)
+          PY
+
+      - name: Upload export artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: previous-cycle-review-orders-2026-07-26_to_2026-08-25
+          path: out/previous_cycle_review_orders.csv
+          retention-days: 7
+          if-no-files-found: error
