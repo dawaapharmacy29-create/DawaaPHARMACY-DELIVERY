@@ -1,4 +1,4 @@
-name: Export previous delivery cycle review orders
+name: Export reconciled rider cycle summary
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Export review orders CSV
+      - name: Export reconciled rider summary
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         shell: bash
@@ -24,79 +24,97 @@ jobs:
           set -euo pipefail
           test -n "$SUPABASE_DB_URL"
           mkdir -p out
-          cat > /tmp/export.sql <<'SQL'
+          cat > /tmp/summary.sql <<'SQL'
           COPY (
-            with o as (
-              select
-                d.*,
-                coalesce(d.work_date,d.delivery_date,(d.created_at at time zone 'Africa/Cairo')::date) as cycle_date,
-                (d.status='failed' or d.review_status='failed' or d.final_count_status='excluded_failed' or d.failed_at is not null) as cat_failed,
-                (coalesce(d.is_duplicate_invoice,false) or coalesce(d.duplicate_warning,false) or d.duplicate_review_status in ('pending','approved') or d.final_count_status like '%duplicate%') as cat_duplicate,
-                (coalesce(d.needs_review,false) or d.final_count_status like 'pending_%') as cat_review,
-                (d.approval_status='pending') as cat_approval
-              from public.delivery_orders d
-              where coalesce(d.work_date,d.delivery_date,(d.created_at at time zone 'Africa/Cairo')::date)
+            with orders_scope as (
+              select *
+              from public.delivery_orders o
+              where coalesce(o.work_date,o.delivery_date,(o.registered_at at time zone 'Africa/Cairo')::date,(o.created_at at time zone 'Africa/Cairo')::date)
                     between date '2026-07-26' and date '2026-08-25'
+                and coalesce(o.is_deleted,false)=false
+                and o.deleted_at is null
+            ),
+            trips_scope as (
+              select *
+              from public.internal_trips t
+              where coalesce(t.work_date,t.trip_date,(t.registered_at at time zone 'Africa/Cairo')::date,(t.created_at at time zone 'Africa/Cairo')::date)
+                    between date '2026-07-26' and date '2026-08-25'
+                and t.duplicate_of is null
+            ),
+            rider_ids as (
+              select rider_id from orders_scope where rider_id is not null
+              union
+              select rider_id from trips_scope where rider_id is not null
+            ),
+            oc as (
+              select rider_id,
+                     count(*)::int as total_orders,
+                     count(*) filter(where approval_status='approved' and coalesce(is_countable,false)=true)::int as approved_orders,
+                     count(*) filter(where approval_status='rejected')::int as rejected_orders,
+                     count(*) filter(where coalesce(approval_status,'pending') not in ('approved','rejected'))::int as pending_orders
+              from orders_scope group by rider_id
+            ),
+            tc as (
+              select rider_id,
+                     count(*) filter(where coalesce(is_countable,true)=true and coalesce(status,review_status,'') in ('approved','completed','countable'))::int as approved_trips,
+                     count(*) filter(where coalesce(status,review_status,'')='rejected')::int as rejected_trips,
+                     count(*) filter(where coalesce(status,review_status,'') like 'pending%')::int as pending_trips
+              from trips_scope group by rider_id
             )
-            select
-              cycle_date as "تاريخ الدورة",
-              concat_ws(' + ',
-                case when cat_failed then 'فاشل' end,
-                case when cat_duplicate then 'مكرر' end,
-                case when cat_review then 'قيد المراجعة' end,
-                case when cat_approval then 'منتظر اعتماد' end
-              ) as "تصنيفات المطابقة",
-              id as "Order ID",
-              order_no as "رقم الأوردر",
-              coalesce(invoice_number,invoice_no) as "رقم الفاتورة",
-              coalesce(invoice_amount,invoice_value,amount) as "قيمة الفاتورة",
-              coalesce(branch_name,branch) as "الفرع",
-              coalesce(rider_name,driver_name) as "المندوب",
-              coalesce(customer_code_snapshot,customer_code) as "كود العميل",
-              coalesce(customer_name_snapshot,customer_name) as "اسم العميل",
-              coalesce(customer_phone_snapshot,customer_phone) as "تليفون العميل",
-              coalesce(customer_address_snapshot,customer_address,address) as "العنوان",
-              status as "حالة الأوردر",
-              approval_status as "حالة الاعتماد",
-              review_status as "حالة المراجعة",
-              duplicate_review_status as "حالة مراجعة التكرار",
-              final_count_status as "حالة الاحتساب النهائية",
-              bconnect_match_status as "حالة مطابقة BConnect",
-              needs_review as "يحتاج مراجعة",
-              is_duplicate_invoice as "مكرر حسب النظام",
-              duplicate_warning as "تحذير تكرار",
-              coalesce(failed_reason,fail_reason) as "سبب الفشل",
-              duplicate_reason as "سبب التكرار",
-              duplicate_note as "ملاحظة التكرار",
-              review_reason as "سبب المراجعة",
-              is_countable as "قابل للاحتساب",
-              count_exclusion_reason as "سبب الاستبعاد",
-              is_deleted as "محذوف",
-              deletion_reason as "سبب الحذف",
-              created_at at time zone 'Africa/Cairo' as "وقت الإنشاء",
-              delivered_at at time zone 'Africa/Cairo' as "وقت التسليم",
-              failed_at at time zone 'Africa/Cairo' as "وقت الفشل",
-              matched_at at time zone 'Africa/Cairo' as "وقت المطابقة",
-              reconciliation_notes as "ملاحظات المطابقة"
-            from o
-            where cat_failed or cat_duplicate or cat_review or cat_approval
-            order by cycle_date, coalesce(branch_name,branch), coalesce(rider_name,driver_name), coalesce(invoice_number,invoice_no), id
+            select coalesce(r.name,'غير محدد') as "اسم الدليفري",
+                   coalesce(r.branch_name,b.display_name,b.name,'') as "الفرع",
+                   coalesce(oc.total_orders,0) as "إجمالي الأوردرات",
+                   coalesce(oc.approved_orders,0) as "الأوردرات المقبولة المعتمدة",
+                   coalesce(oc.rejected_orders,0) as "الأوردرات المرفوضة",
+                   coalesce(tc.approved_trips,0) as "المشاوير المعتمدة",
+                   coalesce(tc.rejected_trips,0) as "المشاوير المرفوضة",
+                   coalesce(oc.pending_orders,0) as "أوردرات غير محسومة",
+                   coalesce(tc.pending_trips,0) as "مشاوير غير محسومة",
+                   r.id as "Rider ID"
+            from rider_ids x
+            left join public.riders r on r.id=x.rider_id
+            left join public.branches b on b.id=r.branch_id
+            left join oc on oc.rider_id=x.rider_id
+            left join tc on tc.rider_id=x.rider_id
+            order by coalesce(r.branch_name,b.display_name,b.name,''), coalesce(r.name,'غير محدد')
           ) TO STDOUT WITH (FORMAT CSV, HEADER TRUE, ENCODING 'UTF8');
           SQL
-          psql "$SUPABASE_DB_URL" -X -q -v ON_ERROR_STOP=1 -f /tmp/export.sql > out/previous_cycle_review_orders.csv
+          psql "$SUPABASE_DB_URL" -X -q -v ON_ERROR_STOP=1 -f /tmp/summary.sql > out/rider_cycle_summary.csv
+
+          cat > /tmp/status.sql <<'SQL'
+          COPY (
+            select 'orders' as source, coalesce(approval_status,'<NULL>') as status, count(*)::int as n
+            from public.delivery_orders o
+            where coalesce(o.work_date,o.delivery_date,(o.registered_at at time zone 'Africa/Cairo')::date,(o.created_at at time zone 'Africa/Cairo')::date)
+                  between date '2026-07-26' and date '2026-08-25'
+              and coalesce(o.is_deleted,false)=false and o.deleted_at is null
+            group by coalesce(approval_status,'<NULL>')
+            union all
+            select 'trips', coalesce(status,review_status,'<NULL>'), count(*)::int
+            from public.internal_trips t
+            where coalesce(t.work_date,t.trip_date,(t.registered_at at time zone 'Africa/Cairo')::date,(t.created_at at time zone 'Africa/Cairo')::date)
+                  between date '2026-07-26' and date '2026-08-25'
+              and t.duplicate_of is null
+            group by coalesce(status,review_status,'<NULL>')
+            order by source,status
+          ) TO STDOUT WITH (FORMAT CSV, HEADER TRUE, ENCODING 'UTF8');
+          SQL
+          psql "$SUPABASE_DB_URL" -X -q -v ON_ERROR_STOP=1 -f /tmp/status.sql > out/status_distribution.csv
+
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('out/previous_cycle_review_orders.csv')
-          b=p.read_bytes()
-          if not b.startswith(b'\xef\xbb\xbf'):
-              p.write_bytes(b'\xef\xbb\xbf'+b)
-          print('bytes',p.stat().st_size)
+          for name in ('rider_cycle_summary.csv','status_distribution.csv'):
+              p=Path('out')/name
+              b=p.read_bytes()
+              if not b.startswith(b'\xef\xbb\xbf'):
+                  p.write_bytes(b'\xef\xbb\xbf'+b)
+              print(name, p.stat().st_size)
           PY
 
-      - name: Upload export artifact
+      - name: Upload summary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: previous-cycle-review-orders-2026-07-26_to_2026-08-25
-          path: out/previous_cycle_review_orders.csv
+          name: reconciled-rider-cycle-summary-2026-07-26_to_2026-08-25
+          path: out/*.csv
           retention-days: 7
           if-no-files-found: error
