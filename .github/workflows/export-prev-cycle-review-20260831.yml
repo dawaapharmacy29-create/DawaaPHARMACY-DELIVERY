@@ -25,7 +25,7 @@ jobs:
           test -n "$SUPABASE_DB_URL"
           mkdir -p out
           cat > /tmp/export.sql <<'SQL'
-          \copy (
+          COPY (
             with o as (
               select
                 d.*,
@@ -70,7 +70,6 @@ jobs:
               duplicate_note as "ملاحظة التكرار",
               review_reason as "سبب المراجعة",
               is_countable as "قابل للاحتساب",
-              final_count_status as "نتيجة الاحتساب",
               count_exclusion_reason as "سبب الاستبعاد",
               is_deleted as "محذوف",
               deletion_reason as "سبب الحذف",
@@ -82,9 +81,9 @@ jobs:
             from o
             where cat_failed or cat_duplicate or cat_review or cat_approval
             order by cycle_date, coalesce(branch_name,branch), coalesce(rider_name,driver_name), coalesce(invoice_number,invoice_no), id
-          ) to 'out/previous_cycle_review_orders.csv' with (format csv, header true, encoding 'UTF8');
+          ) TO STDOUT WITH (FORMAT CSV, HEADER TRUE, ENCODING 'UTF8');
           SQL
-          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f /tmp/export.sql
+          psql "$SUPABASE_DB_URL" -X -q -v ON_ERROR_STOP=1 -f /tmp/export.sql > out/previous_cycle_review_orders.csv
           python3 - <<'PY'
           from pathlib import Path
           p=Path('out/previous_cycle_review_orders.csv')
