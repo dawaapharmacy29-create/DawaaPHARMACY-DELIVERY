@@ -40,6 +40,18 @@ const WAREHOUSES = ['مخزن المعداوي', 'مخزن سونيستا', 'م�
 const ACCESSORIES = ['كيان إكسسوار', 'المدينة المنورة إكسسوار', 'أورجينال إكسسوار', 'سوفيكو']
 const SUPPLIES = ['مستلزمات الفرع', 'مخزن المستلزمات', 'مورد مستلزمات']
 
+function getStoredRiderToken(): string | null {
+  try {
+    const raw = localStorage.getItem('dawaa_rider_session')
+    if (raw) return JSON.parse(raw)?.session_token || null
+  } catch {}
+  return localStorage.getItem('rider_session_token')
+}
+
+function getRpcResult<T = any>(data: any): T | null {
+  return (Array.isArray(data) ? data[0] : data) as T | null
+}
+
 function normalizeBranchLabel(value?: string | null) {
   const v = String(value || '').trim()
   if (!v) return ''
@@ -130,17 +142,15 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
       return
     }
     if (isTripProofException && exceptionReason.length < 10) {
-      toast.error('لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح لعدم وجود الصورة')
+      toast.error('اكتب سبب واضح لعدم وجود الصورة لا يقل عن 10 حروف')
       return
     }
 
     try {
-      // prevent double submissions
       isSubmittingRef.current = true
       setSaving(true)
       const tripRate = rider.trip_rate ?? 10
       const payload = {
-        // idempotency key to avoid duplicate inserts on retries
         client_request_id: typeof crypto !== 'undefined' && (crypto as any).randomUUID ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         rider_id: rider.id,
         rider_name: rider.name,
@@ -173,48 +183,44 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
         review_status: relatedInvoice.trim() ? 'pending_evidence_review' : 'exception_review',
         notes: `نوع المشوار: ${TRIP_TYPES.find((t) => t.value === tripType)?.label || tripType}${requestedBy.trim() ? ` | طالب المشوار: ${requestedBy.trim()}` : ''}${reason.trim() ? ` | السبب: ${reason.trim()}` : ''}${relatedInvoice.trim() ? ` | فاتورة/إذن: ${relatedInvoice.trim()}` : ''}${proofNote.trim() ? ` | ملاحظة: ${proofNote.trim()}` : ''}`,
         status: 'pending_approval',
-        registered_at: new Date().toISOString(),
         trip_rate: tripRate,
         trip_multiplier: 1,
         trip_earning: tripRate,
+        is_countable: true,
       }
 
       if (!navigator.onLine) {
         const offline = enqueueOfflineMutation({
           table: 'internal_trips',
           action: 'insert',
-          payload: { ...payload, offline_created_at: new Date().toISOString(), offline_sync_status: 'pending' },
+          payload: { ...payload, registered_at: new Date().toISOString(), offline_created_at: new Date().toISOString(), offline_sync_status: 'pending' },
           label: `مشوار ${finalFrom} إلى ${finalTo}`,
         })
+        const localTrip = { ...(payload as any), id: offline.id, registered_at: new Date().toISOString(), offline_sync_status: 'pending' } as InternalTrip
         toast.success('تم حفظ المشوار مؤقتًا وسيتم رفعه عند رجوع الإنترنت')
-        await onSaved({ ...(payload as any), id: offline.id, offline_sync_status: 'pending' } as InternalTrip)
         reset()
         onClose()
+        void Promise.resolve(onSaved(localTrip)).catch(() => {})
         return
       }
 
-      const clientRequestId = (payload as any).client_request_id
-      const { data, error } = await supabase.from('internal_trips').insert(payload).select('*').single()
-      if (error) {
-        // handle duplicate-key / idempotent insert: fetch existing by client_request_id
-        const message = String(error.message || '').toLowerCase()
-        const isDuplicate = message.includes('duplicate') || message.includes('unique constraint') || String(error.code || '') === '23505'
-        if (isDuplicate && clientRequestId) {
-          const { data: existing } = await supabase.from('internal_trips').select('*').eq('client_request_id', clientRequestId).maybeSingle()
-          if (existing) {
-            toast.success('تم حفظ المشوار سابقًا — استرجاع النسخة الموجودة')
-            await onSaved(existing as InternalTrip)
-            reset()
-            onClose()
-            return
-          }
-        }
-        throw error
+      const token = getStoredRiderToken()
+      if (!token) throw new Error('انتهت الجلسة. سجل دخول مرة أخرى من تطبيق الدليفري.')
+
+      const { data, error } = await supabase.rpc('rider_create_trip_fast', {
+        p_token: token,
+        p_payload: payload,
+      })
+      const result = getRpcResult<any>(data)
+      if (error || !result?.success || !result?.trip) {
+        throw new Error(error?.message || result?.message || result?.error || 'رفض السيرفر تسجيل المشوار')
       }
-      toast.success('تم تسجيل المشوار وهو بانتظار الاعتماد')
-      await onSaved(data as InternalTrip)
+
+      const savedTrip = result.trip as InternalTrip
+      toast.success(result.message || 'تم تسجيل المشوار وهو بانتظار الاعتماد')
       reset()
       onClose()
+      void Promise.resolve(onSaved(savedTrip)).catch(() => {})
     } catch (error: any) {
       toast.error(`تعذر تسجيل المشوار: ${error?.message || ''}`)
     } finally {
@@ -231,11 +237,11 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
         <section className="max-h-[92vh] w-full overflow-y-auto rounded-[32px] bg-white p-4 shadow-2xl">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-black text-[#008E92]">Rider V2</p>
+              <p className="text-xs font-black text-[#008E92]">Rider V3</p>
               <h2 className="text-xl font-black text-[#061827]">تسجيل مشوار</h2>
-              <p className="mt-1 text-xs font-bold text-slate-500">المشوار يدخل مباشرة في تقرير المندوب وينتظر اعتماد الإدارة.</p>
+              <p className="mt-1 text-xs font-bold text-slate-500">حفظ سريع وآمن مع منع التكرار وإثبات المشوار.</p>
             </div>
-            <button type="button" onClick={onClose} className="grid h-11 w-11 place-items-center rounded-2xl bg-slate-100 text-slate-500">
+            <button type="button" onClick={onClose} disabled={saving} className="grid h-11 w-11 place-items-center rounded-2xl bg-slate-100 text-slate-500 disabled:opacity-50">
               <X size={20} />
             </button>
           </div>
@@ -250,75 +256,42 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
           </div>
 
           <div className="mt-4 space-y-3">
-            <Field label="من *">
-              <input value={fromLabel} onChange={(e) => setFromLabel(e.target.value)} className="dawaa-input text-right" placeholder="جهة الخروج" />
-            </Field>
+            <Field label="من *"><input value={fromLabel} onChange={(e) => setFromLabel(e.target.value)} className="dawaa-input text-right" placeholder="جهة الخروج" /></Field>
 
             {destinationOptions.length > 0 ? (
-              <Field label="إلى *">
-                <select value={toLabel} onChange={(e) => setToLabel(e.target.value)} className="dawaa-input text-right">
-                  {destinationOptions.map((item) => <option key={item} value={item}>{item}</option>)}
-                  <option value="custom">جهة أخرى</option>
-                </select>
-              </Field>
+              <Field label="إلى *"><select value={toLabel} onChange={(e) => setToLabel(e.target.value)} className="dawaa-input text-right">
+                {destinationOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                <option value="custom">جهة أخرى</option>
+              </select></Field>
             ) : (
-              <Field label="إلى *">
-                <input value={toLabel} onChange={(e) => setToLabel(e.target.value)} className="dawaa-input text-right" placeholder="جهة الوصول" />
-              </Field>
+              <Field label="إلى *"><input value={toLabel} onChange={(e) => setToLabel(e.target.value)} className="dawaa-input text-right" placeholder="جهة الوصول" /></Field>
             )}
 
-            {toLabel === 'custom' ? (
-              <Field label="اكتب الجهة الأخرى">
-                <input value={customToLabel} onChange={(e) => setCustomToLabel(e.target.value)} className="dawaa-input text-right" placeholder="اسم الجهة" />
-              </Field>
-            ) : null}
+            {toLabel === 'custom' ? <Field label="اكتب الجهة الأخرى"><input value={customToLabel} onChange={(e) => setCustomToLabel(e.target.value)} className="dawaa-input text-right" placeholder="اسم الجهة" /></Field> : null}
 
-            <Field label="سبب المشوار">
-              <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} className="dawaa-input resize-none text-right" placeholder="مثال: تحويل ناقص، إرجاع، مستلزمات، استلام شحن..." />
-            </Field>
+            <Field label="سبب المشوار"><textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} className="dawaa-input resize-none text-right" placeholder="مثال: تحويل ناقص، إرجاع، مستلزمات، استلام شحن..." /></Field>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="رقم فاتورة/إذن لو موجود">
-                <input value={relatedInvoice} onChange={(e) => setRelatedInvoice(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" />
-              </Field>
-              <Field label="طالب المشوار">
-                <input value={requestedBy} onChange={(e) => setRequestedBy(e.target.value)} className="dawaa-input text-right" placeholder="اسم الدكتور/المدير" />
-              </Field>
+              <Field label="رقم فاتورة/إذن لو موجود"><input value={relatedInvoice} onChange={(e) => setRelatedInvoice(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" /></Field>
+              <Field label="طالب المشوار"><input value={requestedBy} onChange={(e) => setRequestedBy(e.target.value)} className="dawaa-input text-right" placeholder="اسم الدكتور/المدير" /></Field>
             </div>
 
-            <Field label="ملاحظة إثبات">
-              <input value={proofNote} onChange={(e) => setProofNote(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" />
-            </Field>
+            <Field label="ملاحظة إثبات"><input value={proofNote} onChange={(e) => setProofNote(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" /></Field>
 
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
-              <p className="mb-2 font-black text-amber-900">الصورة مطلوبة لإثبات المشوار. في حالة عدم وجود صورة يجب كتابة سبب واضح وسيتم إرسال المشوار للمراجعة.</p>
+              <p className="mb-2 font-black text-amber-900">الصورة مطلوبة لإثبات المشوار. لو غير متاحة اكتب سبب واضح وسيتم إرسال المشوار للمراجعة.</p>
               <label className="flex items-center gap-3 text-sm font-black text-amber-900">
-                <input
-                  type="checkbox"
-                  checked={allowTripProofException}
-                  onChange={(e) => setAllowTripProofException(e.target.checked)}
-                  className="h-5 w-5"
-                />
-                استثناء بدون صورة: دورت على صنف أو مشوار ولم أجد المطلوب
+                <input type="checkbox" checked={allowTripProofException} onChange={(e) => setAllowTripProofException(e.target.checked)} className="h-5 w-5" />
+                استثناء بدون صورة
               </label>
-              {allowTripProofException && (
-                <textarea
-                  value={tripProofExceptionReason}
-                  onChange={(e) => setTripProofExceptionReason(e.target.value)}
-                  rows={2}
-                  className="mt-2 w-full rounded-xl border border-amber-200 bg-white p-2 text-right text-sm"
-                  placeholder="اكتب السبب بوضوح، مثال: دورت على الصنف في المخزن ولم أجده"
-                />
-              )}
-              <p className="mt-2 text-xs font-bold text-amber-800">
-                الاستثناء سيتم عرضه للإدارة يوميًا للمراجعة ولا يتم اعتماده تلقائيًا.
-              </p>
+              {allowTripProofException && <textarea value={tripProofExceptionReason} onChange={(e) => setTripProofExceptionReason(e.target.value)} rows={2} className="mt-2 w-full rounded-xl border border-amber-200 bg-white p-2 text-right text-sm" placeholder="اكتب سبب عدم وجود الصورة بوضوح" />}
+              <p className="mt-2 text-xs font-bold text-amber-800">الاستثناء يظل للمراجعة ولا يعتمد تلقائيًا.</p>
             </div>
 
             {!shiftOpen ? <p className="rounded-2xl bg-amber-50 p-3 text-xs font-black text-amber-700">تنبيه: الشيفت غير مفتوح، المشوار سيتسجل لكن يحتاج مراجعة.</p> : null}
 
             <button type="button" disabled={saving} onClick={() => void saveTrip()} className="w-full rounded-2xl bg-[#008E92] py-4 text-lg font-black text-white disabled:opacity-60">
-              {saving ? 'جاري حفظ المشوار...' : 'حفظ المشوار ✅'}
+              {saving ? 'جاري الحفظ والتحقق...' : 'حفظ المشوار ✅'}
             </button>
           </div>
         </section>
