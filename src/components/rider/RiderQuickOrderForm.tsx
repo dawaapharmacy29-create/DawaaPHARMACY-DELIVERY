@@ -166,7 +166,6 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
         `الفرع: ${branchName || rider.branch_name || 'غير محدد'}`,
       ].filter(Boolean).join('\n')
 
-      // المسار الحرج للحفظ = RPC واحد فقط. لا GPS، لا بطارية، لا refresh قبل إغلاق النموذج.
       const { data, error } = await supabase.rpc('rider_create_order', {
         p_token: token,
         p_customer_id: customerId,
