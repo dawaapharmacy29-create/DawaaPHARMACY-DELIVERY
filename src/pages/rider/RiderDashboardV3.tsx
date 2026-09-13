@@ -11,6 +11,18 @@ import { offlineQueueCount } from '../../lib/offlineQueue'
 import { readRiderDeviceSnapshot, type RiderDeviceSnapshot } from '../../lib/riderDeviceSnapshot'
 import type { Attendance, Branch, DeliveryOrder, InternalTrip, Rider } from '../../lib/types'
 
+type CycleSummary = {
+  cycle_start?: string
+  cycle_end?: string
+  orders_total?: number
+  orders_accepted?: number
+  orders_rejected?: number
+  orders_today?: number
+  trips_total?: number
+  trips_accepted?: number
+  trips_rejected?: number
+}
+
 function getStoredRiderToken(): string | null {
   try {
     const raw = localStorage.getItem('dawaa_rider_session')
@@ -78,6 +90,28 @@ function normalizeAttendance(row: any): Attendance | null {
   } as Attendance
 }
 
+function shortDate(value?: string) {
+  if (!value) return '—'
+  const [y, m, d] = value.split('-')
+  return `${d}/${m}/${y}`
+}
+
+function CycleMetric({ label, value, tone = 'slate' }: { label: string; value: number; tone?: 'green' | 'red' | 'teal' | 'blue' | 'slate' }) {
+  const styles = {
+    green: 'border-emerald-100 bg-emerald-50 text-emerald-800',
+    red: 'border-rose-100 bg-rose-50 text-rose-800',
+    teal: 'border-teal-100 bg-teal-50 text-teal-800',
+    blue: 'border-sky-100 bg-sky-50 text-sky-800',
+    slate: 'border-slate-100 bg-slate-50 text-slate-800',
+  }
+  return (
+    <div className={`rounded-2xl border p-3 text-center ${styles[tone]}`}>
+      <p className="text-[11px] font-black opacity-70">{label}</p>
+      <p className="mt-1 text-2xl font-black">{value}</p>
+    </div>
+  )
+}
+
 function LoadingScreen() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#F3F7F8]" dir="rtl">
@@ -97,6 +131,7 @@ export default function RiderDashboardV3() {
   const [attendance, setAttendance] = useState<Attendance | null>(null)
   const [orders, setOrders] = useState<DeliveryOrder[]>([])
   const [trips, setTrips] = useState<InternalTrip[]>([])
+  const [cycleSummary, setCycleSummary] = useState<CycleSummary>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [device, setDevice] = useState<RiderDeviceSnapshot | null>(null)
@@ -124,6 +159,7 @@ export default function RiderDashboardV3() {
     setAttendance(normalizeAttendance(result.attendance))
     setOrders((Array.isArray(result.orders) ? result.orders : []) as DeliveryOrder[])
     setTrips((Array.isArray(result.trips) ? result.trips : []) as InternalTrip[])
+    setCycleSummary((result.cycle_summary || {}) as CycleSummary)
     setPendingSyncCount(offlineQueueCount())
     return true
   }, [])
@@ -136,9 +172,7 @@ export default function RiderDashboardV3() {
     }
     try {
       if (initial) setLoading(true)
-      const dashboardPromise = supabase.rpc('rider_get_operating_dashboard_fast', { p_token: token })
-      const devicePromise = refreshDevice()
-      const [{ data, error }] = await Promise.all([dashboardPromise, devicePromise])
+      const { data, error } = await supabase.rpc('rider_get_operating_dashboard_fast', { p_token: token })
       const result = getRpcResult<any>(data)
       if (error || !result?.success) {
         if (['expired_session', 'invalid_token', 'inactive_account', 'rider_inactive'].includes(String(result?.error || ''))) {
@@ -148,6 +182,7 @@ export default function RiderDashboardV3() {
         throw new Error(error?.message || result?.message || result?.error || 'تعذر تحميل وضع التشغيل')
       }
       applyFastPayload(result)
+      void refreshDevice()
       if (showToast) toast.success('تم تحديث وضع التشغيل')
     } catch (error: any) {
       toast.error(error?.message || 'تعذر تحميل وضع التشغيل')
@@ -207,6 +242,7 @@ export default function RiderDashboardV3() {
       toast.success(result.message || 'تم تأكيد التسليم بنجاح')
       if (gps.accuracy && gps.accuracy > 100) toast.warning(`تم التسليم بدقة GPS ضعيفة (${gps.accuracy} متر)`)
       if (snapshot.batteryPercent !== null && snapshot.batteryPercent <= 15 && !snapshot.isCharging) toast.warning('البطارية منخفضة جدًا، برجاء توصيل الشاحن')
+      void loadDashboard(false, false)
     } catch (error: any) {
       toast.error(error?.message || 'فشل تأكيد التسليم')
     } finally {
@@ -234,6 +270,7 @@ export default function RiderDashboardV3() {
       toast.success(result.message || 'تم تسجيل فشل التسليم للمراجعة')
       setFailOrder(null)
       setFailReason('')
+      void loadDashboard(false, false)
     } catch (error: any) {
       toast.error(error?.message || 'فشل تحديث الأوردر')
     } finally {
@@ -278,6 +315,25 @@ export default function RiderDashboardV3() {
         onRefresh={() => void loadDashboard(true, false)}
         onLogout={() => void handleLogout()}
       >
+        <section className="rounded-[30px] border border-teal-100 bg-white p-4 shadow-sm" dir="rtl">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-black text-[#008E92]">ملخص الدورة الحالية</p>
+              <h2 className="text-lg font-black text-[#061827]">أرقامك من {shortDate(cycleSummary.cycle_start)} إلى {shortDate(cycleSummary.cycle_end)}</h2>
+              <p className="mt-1 text-xs font-bold text-slate-500">الأرقام تخص حساب المندوب الحالي فقط.</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <CycleMetric label="إجمالي الأوردرات" value={Number(cycleSummary.orders_total || 0)} tone="teal" />
+            <CycleMetric label="الأوردرات المقبولة" value={Number(cycleSummary.orders_accepted || 0)} tone="green" />
+            <CycleMetric label="الأوردرات المرفوضة" value={Number(cycleSummary.orders_rejected || 0)} tone="red" />
+            <CycleMetric label="أوردرات اليوم" value={Number(cycleSummary.orders_today || 0)} tone="blue" />
+            <CycleMetric label="إجمالي المشاوير" value={Number(cycleSummary.trips_total || 0)} tone="teal" />
+            <CycleMetric label="المشاوير المقبولة" value={Number(cycleSummary.trips_accepted || 0)} tone="green" />
+            <CycleMetric label="المشاوير المرفوضة" value={Number(cycleSummary.trips_rejected || 0)} tone="red" />
+          </div>
+        </section>
+
         <section id="rider-v3-open-orders" className="rounded-[30px] border border-slate-100 bg-white p-4 shadow-sm" dir="rtl">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
@@ -341,24 +397,16 @@ export default function RiderDashboardV3() {
             </div>
           )}
         </section>
-
-        <section className="rounded-[30px] border border-slate-100 bg-white p-4 shadow-sm" dir="rtl">
-          <h2 className="text-lg font-black text-[#061827]">وضع التشغيل السريع</h2>
-          <div className="mt-3 space-y-2 text-sm font-bold text-slate-600">
-            <p>✅ تحميل الشاشة الأساسية في طلب واحد بدل عدة طلبات متتالية.</p>
-            <p>✅ تسجيل الأوردر بدون إعادة تحميل كل الصفحة.</p>
-            <p>✅ تأكيد التسليم وفشل التسليم بتحديث فوري محلي.</p>
-            <p>✅ تسجيل المشاوير مع دعم Offline ومنع الإرسال المكرر.</p>
-            <p>✅ دعم الشيفت المفتوح بعد 12 منتصف الليل.</p>
-          </div>
-        </section>
       </RiderOperatingDashboard>
 
-      <RiderQuickOrderForm open={quickOrderOpen} rider={rider} branchName={branch?.name ?? rider.branch_name} onClose={() => setQuickOrderOpen(false)} onSaved={(orderId) => refreshOrderById(orderId)} />
+      <RiderQuickOrderForm open={quickOrderOpen} rider={rider} branchName={branch?.name ?? rider.branch_name} onClose={() => setQuickOrderOpen(false)} onSaved={(orderId) => {
+        void refreshOrderById(orderId)
+        void loadDashboard(false, false)
+      }} />
       <RiderTripForm open={tripOpen} rider={rider} branch={branch} shiftOpen={shiftOpen} attendanceId={(attendance as any)?.id || null} onClose={() => setTripOpen(false)} onSaved={(trip) => {
-        if (!trip) return
-        setTrips((prev) => [trip, ...prev.filter((item: any) => String(item.id) !== String((trip as any).id))])
+        if (trip) setTrips((prev) => [trip, ...prev.filter((item: any) => String(item.id) !== String((trip as any).id))])
         setPendingSyncCount(offlineQueueCount())
+        void loadDashboard(false, false)
       }} />
 
       {failOrder ? (
