@@ -1,8 +1,7 @@
-import { useState } from 'react'
-import { X } from 'lucide-react'
+import { FormEvent, useEffect, useRef, useState } from 'react'
+import { Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
-import { readRiderDeviceSnapshot } from '../../lib/riderDeviceSnapshot'
 import type { Rider } from '../../lib/types'
 
 type Props = {
@@ -13,10 +12,12 @@ type Props = {
   onSaved: () => void | Promise<void>
 }
 
-type RiderGpsFix = {
-  lat: number | null
-  lng: number | null
-  accuracy: number | null
+type CustomerHit = {
+  id: string | null
+  customer_code: string | null
+  customer_name: string | null
+  phone: string | null
+  address: string | null
 }
 
 function getStoredRiderToken(): string | null {
@@ -31,27 +32,6 @@ function getRpcResult<T = any>(data: any): T | null {
   return (Array.isArray(data) ? data[0] : data) as T | null
 }
 
-function requestRiderGps(): Promise<RiderGpsFix> {
-  return new Promise((resolve) => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      resolve({ lat: null, lng: null, accuracy: null })
-      return
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        accuracy: Number.isFinite(pos.coords.accuracy) ? Math.round(pos.coords.accuracy) : null,
-      }),
-      () => resolve({ lat: null, lng: null, accuracy: null }),
-      // التسجيل اليومي لا يجب أن يتوقف طويلًا على GPS. استخدم آخر قراءة حديثة إن وجدت
-      // ثم اسمح بمهلة قصيرة فقط للحصول على قراءة جديدة.
-      { enableHighAccuracy: false, timeout: 2500, maximumAge: 120000 },
-    )
-  })
-}
-
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
@@ -63,29 +43,101 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 export default function RiderQuickOrderForm({ open, rider, branchName, onClose, onSaved }: Props) {
   const [invoiceNumber, setInvoiceNumber] = useState('')
+  const [customerSearch, setCustomerSearch] = useState('')
+  const [customerId, setCustomerId] = useState<string | null>(null)
   const [customerCode, setCustomerCode] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [customerPhone, setCustomerPhone] = useState('')
   const [customerAddress, setCustomerAddress] = useState('')
   const [invoiceAmount, setInvoiceAmount] = useState('')
   const [notes, setNotes] = useState('')
+  const [showMore, setShowMore] = useState(false)
+  const [results, setResults] = useState<CustomerHit[]>([])
+  const [searching, setSearching] = useState(false)
   const [saving, setSaving] = useState(false)
   const [lastError, setLastError] = useState('')
+  const searchSeq = useRef(0)
+
+  useEffect(() => {
+    if (!open) return
+    const q = customerSearch.trim()
+    if (q.length < 2 || customerId) {
+      setResults([])
+      setSearching(false)
+      return
+    }
+
+    const seq = ++searchSeq.current
+    const timer = window.setTimeout(async () => {
+      try {
+        setSearching(true)
+        const isNumeric = /^\d+$/.test(q)
+        let query = supabase
+          .from('customers')
+          .select('id,customer_code,customer_name,phone,address')
+          .limit(6)
+
+        if (isNumeric) {
+          query = query.or(`customer_code.eq.${q},phone.eq.${q},customer_code.ilike.%${q}%,phone.ilike.%${q}%`)
+        } else {
+          query = query.ilike('customer_name', `%${q}%`)
+        }
+
+        const { data, error } = await query
+        if (seq !== searchSeq.current) return
+        if (error) throw error
+        setResults((data ?? []) as CustomerHit[])
+      } catch {
+        if (seq === searchSeq.current) setResults([])
+      } finally {
+        if (seq === searchSeq.current) setSearching(false)
+      }
+    }, 220)
+
+    return () => window.clearTimeout(timer)
+  }, [open, customerSearch, customerId])
 
   if (!open) return null
 
+  function selectCustomer(customer: CustomerHit) {
+    setCustomerId(customer.id || null)
+    setCustomerCode(customer.customer_code || '')
+    setCustomerName(customer.customer_name || '')
+    setCustomerPhone(customer.phone || '')
+    setCustomerAddress(customer.address || '')
+    setCustomerSearch(customer.customer_name || customer.customer_code || customer.phone || '')
+    setResults([])
+  }
+
+  function clearCustomer() {
+    setCustomerId(null)
+    setCustomerCode('')
+    setCustomerName('')
+    setCustomerPhone('')
+    setCustomerAddress('')
+    setCustomerSearch('')
+    setResults([])
+  }
+
   function reset() {
     setInvoiceNumber('')
+    setCustomerSearch('')
+    setCustomerId(null)
     setCustomerCode('')
     setCustomerName('')
     setCustomerPhone('')
     setCustomerAddress('')
     setInvoiceAmount('')
     setNotes('')
+    setShowMore(false)
+    setResults([])
     setLastError('')
   }
 
-  async function saveOrder() {
+  async function saveOrder(event?: FormEvent) {
+    event?.preventDefault()
+    if (saving) return
+
     const invoice = invoiceNumber.trim()
     if (!invoice) {
       toast.error('اكتب رقم الفاتورة')
@@ -93,7 +145,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
     }
 
     if (!navigator.onLine) {
-      toast.error('تسجيل الأوردر السريع يحتاج إنترنت حاليًا لأنه يستخدم RPC آمن. سيتم إضافة Offline للأوردرات في المرحلة التالية.')
+      toast.error('تسجيل الأوردر السريع يحتاج إنترنت حاليًا')
       return
     }
 
@@ -103,30 +155,21 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
       const token = getStoredRiderToken()
       if (!token) throw new Error('انتهت الجلسة. سجل دخول مرة أخرى من تطبيق الدليفري.')
 
-      // نفّذ قراءة GPS والجهاز بالتوازي، وتجنب طلب GPS ثاني داخل device snapshot.
-      const [gps, device] = await Promise.all([
-        requestRiderGps(),
-        readRiderDeviceSnapshot({ includeGps: false }),
-      ])
-
-      const customerNameForSave = customerName.trim() || customerCode.trim() || customerPhone.trim() || 'عميل غير مسجل'
+      const customerNameForSave = customerName.trim() || customerCode.trim() || customerPhone.trim() || customerSearch.trim() || 'عميل غير مسجل'
       const customerCodeForSave = customerCode.trim() || null
       const customerPhoneForSave = customerPhone.trim() || null
       const customerAddressForSave = customerAddress.trim() || null
       const amount = invoiceAmount.trim() ? Number(invoiceAmount) : 0
-
       const auditNote = [
         notes.trim(),
-        `تسجيل سريع من Rider V2`,
+        'تسجيل سريع بدون GPS',
         `الفرع: ${branchName || rider.branch_name || 'غير محدد'}`,
-        `بطارية: ${device.batteryPercent ?? 'غير مدعومة'}%`,
-        `Online: ${device.online ? 'yes' : 'no'}`,
-        `GPS accuracy: ${gps.accuracy ?? 'unknown'}m`,
       ].filter(Boolean).join('\n')
 
+      // المسار الحرج للحفظ = RPC واحد فقط. لا GPS، لا بطارية، لا refresh قبل إغلاق النموذج.
       const { data, error } = await supabase.rpc('rider_create_order', {
         p_token: token,
-        p_customer_id: null,
+        p_customer_id: customerId,
         p_customer_code: customerCodeForSave,
         p_customer_name: customerNameForSave,
         p_customer_phone: customerPhoneForSave,
@@ -135,9 +178,9 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
         p_invoice_amount: Number.isFinite(amount) ? amount : 0,
         p_order_multiplier: 1,
         p_notes: auditNote,
-        p_gps_lat: gps.lat,
-        p_gps_lng: gps.lng,
-        p_gps_accuracy_m: gps.accuracy,
+        p_gps_lat: null,
+        p_gps_lng: null,
+        p_gps_accuracy_m: null,
         p_receipt_image_path: null,
         p_receipt_image_url: null,
         p_receipt_ocr_json: null,
@@ -148,20 +191,12 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
         throw new Error(error?.message || result?.message || result?.error || 'رفض السيرفر تسجيل الأوردر')
       }
 
-      if (gps.accuracy && gps.accuracy > 100) {
-        toast.warning(`تم تسجيل الأوردر لكن دقة GPS ضعيفة (${gps.accuracy} متر)، وقد يحتاج مراجعة.`)
-      } else {
-        toast.success(result.message || 'تم تسجيل الأوردر السريع بنجاح')
-      }
-
-      // بعد تأكيد السيرفر للحفظ: اقفل الفورم فورًا، ثم حدّث الداشبورد بدون تعطيل المندوب.
+      toast.success(result.message || 'تم تسجيل الأوردر ✅')
       reset()
       onClose()
-      void Promise.resolve(onSaved()).catch(() => {
-        // Realtime/refresh سيعيد مزامنة البيانات لاحقًا؛ لا نعيد فتح الفورم بعد نجاح الحفظ.
-      })
+      void Promise.resolve(onSaved()).catch(() => {})
     } catch (error: any) {
-      const message = error?.message || 'تعذر تسجيل الأوردر السريع'
+      const message = error?.message || 'تعذر تسجيل الأوردر'
       setLastError(message)
       toast.error(message)
     } finally {
@@ -175,49 +210,101 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
         <section className="max-h-[92vh] w-full overflow-y-auto rounded-[32px] bg-white p-4 shadow-2xl">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-black text-[#008E92]">Rider V2</p>
-              <h2 className="text-xl font-black text-[#061827]">تسجيل أوردر سريع</h2>
-              <p className="mt-1 text-xs font-bold text-slate-500">للفواتير العادية فقط. الريسيت و×1.5 والتفاصيل المتقدمة تظل في الداشبورد الكامل مؤقتًا.</p>
+              <p className="text-xs font-black text-[#008E92]">تسجيل فوري</p>
+              <h2 className="text-xl font-black text-[#061827]">أوردر جديد</h2>
+              <p className="mt-1 text-xs font-bold text-slate-500">رقم الفاتورة + العميل + القيمة ثم حفظ مباشرة.</p>
             </div>
             <button type="button" onClick={onClose} className="grid h-11 w-11 place-items-center rounded-2xl bg-slate-100 text-slate-500">
               <X size={20} />
             </button>
           </div>
 
-          <div className="space-y-3">
+          <form className="space-y-3" onSubmit={(event) => void saveOrder(event)}>
             <Field label="رقم الفاتورة *">
-              <input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="dawaa-input text-right" placeholder="اكتب رقم الفاتورة" inputMode="numeric" autoFocus />
+              <input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="dawaa-input text-right text-lg font-black" placeholder="رقم الفاتورة" inputMode="numeric" autoFocus autoComplete="off" />
             </Field>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="كود العميل">
-                <input value={customerCode} onChange={(e) => setCustomerCode(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" inputMode="numeric" />
+            <div className="relative">
+              <Field label="العميل — كود / اسم / موبايل">
+                <div className="relative">
+                  <Search size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={customerSearch}
+                    onChange={(e) => {
+                      if (customerId) clearCustomer()
+                      setCustomerSearch(e.target.value)
+                    }}
+                    className="dawaa-input pl-10 text-right"
+                    placeholder="اكتب كود أو اسم أو رقم العميل"
+                    autoComplete="off"
+                  />
+                </div>
               </Field>
-              <Field label="اسم العميل">
-                <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" />
-              </Field>
-              <Field label="رقم الهاتف">
-                <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" inputMode="tel" />
-              </Field>
-              <Field label="قيمة الفاتورة">
-                <input type="number" value={invoiceAmount} onChange={(e) => setInvoiceAmount(e.target.value)} className="dawaa-input text-right" placeholder="0" inputMode="decimal" />
-              </Field>
+
+              {searching ? <p className="mt-1 text-xs font-bold text-slate-400">جاري البحث...</p> : null}
+              {results.length > 0 ? (
+                <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-2xl border border-slate-100 bg-white p-1 shadow-2xl">
+                  {results.map((customer, index) => (
+                    <button
+                      key={customer.id || `${customer.customer_code}-${index}`}
+                      type="button"
+                      onClick={() => selectCustomer(customer)}
+                      className="w-full rounded-xl px-3 py-2 text-right hover:bg-slate-50"
+                    >
+                      <p className="text-sm font-black text-slate-800">{customer.customer_name || 'بدون اسم'}</p>
+                      <p className="mt-0.5 text-[11px] font-bold text-slate-400">{[customer.customer_code, customer.phone, customer.address].filter(Boolean).join(' • ')}</p>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
-            <Field label="عنوان التسليم">
-              <input value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} className="dawaa-input text-right" placeholder="اكتب العنوان الحالي لو موجود" />
+            {customerId ? (
+              <div className="flex items-center justify-between gap-3 rounded-2xl bg-emerald-50 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-black text-emerald-800">{customerName || 'عميل مسجل'}</p>
+                  <p className="truncate text-xs font-bold text-emerald-600">{[customerCode, customerPhone, customerAddress].filter(Boolean).join(' • ')}</p>
+                </div>
+                <button type="button" onClick={clearCustomer} className="shrink-0 rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-500">تغيير</button>
+              </div>
+            ) : null}
+
+            <Field label="قيمة الفاتورة">
+              <input type="number" value={invoiceAmount} onChange={(e) => setInvoiceAmount(e.target.value)} className="dawaa-input text-right text-lg font-black" placeholder="0" inputMode="decimal" />
             </Field>
 
-            <Field label="ملاحظات">
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className="dawaa-input resize-none text-right" placeholder="ملاحظة اختيارية" />
-            </Field>
+            <button type="button" onClick={() => setShowMore((value) => !value)} className="w-full rounded-xl bg-slate-50 py-2 text-xs font-black text-slate-500">
+              {showMore ? 'إخفاء البيانات الإضافية' : 'بيانات إضافية عند الحاجة'}
+            </button>
+
+            {showMore ? (
+              <div className="space-y-3 rounded-2xl bg-slate-50 p-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="كود العميل">
+                    <input value={customerCode} onChange={(e) => setCustomerCode(e.target.value)} className="dawaa-input text-right" inputMode="numeric" />
+                  </Field>
+                  <Field label="اسم العميل">
+                    <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="dawaa-input text-right" />
+                  </Field>
+                  <Field label="رقم الهاتف">
+                    <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} className="dawaa-input text-right" inputMode="tel" />
+                  </Field>
+                  <Field label="العنوان">
+                    <input value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} className="dawaa-input text-right" />
+                  </Field>
+                </div>
+                <Field label="ملاحظات">
+                  <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="dawaa-input resize-none text-right" />
+                </Field>
+              </div>
+            ) : null}
 
             {lastError ? <p className="rounded-2xl bg-rose-50 p-3 text-center text-xs font-black text-rose-700">{lastError}</p> : null}
 
-            <button type="button" onClick={() => void saveOrder()} disabled={saving} className="w-full rounded-2xl bg-[#008E92] py-4 text-lg font-black text-white disabled:opacity-60">
-              {saving ? 'جاري تسجيل الأوردر...' : 'حفظ الأوردر السريع ✅'}
+            <button type="submit" disabled={saving} className="w-full rounded-2xl bg-[#008E92] py-4 text-lg font-black text-white disabled:opacity-60">
+              {saving ? 'جاري الحفظ...' : 'حفظ الأوردر الآن ✅'}
             </button>
-          </div>
+          </form>
         </section>
       </div>
     </div>
