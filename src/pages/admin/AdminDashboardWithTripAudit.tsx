@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import AdminDashboardClassicReliable from './AdminDashboardClassicReliable'
+import AdminDashboardFast from './AdminDashboardFast'
 
 const DashboardTripCustomerInsights = lazy(() => import('../../components/DashboardTripCustomerInsights'))
 const CycleArchiveOverview = lazy(() => import('../../components/CycleArchiveOverview'))
@@ -21,9 +21,9 @@ export default function AdminDashboardWithTripAudit() {
     const win = window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void }
 
     if (typeof win.requestIdleCallback === 'function') {
-      idleId = win.requestIdleCallback(() => setShowSecondaryPanels(true), { timeout: 900 })
+      idleId = win.requestIdleCallback(() => setShowSecondaryPanels(true), { timeout: 1000 })
     } else {
-      timeoutId = window.setTimeout(() => setShowSecondaryPanels(true), 350)
+      timeoutId = window.setTimeout(() => setShowSecondaryPanels(true), 450)
     }
 
     return () => {
@@ -34,7 +34,7 @@ export default function AdminDashboardWithTripAudit() {
 
   return (
     <div className="space-y-6" dir="rtl">
-      <AdminDashboardClassicReliable />
+      <AdminDashboardFast />
 
       {showSecondaryPanels ? (
         <Suspense fallback={<div className="grid gap-6 xl:grid-cols-[.85fr_1.15fr]"><PanelSkeleton /><PanelSkeleton /></div>}>
