@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
@@ -10,7 +10,7 @@ type Props = {
   rider: Rider
   branchName?: string | null
   onClose: () => void
-  onSaved: () => void | Promise<void>
+  onSaved: (orderId?: string | null) => void | Promise<void>
 }
 
 type RiderGpsFix = {
@@ -45,7 +45,7 @@ function requestRiderGps(): Promise<RiderGpsFix> {
         accuracy: Number.isFinite(pos.coords.accuracy) ? Math.round(pos.coords.accuracy) : null,
       }),
       () => resolve({ lat: null, lng: null, accuracy: null }),
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
     )
   })
 }
@@ -69,6 +69,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
   const [lastError, setLastError] = useState('')
+  const isSubmittingRef = useRef(false)
 
   if (!open) return null
 
@@ -84,6 +85,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
   }
 
   async function saveOrder() {
+    if (isSubmittingRef.current) return
     const invoice = invoiceNumber.trim()
     if (!invoice) {
       toast.error('اكتب رقم الفاتورة')
@@ -91,18 +93,22 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
     }
 
     if (!navigator.onLine) {
-      toast.error('تسجيل الأوردر السريع يحتاج إنترنت حاليًا لأنه يستخدم RPC آمن. سيتم إضافة Offline للأوردرات في المرحلة التالية.')
+      toast.error('تسجيل الأوردر يحتاج اتصال بالإنترنت للتحقق الآمن ومنع التكرار.')
       return
     }
 
     try {
+      isSubmittingRef.current = true
       setSaving(true)
       setLastError('')
       const token = getStoredRiderToken()
       if (!token) throw new Error('انتهت الجلسة. سجل دخول مرة أخرى من تطبيق الدليفري.')
 
-      const gps = await requestRiderGps()
-      const device = await readRiderDeviceSnapshot()
+      // GPS and device snapshot are independent; doing them in parallel removes a full wait step.
+      const [gps, device] = await Promise.all([
+        requestRiderGps(),
+        readRiderDeviceSnapshot(),
+      ])
 
       const customerNameForSave = customerName.trim() || customerCode.trim() || customerPhone.trim() || 'عميل غير مسجل'
       const customerCodeForSave = customerCode.trim() || null
@@ -112,7 +118,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
 
       const auditNote = [
         notes.trim(),
-        `تسجيل سريع من Rider V2`,
+        'تسجيل سريع من Rider V3',
         `الفرع: ${branchName || rider.branch_name || 'غير محدد'}`,
         `بطارية: ${device.batteryPercent ?? 'غير مدعومة'}%`,
         `Online: ${device.online ? 'yes' : 'no'}`,
@@ -146,18 +152,21 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
       if (gps.accuracy && gps.accuracy > 100) {
         toast.warning(`تم تسجيل الأوردر لكن دقة GPS ضعيفة (${gps.accuracy} متر)، وقد يحتاج مراجعة.`)
       } else {
-        toast.success(result.message || 'تم تسجيل الأوردر السريع بنجاح')
+        toast.success(result.message || 'تم تسجيل الأوردر بنجاح')
       }
 
+      const savedOrderId = result?.order_id ? String(result.order_id) : null
       reset()
-      await onSaved()
       onClose()
+      // Do not keep the save modal blocked while the parent refreshes its small order slice.
+      void Promise.resolve(onSaved(savedOrderId)).catch(() => {})
     } catch (error: any) {
       const message = error?.message || 'تعذر تسجيل الأوردر السريع'
       setLastError(message)
       toast.error(message)
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -167,18 +176,18 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
         <section className="max-h-[92vh] w-full overflow-y-auto rounded-[32px] bg-white p-4 shadow-2xl">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-black text-[#008E92]">Rider V2</p>
+              <p className="text-xs font-black text-[#008E92]">Rider V3</p>
               <h2 className="text-xl font-black text-[#061827]">تسجيل أوردر سريع</h2>
-              <p className="mt-1 text-xs font-bold text-slate-500">للفواتير العادية فقط. الريسيت و×1.5 والتفاصيل المتقدمة تظل في الداشبورد الكامل مؤقتًا.</p>
+              <p className="mt-1 text-xs font-bold text-slate-500">حفظ آمن وسريع مع GPS ومنع التكرار على نفس الفرع واليوم.</p>
             </div>
-            <button type="button" onClick={onClose} className="grid h-11 w-11 place-items-center rounded-2xl bg-slate-100 text-slate-500">
+            <button type="button" onClick={onClose} disabled={saving} className="grid h-11 w-11 place-items-center rounded-2xl bg-slate-100 text-slate-500 disabled:opacity-50">
               <X size={20} />
             </button>
           </div>
 
           <div className="space-y-3">
             <Field label="رقم الفاتورة *">
-              <input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="dawaa-input text-right" placeholder="اكتب رقم الفاتورة" />
+              <input autoFocus inputMode="numeric" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="dawaa-input text-right" placeholder="اكتب رقم الفاتورة" />
             </Field>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -189,10 +198,10 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
                 <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" />
               </Field>
               <Field label="رقم الهاتف">
-                <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" />
+                <input inputMode="tel" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" />
               </Field>
               <Field label="قيمة الفاتورة">
-                <input type="number" value={invoiceAmount} onChange={(e) => setInvoiceAmount(e.target.value)} className="dawaa-input text-right" placeholder="0" />
+                <input type="number" inputMode="decimal" value={invoiceAmount} onChange={(e) => setInvoiceAmount(e.target.value)} className="dawaa-input text-right" placeholder="0" />
               </Field>
             </div>
 
@@ -207,7 +216,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
             {lastError ? <p className="rounded-2xl bg-rose-50 p-3 text-center text-xs font-black text-rose-700">{lastError}</p> : null}
 
             <button type="button" onClick={() => void saveOrder()} disabled={saving} className="w-full rounded-2xl bg-[#008E92] py-4 text-lg font-black text-white disabled:opacity-60">
-              {saving ? 'جاري تسجيل الأوردر...' : 'حفظ الأوردر السريع ✅'}
+              {saving ? 'جاري الحفظ والتحقق...' : 'حفظ الأوردر ✅'}
             </button>
           </div>
         </section>
