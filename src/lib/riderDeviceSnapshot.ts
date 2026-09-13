@@ -7,8 +7,13 @@ export type RiderDeviceSnapshot = {
   gpsAccuracy: number | null
 }
 
-export async function readRiderDeviceSnapshot(): Promise<RiderDeviceSnapshot> {
+type RiderDeviceSnapshotOptions = {
+  includeGps?: boolean
+}
+
+export async function readRiderDeviceSnapshot(options: RiderDeviceSnapshotOptions = {}): Promise<RiderDeviceSnapshot> {
   const online = typeof navigator !== 'undefined' ? navigator.onLine : true
+  const includeGps = options.includeGps !== false
 
   let batteryPercent: number | null = null
   let batterySupported = false
@@ -26,21 +31,23 @@ export async function readRiderDeviceSnapshot(): Promise<RiderDeviceSnapshot> {
   }
 
   let gpsAccuracy: number | null = null
-  try {
-    if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
-      await new Promise<void>((resolve) => {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            gpsAccuracy = Math.round(pos.coords.accuracy)
-            resolve()
-          },
-          () => resolve(),
-          { timeout: 3000, maximumAge: 30000, enableHighAccuracy: false },
-        )
-      })
+  if (includeGps) {
+    try {
+      if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+        await new Promise<void>((resolve) => {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              gpsAccuracy = Math.round(pos.coords.accuracy)
+              resolve()
+            },
+            () => resolve(),
+            { timeout: 3000, maximumAge: 30000, enableHighAccuracy: false },
+          )
+        })
+      }
+    } catch {
+      gpsAccuracy = null
     }
-  } catch {
-    gpsAccuracy = null
   }
 
   return { batteryPercent, batterySupported, isCharging, online, gpsAccuracy }
