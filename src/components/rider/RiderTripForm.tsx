@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { X } from 'lucide-react'
+import { Camera, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { todayIso } from '../../lib/helpers'
-import { enqueueOfflineMutation } from '../../lib/offlineQueue'
 import type { Branch, InternalTrip, Rider } from '../../lib/types'
 
 type Props = {
@@ -16,23 +15,17 @@ type Props = {
   onSaved: (trip?: InternalTrip) => void | Promise<void>
 }
 
-type TripType =
-  | 'branch_to_branch'
-  | 'warehouse'
-  | 'supplies'
-  | 'pharmacy'
-  | 'shipment_pickup'
-  | 'accessories'
-  | 'other'
+type TripType = 'branch_to_branch' | 'warehouse' | 'supplies' | 'pharmacy' | 'shipment_pickup' | 'accessories' | 'other'
+type ProofUpload = { path: string; url: string; sha256: string | null; capturedAt: string }
 
-const TRIP_TYPES: Array<{ value: TripType; label: string; hint: string }> = [
-  { value: 'branch_to_branch', label: 'بين الفروع', hint: 'من فرع إلى فرع' },
-  { value: 'warehouse', label: 'مخزن', hint: 'استلام/تسليم من مخزن' },
-  { value: 'supplies', label: 'مستلزمات', hint: 'مستلزمات الفرع' },
-  { value: 'pharmacy', label: 'صيدلية خارجية', hint: 'شراء/تبديل من صيدلية' },
-  { value: 'shipment_pickup', label: 'استلام شحن', hint: 'شركة شحن أو مندوب' },
-  { value: 'accessories', label: 'إكسسوار', hint: 'مخازن إكسسوار' },
-  { value: 'other', label: 'أخرى', hint: 'مأمورية خاصة' },
+const TRIP_TYPES: Array<{ value: TripType; label: string }> = [
+  { value: 'branch_to_branch', label: 'بين الفروع' },
+  { value: 'warehouse', label: 'مخزن' },
+  { value: 'supplies', label: 'مستلزمات' },
+  { value: 'pharmacy', label: 'صيدلية خارجية' },
+  { value: 'shipment_pickup', label: 'استلام شحن' },
+  { value: 'accessories', label: 'إكسسوار' },
+  { value: 'other', label: 'أخرى' },
 ]
 
 const BRANCHES = ['فرع الشامي', 'فرع شكري', 'فرع بسيسة', 'فرع زكريا', 'فرع المنشية']
@@ -46,105 +39,159 @@ function normalizeBranchLabel(value?: string | null) {
   return v.startsWith('فرع ') ? v : `فرع ${v}`
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-black text-slate-500">{label}</span>
-      {children}
-    </label>
-  )
+function getStoredRiderToken(): string | null {
+  try {
+    const raw = localStorage.getItem('dawaa_rider_session')
+    if (raw) return JSON.parse(raw)?.session_token || null
+  } catch {}
+  return localStorage.getItem('rider_session_token')
+}
+
+function getRpcResult<T = any>(data: any): T | null {
+  return (Array.isArray(data) ? data[0] : data) as T | null
+}
+
+function createRequestId() {
+  try { return crypto.randomUUID() }
+  catch { return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}` }
+}
+
+async function sha256(file: File): Promise<string | null> {
+  try {
+    if (!crypto?.subtle) return null
+    const hash = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+    return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, '0')).join('')
+  } catch { return null }
 }
 
 export default function RiderTripForm({ open, rider, branch, shiftOpen, attendanceId, onClose, onSaved }: Props) {
   const currentBranch = normalizeBranchLabel(branch?.name ?? rider.branch_name)
   const [tripType, setTripType] = useState<TripType>('branch_to_branch')
-  const [fromLabel, setFromLabel] = useState(currentBranch || 'فرع الشامي')
-  const [toLabel, setToLabel] = useState('فرع شكري')
+  const [toLabel, setToLabel] = useState('')
   const [customToLabel, setCustomToLabel] = useState('')
   const [reason, setReason] = useState('')
   const [relatedInvoice, setRelatedInvoice] = useState('')
   const [requestedBy, setRequestedBy] = useState('')
-  const [proofNote, setProofNote] = useState('')
-  const [allowTripProofException, setAllowTripProofException] = useState(false)
-  const [tripProofExceptionReason, setTripProofExceptionReason] = useState('')
+  const [proofFile, setProofFile] = useState<File | null>(null)
+  const [proofUpload, setProofUpload] = useState<ProofUpload | null>(null)
+  const [proofUploading, setProofUploading] = useState(false)
+  const [proofError, setProofError] = useState('')
+  const [showMore, setShowMore] = useState(false)
   const [saving, setSaving] = useState(false)
   const isSubmittingRef = useRef(false)
+  const requestIdRef = useRef(createRequestId())
+  const uploadPromiseRef = useRef<Promise<ProofUpload | null> | null>(null)
+
+  const destinationOptions = tripType === 'branch_to_branch'
+    ? BRANCHES.filter((item) => item !== currentBranch)
+    : tripType === 'warehouse'
+      ? WAREHOUSES
+      : tripType === 'supplies'
+        ? SUPPLIES
+        : tripType === 'accessories'
+          ? ACCESSORIES
+          : []
+
+  function defaultDestination(type: TripType) {
+    if (type === 'branch_to_branch') return BRANCHES.find((b) => b !== currentBranch) || 'فرع شكري'
+    if (type === 'warehouse') return WAREHOUSES[0]
+    if (type === 'supplies') return SUPPLIES[0]
+    if (type === 'accessories') return ACCESSORIES[0]
+    if (type === 'shipment_pickup') return currentBranch || 'فرع الشامي'
+    return ''
+  }
 
   useEffect(() => {
     if (!open) return
-    const branchLabel = currentBranch || 'فرع الشامي'
-    setFromLabel(branchLabel)
-    if (tripType === 'branch_to_branch') setToLabel(BRANCHES.find((b) => b !== branchLabel) || 'فرع شكري')
-  }, [open, currentBranch, tripType])
+    setToLabel(defaultDestination(tripType))
+  }, [open, currentBranch])
 
   if (!open) return null
 
   function applyType(next: TripType) {
     setTripType(next)
-    const branchLabel = currentBranch || 'فرع الشامي'
-    setFromLabel(branchLabel)
+    setToLabel(defaultDestination(next))
     setCustomToLabel('')
-    if (next === 'branch_to_branch') setToLabel(BRANCHES.find((b) => b !== branchLabel) || 'فرع شكري')
-    else if (next === 'warehouse') setToLabel(WAREHOUSES[0])
-    else if (next === 'supplies') setToLabel(SUPPLIES[0])
-    else if (next === 'accessories') setToLabel(ACCESSORIES[0])
-    else if (next === 'shipment_pickup') {
-      setFromLabel('شركة الشحن / مكان الاستلام')
-      setToLabel(branchLabel)
-    } else setToLabel('')
   }
 
   function reset() {
     setTripType('branch_to_branch')
-    setFromLabel(currentBranch || 'فرع الشامي')
-    setToLabel(BRANCHES.find((b) => b !== currentBranch) || 'فرع شكري')
+    setToLabel(defaultDestination('branch_to_branch'))
     setCustomToLabel('')
     setReason('')
     setRelatedInvoice('')
     setRequestedBy('')
-    setProofNote('')
-    setAllowTripProofException(false)
-    setTripProofExceptionReason('')
+    setProofFile(null)
+    setProofUpload(null)
+    setProofUploading(false)
+    setProofError('')
+    setShowMore(false)
+    requestIdRef.current = createRequestId()
+    uploadPromiseRef.current = null
+  }
+
+  async function uploadProof(file: File, requestId: string): Promise<ProofUpload | null> {
+    if (!navigator.onLine) return null
+    setProofUploading(true)
+    setProofError('')
+    try {
+      const ext = (file.name.split('.').pop() || 'jpg').replace(/[^a-zA-Z0-9]/g, '') || 'jpg'
+      const capturedAt = new Date().toISOString()
+      const path = `trips/${rider.id}/${todayIso()}/${requestId}.${ext}`
+      const [digest, uploadResult] = await Promise.all([
+        sha256(file),
+        supabase.storage.from('delivery-receipts').upload(path, file, { cacheControl: '3600', upsert: true }),
+      ])
+      if (uploadResult.error) throw uploadResult.error
+      const { data } = supabase.storage.from('delivery-receipts').getPublicUrl(path)
+      const result = { path, url: data.publicUrl, sha256: digest, capturedAt }
+      setProofUpload(result)
+      return result
+    } catch (error: any) {
+      setProofError(error?.message || 'تعذر رفع صورة الإثبات')
+      return null
+    } finally {
+      setProofUploading(false)
+    }
+  }
+
+  function handleProofFile(file: File | null) {
+    setProofFile(file)
+    setProofUpload(null)
+    setProofError('')
+    if (!file) {
+      uploadPromiseRef.current = null
+      return
+    }
+    uploadPromiseRef.current = uploadProof(file, requestIdRef.current)
   }
 
   async function saveTrip() {
     if (isSubmittingRef.current) return
-    const finalFrom = fromLabel.trim()
+    const finalFrom = tripType === 'shipment_pickup' ? 'شركة الشحن / مكان الاستلام' : (currentBranch || 'فرع الشامي')
     const finalTo = toLabel === 'custom' ? customToLabel.trim() : toLabel.trim()
-    if (!finalFrom || !finalTo) {
-      toast.error('اكتب من وإلى للمشوار')
-      return
-    }
-    if (tripType === 'branch_to_branch' && finalFrom === finalTo) {
-      toast.error('اختار فرعين مختلفين')
-      return
-    }
 
-    const exceptionReason = tripProofExceptionReason.trim()
-    const hasProofImage = false
-    const needsProofException = !hasProofImage
-    const isTripProofException = needsProofException && allowTripProofException
+    if (!finalTo) return toast.error('اختار جهة المشوار')
+    if (tripType === 'branch_to_branch' && finalFrom === finalTo) return toast.error('اختار فرعين مختلفين')
+    if (!proofFile) return toast.error('صورة إثبات المشوار مطلوبة')
+    if (!navigator.onLine) return toast.error('التسجيل السريع للمشوار يحتاج إنترنت لرفع صورة الإثبات بدقة')
 
-    if (needsProofException && !allowTripProofException) {
-      toast.error('لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح لعدم وجود الصورة')
-      return
-    }
-    if (isTripProofException && exceptionReason.length < 10) {
-      toast.error('لا يمكن تسجيل مشوار بدون صورة إلا بعد كتابة سبب واضح لعدم وجود الصورة')
-      return
-    }
+    const token = getStoredRiderToken()
+    if (!token) return toast.error('انتهت الجلسة. سجل دخول مرة أخرى')
 
     try {
-      // prevent double submissions
       isSubmittingRef.current = true
       setSaving(true)
+
+      let uploaded = proofUpload
+      if (!uploaded && uploadPromiseRef.current) uploaded = await uploadPromiseRef.current
+      if (!uploaded) throw new Error('تعذر رفع صورة الإثبات. اختر الصورة مرة أخرى وحاول الحفظ.')
+
+      const requestId = requestIdRef.current
       const tripRate = rider.trip_rate ?? 10
       const payload = {
-        // idempotency key to avoid duplicate inserts on retries
-        client_request_id: typeof crypto !== 'undefined' && (crypto as any).randomUUID ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        client_request_id: requestId,
         rider_id: rider.id,
-        rider_name: rider.name,
-        branch_id: rider.branch_id,
         branch_name: branch?.name ?? rider.branch_name ?? null,
         trip_date: todayIso(),
         work_date: todayIso(),
@@ -152,78 +199,54 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
         trip_type: tripType,
         from_label: finalFrom,
         to_label: finalTo,
-        reason: reason.trim() || 'مشوار بدون سبب تفصيلي',
+        reason: reason.trim() || TRIP_TYPES.find((t) => t.value === tripType)?.label || 'مشوار',
+        requested_by_name: requestedBy.trim() || null,
         related_invoice_number: relatedInvoice.trim() || null,
         has_invoice_reference: Boolean(relatedInvoice.trim()),
-        requested_by_name: requestedBy.trim() || null,
-        evidence_type: relatedInvoice.trim() ? 'invoice' : 'exception',
-        evidence_note: proofNote.trim() || null,
-        evidence_status: relatedInvoice.trim() ? 'pending_admin_review' : 'exception_review',
         proof_required: true,
-        proof_image_url: null,
-        proof_note: proofNote.trim() || null,
-        proof_captured_at: null,
-        proof_uploaded_at: null,
-        proof_source: 'exception',
-        proof_review_status: 'exception_review',
-        proof_exception_status: isTripProofException ? 'pending' : 'none',
-        proof_exception_reason: isTripProofException ? exceptionReason : null,
-        needs_review: true,
-        review_reason: isTripProofException ? 'missing_trip_proof' : !shiftOpen ? 'missing_shift' : null,
-        review_status: relatedInvoice.trim() ? 'pending_evidence_review' : 'exception_review',
-        notes: `نوع المشوار: ${TRIP_TYPES.find((t) => t.value === tripType)?.label || tripType}${requestedBy.trim() ? ` | طالب المشوار: ${requestedBy.trim()}` : ''}${reason.trim() ? ` | السبب: ${reason.trim()}` : ''}${relatedInvoice.trim() ? ` | فاتورة/إذن: ${relatedInvoice.trim()}` : ''}${proofNote.trim() ? ` | ملاحظة: ${proofNote.trim()}` : ''}`,
-        status: 'pending_approval',
-        registered_at: new Date().toISOString(),
+        evidence_type: relatedInvoice.trim() ? 'invoice_photo' : 'trip_photo',
+        evidence_status: 'pending_admin_review',
+        proof_image_path: uploaded.path,
+        proof_image_url: uploaded.url,
+        proof_captured_at: uploaded.capturedAt,
+        proof_uploaded_at: new Date().toISOString(),
+        proof_source: 'camera',
+        proof_sha256: uploaded.sha256,
+        proof_review_status: 'pending',
+        proof_exception_status: 'none',
+        upload_status: 'uploaded',
+        storage_path: uploaded.path,
+        needs_review: !shiftOpen,
+        review_reason: !shiftOpen ? 'missing_shift' : null,
+        review_status: !shiftOpen ? 'missing_shift' : 'pending_evidence_review',
+        is_countable: true,
+        notes: [
+          `نوع المشوار: ${TRIP_TYPES.find((t) => t.value === tripType)?.label || tripType}`,
+          requestedBy.trim() ? `طالب المشوار: ${requestedBy.trim()}` : '',
+          reason.trim() ? `السبب: ${reason.trim()}` : '',
+          relatedInvoice.trim() ? `فاتورة/إذن: ${relatedInvoice.trim()}` : '',
+        ].filter(Boolean).join(' | '),
         trip_rate: tripRate,
         trip_multiplier: 1,
         trip_earning: tripRate,
       }
 
-      if (!navigator.onLine) {
-        const offline = enqueueOfflineMutation({
-          table: 'internal_trips',
-          action: 'insert',
-          payload: { ...payload, offline_created_at: new Date().toISOString(), offline_sync_status: 'pending' },
-          label: `مشوار ${finalFrom} إلى ${finalTo}`,
-        })
-        toast.success('تم حفظ المشوار مؤقتًا وسيتم رفعه عند رجوع الإنترنت')
-        await onSaved({ ...(payload as any), id: offline.id, offline_sync_status: 'pending' } as InternalTrip)
-        reset()
-        onClose()
-        return
-      }
+      const { data, error } = await supabase.rpc('rider_create_trip_fast', { p_token: token, p_payload: payload })
+      const result = getRpcResult<any>(data)
+      if (error || !result?.success || !result?.trip?.id) throw new Error(error?.message || result?.message || 'تعذر تسجيل المشوار')
 
-      const clientRequestId = (payload as any).client_request_id
-      const { data, error } = await supabase.from('internal_trips').insert(payload).select('*').single()
-      if (error) {
-        // handle duplicate-key / idempotent insert: fetch existing by client_request_id
-        const message = String(error.message || '').toLowerCase()
-        const isDuplicate = message.includes('duplicate') || message.includes('unique constraint') || String(error.code || '') === '23505'
-        if (isDuplicate && clientRequestId) {
-          const { data: existing } = await supabase.from('internal_trips').select('*').eq('client_request_id', clientRequestId).maybeSingle()
-          if (existing) {
-            toast.success('تم حفظ المشوار سابقًا — استرجاع النسخة الموجودة')
-            await onSaved(existing as InternalTrip)
-            reset()
-            onClose()
-            return
-          }
-        }
-        throw error
-      }
-      toast.success('تم تسجيل المشوار وهو بانتظار الاعتماد')
-      await onSaved(data as InternalTrip)
-      reset()
+      const trip = result.trip as InternalTrip
+      toast.success('تم تسجيل المشوار بنجاح')
       onClose()
+      reset()
+      void Promise.resolve(onSaved(trip)).catch(() => {})
     } catch (error: any) {
-      toast.error(`تعذر تسجيل المشوار: ${error?.message || ''}`)
+      toast.error(error?.message || 'تعذر تسجيل المشوار')
     } finally {
       setSaving(false)
       isSubmittingRef.current = false
     }
   }
-
-  const destinationOptions = tripType === 'branch_to_branch' ? BRANCHES : tripType === 'warehouse' ? WAREHOUSES : tripType === 'supplies' ? SUPPLIES : tripType === 'accessories' ? ACCESSORIES : []
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/45 p-3 backdrop-blur-sm" dir="rtl">
@@ -231,95 +254,61 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
         <section className="max-h-[92vh] w-full overflow-y-auto rounded-[32px] bg-white p-4 shadow-2xl">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-black text-[#008E92]">Rider V2</p>
-              <h2 className="text-xl font-black text-[#061827]">تسجيل مشوار</h2>
-              <p className="mt-1 text-xs font-bold text-slate-500">المشوار يدخل مباشرة في تقرير المندوب وينتظر اعتماد الإدارة.</p>
+              <p className="text-xs font-black text-[#008E92]">تسجيل سريع</p>
+              <h2 className="text-xl font-black text-[#061827]">مشوار جديد</h2>
+              <p className="mt-1 text-xs font-bold text-slate-500">اختار النوع والجهة وصوّر الإثبات ثم احفظ.</p>
             </div>
-            <button type="button" onClick={onClose} className="grid h-11 w-11 place-items-center rounded-2xl bg-slate-100 text-slate-500">
-              <X size={20} />
-            </button>
+            <button type="button" onClick={onClose} className="grid h-11 w-11 place-items-center rounded-2xl bg-slate-100 text-slate-500"><X size={20} /></button>
           </div>
 
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {TRIP_TYPES.map((item) => (
-              <button key={item.value} type="button" onClick={() => applyType(item.value)} className={`rounded-2xl border p-3 text-right transition ${tripType === item.value ? 'border-[#008E92] bg-[#EAF8F8] text-[#006A70]' : 'border-slate-100 bg-slate-50 text-slate-600'}`}>
-                <p className="text-sm font-black">{item.label}</p>
-                <p className="mt-1 text-[10px] font-bold opacity-70">{item.hint}</p>
-              </button>
+              <button key={item.value} type="button" onClick={() => applyType(item.value)} className={`rounded-2xl border px-3 py-3 text-center text-sm font-black transition ${tripType === item.value ? 'border-[#008E92] bg-[#EAF8F8] text-[#006A70]' : 'border-slate-100 bg-slate-50 text-slate-600'}`}>{item.label}</button>
             ))}
           </div>
 
           <div className="mt-4 space-y-3">
-            <Field label="من *">
-              <input value={fromLabel} onChange={(e) => setFromLabel(e.target.value)} className="dawaa-input text-right" placeholder="جهة الخروج" />
-            </Field>
+            <div className="rounded-2xl bg-slate-50 p-3 text-sm font-black text-slate-700">من: {tripType === 'shipment_pickup' ? 'شركة الشحن / مكان الاستلام' : (currentBranch || 'فرع الشامي')}</div>
 
-            {destinationOptions.length > 0 ? (
-              <Field label="إلى *">
-                <select value={toLabel} onChange={(e) => setToLabel(e.target.value)} className="dawaa-input text-right">
-                  {destinationOptions.map((item) => <option key={item} value={item}>{item}</option>)}
-                  <option value="custom">جهة أخرى</option>
-                </select>
-              </Field>
+            {destinationOptions.length ? (
+              <div>
+                <p className="mb-2 text-xs font-black text-slate-500">إلى *</p>
+                <div className="flex flex-wrap gap-2">
+                  {destinationOptions.map((item) => (
+                    <button key={item} type="button" onClick={() => setToLabel(item)} className={`rounded-2xl px-3 py-2 text-sm font-black ${toLabel === item ? 'bg-[#008E92] text-white' : 'bg-slate-100 text-slate-700'}`}>{item}</button>
+                  ))}
+                  <button type="button" onClick={() => setToLabel('custom')} className={`rounded-2xl px-3 py-2 text-sm font-black ${toLabel === 'custom' ? 'bg-[#008E92] text-white' : 'bg-slate-100 text-slate-700'}`}>جهة أخرى</button>
+                </div>
+              </div>
             ) : (
-              <Field label="إلى *">
-                <input value={toLabel} onChange={(e) => setToLabel(e.target.value)} className="dawaa-input text-right" placeholder="جهة الوصول" />
-              </Field>
+              <input value={toLabel} onChange={(e) => setToLabel(e.target.value)} className="dawaa-input text-right" placeholder="اكتب جهة الوصول" autoFocus />
             )}
 
-            {toLabel === 'custom' ? (
-              <Field label="اكتب الجهة الأخرى">
-                <input value={customToLabel} onChange={(e) => setCustomToLabel(e.target.value)} className="dawaa-input text-right" placeholder="اسم الجهة" />
-              </Field>
+            {toLabel === 'custom' ? <input value={customToLabel} onChange={(e) => setCustomToLabel(e.target.value)} className="dawaa-input text-right" placeholder="اكتب الجهة الأخرى" autoFocus /> : null}
+
+            <label className="block rounded-2xl border-2 border-dashed border-[#008E92]/30 bg-[#F3FBFB] p-4 text-center">
+              <Camera className="mx-auto mb-2 text-[#008E92]" size={26} />
+              <p className="text-sm font-black text-[#006A70]">{proofUpload ? 'تم رفع صورة الإثبات ✅' : proofFile ? 'تم اختيار الصورة' : 'صوّر إثبات المشوار *'}</p>
+              <p className="mt-1 text-xs font-bold text-slate-500">الرفع يبدأ فور اختيار الصورة لتوفير وقت الحفظ.</p>
+              <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handleProofFile(e.target.files?.[0] || null)} />
+            </label>
+
+            {proofUploading ? <p className="text-center text-xs font-black text-[#008E92]">جاري رفع الإثبات في الخلفية…</p> : null}
+            {proofError ? <p className="rounded-2xl bg-rose-50 p-3 text-center text-xs font-black text-rose-700">تعذر رفع الصورة. اختر الصورة مرة أخرى قبل الحفظ.</p> : null}
+
+            <button type="button" onClick={() => setShowMore((v) => !v)} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-100 py-3 text-sm font-black text-slate-600">تفاصيل إضافية اختيارية {showMore ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>
+
+            {showMore ? (
+              <div className="space-y-3 rounded-2xl border border-slate-100 p-3">
+                <input value={relatedInvoice} onChange={(e) => setRelatedInvoice(e.target.value)} className="dawaa-input text-right" placeholder="رقم فاتورة / إذن - اختياري" inputMode="numeric" />
+                <input value={requestedBy} onChange={(e) => setRequestedBy(e.target.value)} className="dawaa-input text-right" placeholder="طالب المشوار - اختياري" />
+                <input value={reason} onChange={(e) => setReason(e.target.value)} className="dawaa-input text-right" placeholder="سبب أو ملاحظة - اختياري" />
+              </div>
             ) : null}
 
-            <Field label="سبب المشوار">
-              <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} className="dawaa-input resize-none text-right" placeholder="مثال: تحويل ناقص، إرجاع، مستلزمات، استلام شحن..." />
-            </Field>
+            {!shiftOpen ? <p className="rounded-2xl bg-amber-50 p-3 text-xs font-black text-amber-700">الشيفت غير ظاهر؛ المشوار سيتسجل للمراجعة بدون تعطيلك.</p> : null}
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="رقم فاتورة/إذن لو موجود">
-                <input value={relatedInvoice} onChange={(e) => setRelatedInvoice(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" />
-              </Field>
-              <Field label="طالب المشوار">
-                <input value={requestedBy} onChange={(e) => setRequestedBy(e.target.value)} className="dawaa-input text-right" placeholder="اسم الدكتور/المدير" />
-              </Field>
-            </div>
-
-            <Field label="ملاحظة إثبات">
-              <input value={proofNote} onChange={(e) => setProofNote(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" />
-            </Field>
-
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
-              <p className="mb-2 font-black text-amber-900">الصورة مطلوبة لإثبات المشوار. في حالة عدم وجود صورة يجب كتابة سبب واضح وسيتم إرسال المشوار للمراجعة.</p>
-              <label className="flex items-center gap-3 text-sm font-black text-amber-900">
-                <input
-                  type="checkbox"
-                  checked={allowTripProofException}
-                  onChange={(e) => setAllowTripProofException(e.target.checked)}
-                  className="h-5 w-5"
-                />
-                استثناء بدون صورة: دورت على صنف أو مشوار ولم أجد المطلوب
-              </label>
-              {allowTripProofException && (
-                <textarea
-                  value={tripProofExceptionReason}
-                  onChange={(e) => setTripProofExceptionReason(e.target.value)}
-                  rows={2}
-                  className="mt-2 w-full rounded-xl border border-amber-200 bg-white p-2 text-right text-sm"
-                  placeholder="اكتب السبب بوضوح، مثال: دورت على الصنف في المخزن ولم أجده"
-                />
-              )}
-              <p className="mt-2 text-xs font-bold text-amber-800">
-                الاستثناء سيتم عرضه للإدارة يوميًا للمراجعة ولا يتم اعتماده تلقائيًا.
-              </p>
-            </div>
-
-            {!shiftOpen ? <p className="rounded-2xl bg-amber-50 p-3 text-xs font-black text-amber-700">تنبيه: الشيفت غير مفتوح، المشوار سيتسجل لكن يحتاج مراجعة.</p> : null}
-
-            <button type="button" disabled={saving} onClick={() => void saveTrip()} className="w-full rounded-2xl bg-[#008E92] py-4 text-lg font-black text-white disabled:opacity-60">
-              {saving ? 'جاري حفظ المشوار...' : 'حفظ المشوار ✅'}
-            </button>
+            <button type="button" onClick={() => void saveTrip()} disabled={saving || Boolean(proofError)} className="w-full rounded-2xl bg-[#008E92] py-4 text-lg font-black text-white disabled:opacity-60">{saving ? (proofUploading ? 'استكمال رفع الإثبات…' : 'جاري التسجيل…') : 'حفظ المشوار فورًا ✅'}</button>
           </div>
         </section>
       </div>
