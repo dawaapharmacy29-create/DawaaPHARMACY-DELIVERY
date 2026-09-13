@@ -5,8 +5,8 @@ import RiderOperatingDashboard from '../../components/rider/RiderOperatingDashbo
 import RiderQuickOrderForm from '../../components/rider/RiderQuickOrderForm'
 import RiderTripForm from '../../components/rider/RiderTripForm'
 import { supabase } from '../../lib/supabase'
-import { getRiderById, getRiderSession, logout } from '../../lib/auth'
-import { formatDateTime, todayIso } from '../../lib/helpers'
+import { getRiderSession, logout } from '../../lib/auth'
+import { formatDateTime } from '../../lib/helpers'
 import { offlineQueueCount } from '../../lib/offlineQueue'
 import { readRiderDeviceSnapshot, type RiderDeviceSnapshot } from '../../lib/riderDeviceSnapshot'
 import type { Attendance, Branch, DeliveryOrder, InternalTrip, Rider } from '../../lib/types'
@@ -38,7 +38,7 @@ function requestRiderGps(): Promise<RiderGpsFix> {
         accuracy: Number.isFinite(pos.coords.accuracy) ? Math.round(pos.coords.accuracy) : null,
       }),
       () => resolve({ lat: null, lng: null, accuracy: null }),
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
     )
   })
 }
@@ -68,16 +68,14 @@ function normalizedWhatsappPhone(phone: string) {
 function tripLabel(trip: any) {
   return `${trip.from_label || '—'} ← ${trip.to_label || '—'}`
 }
-function normalizeAttendance(row: any): Attendance {
+function normalizeAttendance(row: any): Attendance | null {
+  if (!row) return null
   return {
     ...row,
     work_date: row.work_date || row.shift_date,
     check_in_at: row.check_in_at || row.check_in_time,
     check_out_at: row.check_out_at || row.check_out_time,
   } as Attendance
-}
-function attendanceIsOpen(row: Attendance) {
-  return Boolean((row as any).check_in_at && !(row as any).check_out_at)
 }
 
 function LoadingScreen() {
@@ -86,7 +84,7 @@ function LoadingScreen() {
       <div className="text-center">
         <img src="/logo.png" className="mx-auto mb-4 h-20 w-20 rounded-2xl object-contain shadow-lg" alt="دواء" />
         <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-[#008E92] border-t-transparent" />
-        <p className="mt-3 font-bold text-slate-500">جاري تحميل وضع التشغيل الكامل...</p>
+        <p className="mt-3 font-bold text-slate-500">جاري فتح وضع التشغيل...</p>
       </div>
     </div>
   )
@@ -111,83 +109,61 @@ export default function RiderDashboardV3() {
   const session = useMemo(() => getRiderSession(), [])
   const riderId = rider?.id || session.rider_id
   const openOrders = useMemo(() => orders.filter(isOpenOrder), [orders])
-  const shiftOpen = Boolean(attendance?.check_in_at && !attendance?.check_out_at)
+  const shiftOpen = Boolean((attendance as any)?.check_in_at && !(attendance as any)?.check_out_at)
 
-  const refreshDevice = useCallback(async (gpsAccuracy?: number | null) => {
-    void gpsAccuracy
+  const refreshDevice = useCallback(async () => {
     const snapshot = await readRiderDeviceSnapshot()
     setDevice(snapshot)
     return snapshot
   }, [])
 
-  const loadAll = useCallback(async (showToast = false) => {
-    const currentRiderId = getRiderSession().rider_id
-    if (!currentRiderId) {
+  const applyFastPayload = useCallback((result: any) => {
+    if (!result?.success) return false
+    if (result.rider) setRider(result.rider as Rider)
+    setBranch((result.branch || null) as Branch | null)
+    setAttendance(normalizeAttendance(result.attendance))
+    setOrders((Array.isArray(result.orders) ? result.orders : []) as DeliveryOrder[])
+    setTrips((Array.isArray(result.trips) ? result.trips : []) as InternalTrip[])
+    setPendingSyncCount(offlineQueueCount())
+    return true
+  }, [])
+
+  const loadDashboard = useCallback(async (showToast = false, initial = false) => {
+    const token = getStoredRiderToken()
+    if (!token) {
       navigate('/rider-login', { replace: true })
       return
     }
     try {
-      setLoading(true)
-      const loadedRider = await getRiderById(currentRiderId)
-      if (!loadedRider) throw new Error('لم يتم العثور على حساب الدليفري')
-      setRider(loadedRider)
-
-      const today = todayIso()
-      const yesterday = new Date()
-      yesterday.setDate(yesterday.getDate() - 1)
-      const yesterdayIso = yesterday.toISOString().slice(0, 10)
-
-      const [branchRes, attRes] = await Promise.allSettled([
-        loadedRider.branch_id ? supabase.from('delivery_branches').select('*').eq('id', loadedRider.branch_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
-        supabase
-          .from('delivery_attendance')
-          .select('*')
-          .eq('rider_id', currentRiderId)
-          .or(`work_date.eq.${today},shift_date.eq.${today},work_date.eq.${yesterdayIso},shift_date.eq.${yesterdayIso},check_out_at.is.null,check_out_time.is.null`)
-          .order('created_at', { ascending: false })
-          .limit(10),
-      ])
-
-      if (branchRes.status === 'fulfilled' && !branchRes.value.error) setBranch(branchRes.value.data as Branch | null)
-
-      let activeAttendance: Attendance | null = null
-      if (attRes.status === 'fulfilled' && !attRes.value.error) {
-        const rows = ((attRes.value.data ?? []) as any[]).map(normalizeAttendance)
-        activeAttendance = rows.find(attendanceIsOpen) || rows[0] || null
-        setAttendance(activeAttendance)
+      if (initial) setLoading(true)
+      const dashboardPromise = supabase.rpc('rider_get_operating_dashboard_fast', { p_token: token })
+      const devicePromise = refreshDevice()
+      const [{ data, error }] = await Promise.all([dashboardPromise, devicePromise])
+      const result = getRpcResult<any>(data)
+      if (error || !result?.success) {
+        if (['expired_session', 'invalid_token', 'inactive_account', 'rider_inactive'].includes(String(result?.error || ''))) {
+          navigate('/rider-login', { replace: true })
+          return
+        }
+        throw new Error(error?.message || result?.message || result?.error || 'تعذر تحميل وضع التشغيل')
       }
-
-      const activeWorkDate = ((activeAttendance as any)?.work_date || (activeAttendance as any)?.shift_date || today) as string
-      const workDates = Array.from(new Set([activeWorkDate, today].filter(Boolean)))
-
-      const [orderRes, tripRes] = await Promise.allSettled([
-        supabase
-          .from('delivery_orders')
-          .select('*')
-          .eq('rider_id', currentRiderId)
-          .in('work_date', workDates)
-          .order('registered_at', { ascending: false }),
-        supabase
-          .from('internal_trips')
-          .select('*')
-          .eq('rider_id', currentRiderId)
-          .in('work_date', workDates)
-          .order('registered_at', { ascending: false }),
-      ])
-
-      if (orderRes.status === 'fulfilled' && !orderRes.value.error) setOrders((orderRes.value.data ?? []) as DeliveryOrder[])
-      if (tripRes.status === 'fulfilled' && !tripRes.value.error) setTrips((tripRes.value.data ?? []) as InternalTrip[])
-      await refreshDevice()
-      setPendingSyncCount(offlineQueueCount())
+      applyFastPayload(result)
       if (showToast) toast.success('تم تحديث وضع التشغيل')
     } catch (error: any) {
       toast.error(error?.message || 'تعذر تحميل وضع التشغيل')
     } finally {
-      setLoading(false)
+      if (initial) setLoading(false)
     }
-  }, [navigate, refreshDevice])
+  }, [applyFastPayload, navigate, refreshDevice])
 
-  useEffect(() => { void loadAll() }, [loadAll])
+  const refreshOrderById = useCallback(async (orderId?: string | null) => {
+    if (!orderId) return
+    const { data, error } = await supabase.from('delivery_orders').select('*').eq('id', orderId).maybeSingle()
+    if (error || !data) return
+    setOrders((prev) => [data as DeliveryOrder, ...prev.filter((item: any) => String(item.id) !== String(orderId))])
+  }, [])
+
+  useEffect(() => { void loadDashboard(false, true) }, [loadDashboard])
   useEffect(() => {
     const timer = window.setInterval(() => {
       setPendingSyncCount(offlineQueueCount())
@@ -202,15 +178,14 @@ export default function RiderDashboardV3() {
       setSaving(true)
       const token = getStoredRiderToken()
       if (!token) throw new Error('انتهت الجلسة. سجل دخول مرة أخرى من تطبيق الدليفري.')
-      const action = attendance?.check_in_at && !attendance?.check_out_at ? 'check_out' : 'check_in'
-      const gps = await requestRiderGps()
-      await refreshDevice(gps.accuracy)
+      const action = shiftOpen ? 'check_out' : 'check_in'
+      const [gps] = await Promise.all([requestRiderGps(), refreshDevice()])
       const { data, error } = await supabase.rpc('rider_check_in_out', { p_token: token, p_action: action, p_lat: gps.lat, p_lng: gps.lng, p_accuracy_m: gps.accuracy })
       const result = getRpcResult<any>(data)
       if (error || !result?.success) throw new Error(error?.message || result?.message || result?.error || 'تعذر تسجيل الحضور/الانصراف')
-      if (gps.accuracy && gps.accuracy > 100) toast.warning(`تم التسجيل لكن دقة GPS ضعيفة (${gps.accuracy} متر)`) 
+      if (gps.accuracy && gps.accuracy > 100) toast.warning(`تم التسجيل لكن دقة GPS ضعيفة (${gps.accuracy} متر)`)
       else toast.success(action === 'check_in' ? 'تم تسجيل الحضور بنجاح' : 'تم تسجيل الانصراف بنجاح')
-      await loadAll(false)
+      void loadDashboard(false, false)
     } catch (error: any) {
       toast.error(error?.message || 'تعذر تسجيل الحضور/الانصراف')
     } finally {
@@ -223,15 +198,15 @@ export default function RiderDashboardV3() {
       setSaving(true)
       const token = getStoredRiderToken()
       if (!token) throw new Error('انتهت الجلسة')
-      const gps = await requestRiderGps()
-      const snapshot = await refreshDevice(gps.accuracy)
-      const { data, error } = await supabase.rpc('rider_mark_order_delivered', { p_token: token, p_order_id: String(order.id) })
+      const [gps, snapshot] = await Promise.all([requestRiderGps(), refreshDevice()])
+      const orderId = String((order as any).id)
+      const { data, error } = await supabase.rpc('rider_mark_order_delivered', { p_token: token, p_order_id: orderId })
       const result = getRpcResult<any>(data)
       if (error || !result?.success) throw new Error(error?.message || result?.message || 'تعذر تأكيد التسليم')
+      setOrders((prev) => prev.map((item: any) => String(item.id) === orderId ? ({ ...item, status: 'delivered', delivered_at: new Date().toISOString() } as DeliveryOrder) : item))
       toast.success(result.message || 'تم تأكيد التسليم بنجاح')
       if (gps.accuracy && gps.accuracy > 100) toast.warning(`تم التسليم بدقة GPS ضعيفة (${gps.accuracy} متر)`)
       if (snapshot.batteryPercent !== null && snapshot.batteryPercent <= 15 && !snapshot.isCharging) toast.warning('البطارية منخفضة جدًا، برجاء توصيل الشاحن')
-      await loadAll(false)
     } catch (error: any) {
       toast.error(error?.message || 'فشل تأكيد التسليم')
     } finally {
@@ -249,16 +224,16 @@ export default function RiderDashboardV3() {
       setSaving(true)
       const token = getStoredRiderToken()
       if (!token) throw new Error('انتهت الجلسة')
-      const gps = await requestRiderGps()
-      await refreshDevice(gps.accuracy)
+      const [gps] = await Promise.all([requestRiderGps(), refreshDevice()])
       const reason = `${failReason.trim()}\nGPS accuracy: ${gps.accuracy ?? 'unknown'}m`
-      const { data, error } = await supabase.rpc('rider_mark_order_failed', { p_token: token, p_order_id: String(failOrder.id), p_reason: reason })
+      const orderId = String((failOrder as any).id)
+      const { data, error } = await supabase.rpc('rider_mark_order_failed', { p_token: token, p_order_id: orderId, p_reason: reason })
       const result = getRpcResult<any>(data)
       if (error || !result?.success) throw new Error(error?.message || result?.message || 'تعذر تسجيل فشل التسليم')
+      setOrders((prev) => prev.map((item: any) => String(item.id) === orderId ? ({ ...item, status: 'failed', failure_reason: failReason.trim() } as DeliveryOrder) : item))
       toast.success(result.message || 'تم تسجيل فشل التسليم للمراجعة')
       setFailOrder(null)
       setFailReason('')
-      await loadAll(false)
     } catch (error: any) {
       toast.error(error?.message || 'فشل تحديث الأوردر')
     } finally {
@@ -300,7 +275,7 @@ export default function RiderDashboardV3() {
         onNewOrder={() => setQuickOrderOpen(true)}
         onOpenOrders={() => document.getElementById('rider-v3-open-orders')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
         onNewTrip={() => setTripOpen(true)}
-        onRefresh={() => void loadAll(true)}
+        onRefresh={() => void loadDashboard(true, false)}
         onLogout={() => void handleLogout()}
       >
         <section id="rider-v3-open-orders" className="rounded-[30px] border border-slate-100 bg-white p-4 shadow-sm" dir="rtl">
@@ -310,7 +285,7 @@ export default function RiderDashboardV3() {
               <h2 className="text-lg font-black text-[#061827]">الأوردرات المفتوحة</h2>
               <p className="mt-1 text-xs font-bold text-slate-500">تأكيد التسليم أو تسجيل الفشل من نفس الشاشة.</p>
             </div>
-            <button type="button" onClick={() => void loadAll(true)} className="rounded-2xl bg-slate-100 px-4 py-2 text-xs font-black text-slate-600">تحديث</button>
+            <button type="button" onClick={() => void loadDashboard(true, false)} className="rounded-2xl bg-slate-100 px-4 py-2 text-xs font-black text-slate-600">تحديث</button>
           </div>
           {openOrders.length === 0 ? (
             <p className="rounded-2xl bg-emerald-50 p-4 text-center text-sm font-black text-emerald-700">لا توجد أوردرات مفتوحة الآن ✅</p>
@@ -368,19 +343,23 @@ export default function RiderDashboardV3() {
         </section>
 
         <section className="rounded-[30px] border border-slate-100 bg-white p-4 shadow-sm" dir="rtl">
-          <h2 className="text-lg font-black text-[#061827]">تشغيل النسخة الجديدة الكامل</h2>
+          <h2 className="text-lg font-black text-[#061827]">وضع التشغيل السريع</h2>
           <div className="mt-3 space-y-2 text-sm font-bold text-slate-600">
-            <p>✅ الحضور والانصراف من نفس الشاشة.</p>
-            <p>✅ تسجيل الأوردر السريع للفواتير العادية.</p>
-            <p>✅ تأكيد التسليم وفشل التسليم للأوردرات المفتوحة.</p>
-            <p>✅ تسجيل المشاوير داخل النسخة الجديدة مع دعم Offline.</p>
-            <p>✅ تم تحسين عرض الأوردرات والمشاوير بعد 12 بالليل على الشيفت المفتوح.</p>
+            <p>✅ تحميل الشاشة الأساسية في طلب واحد بدل عدة طلبات متتالية.</p>
+            <p>✅ تسجيل الأوردر بدون إعادة تحميل كل الصفحة.</p>
+            <p>✅ تأكيد التسليم وفشل التسليم بتحديث فوري محلي.</p>
+            <p>✅ تسجيل المشاوير مع دعم Offline ومنع الإرسال المكرر.</p>
+            <p>✅ دعم الشيفت المفتوح بعد 12 منتصف الليل.</p>
           </div>
         </section>
       </RiderOperatingDashboard>
 
-      <RiderQuickOrderForm open={quickOrderOpen} rider={rider} branchName={branch?.name ?? rider.branch_name} onClose={() => setQuickOrderOpen(false)} onSaved={() => loadAll(false)} />
-      <RiderTripForm open={tripOpen} rider={rider} branch={branch} shiftOpen={shiftOpen} attendanceId={attendance?.id || null} onClose={() => setTripOpen(false)} onSaved={() => loadAll(false)} />
+      <RiderQuickOrderForm open={quickOrderOpen} rider={rider} branchName={branch?.name ?? rider.branch_name} onClose={() => setQuickOrderOpen(false)} onSaved={(orderId) => refreshOrderById(orderId)} />
+      <RiderTripForm open={tripOpen} rider={rider} branch={branch} shiftOpen={shiftOpen} attendanceId={(attendance as any)?.id || null} onClose={() => setTripOpen(false)} onSaved={(trip) => {
+        if (!trip) return
+        setTrips((prev) => [trip, ...prev.filter((item: any) => String(item.id) !== String((trip as any).id))])
+        setPendingSyncCount(offlineQueueCount())
+      }} />
 
       {failOrder ? (
         <div className="fixed inset-0 z-50 bg-slate-950/45 p-3 backdrop-blur-sm" dir="rtl">
