@@ -1,4 +1,6 @@
-// رصد حالة الجهاز: بطارية، اتصال، GPS
+// رصد حالة الجهاز: بطارية، اتصال، GPS تشخيصي سريع فقط.
+// ملاحظة: GPS الحرج للحضور/التسليم/تسجيل الأوردر له مسار مستقل عالي الدقة،
+// لذلك لا نسمح لقراءة التشخيص هنا أن تؤخر فتح شاشة المندوب.
 export type RiderDeviceSnapshot = {
   batteryPercent: number | null
   batterySupported: boolean
@@ -35,7 +37,13 @@ export async function readRiderDeviceSnapshot(): Promise<RiderDeviceSnapshot> {
             resolve()
           },
           () => resolve(),
-          { timeout: 3000, maximumAge: 30000, enableHighAccuracy: false },
+          {
+            // Prefer a recent cached fix and never hold the dashboard for seconds.
+            // Operational actions request their own fresh high-accuracy GPS separately.
+            timeout: 450,
+            maximumAge: 120000,
+            enableHighAccuracy: false,
+          },
         )
       })
     }
