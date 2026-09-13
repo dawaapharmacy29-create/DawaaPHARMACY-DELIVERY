@@ -20,12 +20,14 @@ export default defineConfig({
           if (id.includes('node_modules/xlsx')) {
             return 'xlsx'
           }
+          if (id.includes('node_modules/jspdf') || id.includes('node_modules/html2canvas')) {
+            return 'export-vendor'
+          }
           if (id.includes('node_modules/lucide-react') || id.includes('node_modules/sonner')) {
             return 'ui'
           }
-          if (id.includes('src/pages/admin/')) {
-            return 'admin-pages'
-          }
+          // Do not group all admin routes together. App.tsx already lazy-loads them,
+          // so Rollup should keep route-level chunks separate for faster rider startup.
         },
       },
     },
