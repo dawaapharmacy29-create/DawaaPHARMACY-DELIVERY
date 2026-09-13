@@ -166,20 +166,6 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
     uploadPromiseRef.current = uploadProof(file, requestIdRef.current)
   }
 
-  async function attachProofAfterSave(tripId: string, token: string, upload: ProofUpload | null) {
-    if (!upload) return
-    const { data, error } = await supabase.rpc('rider_attach_trip_proof', {
-      p_token: token,
-      p_trip_id: tripId,
-      p_image_path: upload.path,
-      p_image_url: upload.url,
-      p_proof_sha256: upload.sha256,
-      p_captured_at: upload.capturedAt,
-    })
-    const result = getRpcResult<any>(data)
-    if (error || !result?.success) toast.warning(error?.message || result?.message || 'تم حفظ المشوار لكن صورة الإثبات تحتاج إعادة ربط')
-  }
-
   async function saveTrip() {
     if (isSubmittingRef.current) return
     const finalFrom = tripType === 'shipment_pickup' ? 'شركة الشحن / مكان الاستلام' : (currentBranch || 'فرع الشامي')
@@ -196,9 +182,12 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
     try {
       isSubmittingRef.current = true
       setSaving(true)
+
+      let uploaded = proofUpload
+      if (!uploaded && uploadPromiseRef.current) uploaded = await uploadPromiseRef.current
+      if (!uploaded) throw new Error('تعذر رفع صورة الإثبات. اختر الصورة مرة أخرى وحاول الحفظ.')
+
       const requestId = requestIdRef.current
-      const alreadyUploaded = proofUpload
-      const pendingUploadPromise = uploadPromiseRef.current
       const tripRate = rider.trip_rate ?? 10
       const payload = {
         client_request_id: requestId,
@@ -215,22 +204,22 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
         related_invoice_number: relatedInvoice.trim() || null,
         has_invoice_reference: Boolean(relatedInvoice.trim()),
         proof_required: true,
-        evidence_type: alreadyUploaded ? (relatedInvoice.trim() ? 'invoice_photo' : 'trip_photo') : 'trip_photo_pending_upload',
-        evidence_status: alreadyUploaded ? 'pending_admin_review' : 'pending_upload',
-        proof_image_path: alreadyUploaded?.path || null,
-        proof_image_url: alreadyUploaded?.url || null,
-        proof_captured_at: alreadyUploaded?.capturedAt || new Date().toISOString(),
-        proof_uploaded_at: alreadyUploaded ? new Date().toISOString() : null,
-        proof_source: alreadyUploaded ? 'camera' : 'local_pending',
-        proof_sha256: alreadyUploaded?.sha256 || null,
-        proof_review_status: alreadyUploaded ? 'pending' : 'pending_upload',
+        evidence_type: relatedInvoice.trim() ? 'invoice_photo' : 'trip_photo',
+        evidence_status: 'pending_admin_review',
+        proof_image_path: uploaded.path,
+        proof_image_url: uploaded.url,
+        proof_captured_at: uploaded.capturedAt,
+        proof_uploaded_at: new Date().toISOString(),
+        proof_source: 'camera',
+        proof_sha256: uploaded.sha256,
+        proof_review_status: 'pending',
         proof_exception_status: 'none',
-        upload_status: alreadyUploaded ? 'uploaded' : 'pending',
-        storage_path: alreadyUploaded?.path || null,
-        needs_review: !shiftOpen || !alreadyUploaded,
-        review_reason: !shiftOpen ? 'missing_shift' : !alreadyUploaded ? 'trip_proof_pending_upload' : null,
-        review_status: !shiftOpen ? 'missing_shift' : alreadyUploaded ? 'pending_evidence_review' : 'pending_upload',
-        is_countable: Boolean(alreadyUploaded),
+        upload_status: 'uploaded',
+        storage_path: uploaded.path,
+        needs_review: !shiftOpen,
+        review_reason: !shiftOpen ? 'missing_shift' : null,
+        review_status: !shiftOpen ? 'missing_shift' : 'pending_evidence_review',
+        is_countable: true,
         notes: [
           `نوع المشوار: ${TRIP_TYPES.find((t) => t.value === tripType)?.label || tripType}`,
           requestedBy.trim() ? `طالب المشوار: ${requestedBy.trim()}` : '',
@@ -251,12 +240,6 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
       onClose()
       reset()
       void Promise.resolve(onSaved(trip)).catch(() => {})
-
-      if (!alreadyUploaded && pendingUploadPromise) {
-        void pendingUploadPromise.then((upload) => attachProofAfterSave(String(trip.id), token, upload)).catch(() => {})
-      } else if (alreadyUploaded) {
-        void attachProofAfterSave(String(trip.id), token, alreadyUploaded).catch(() => {})
-      }
     } catch (error: any) {
       toast.error(error?.message || 'تعذر تسجيل المشوار')
     } finally {
@@ -305,7 +288,7 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
 
             <label className="block rounded-2xl border-2 border-dashed border-[#008E92]/30 bg-[#F3FBFB] p-4 text-center">
               <Camera className="mx-auto mb-2 text-[#008E92]" size={26} />
-              <p className="text-sm font-black text-[#006A70]">{proofFile ? 'تم اختيار صورة الإثبات ✅' : 'صوّر إثبات المشوار *'}</p>
+              <p className="text-sm font-black text-[#006A70]">{proofUpload ? 'تم رفع صورة الإثبات ✅' : proofFile ? 'تم اختيار الصورة' : 'صوّر إثبات المشوار *'}</p>
               <p className="mt-1 text-xs font-bold text-slate-500">الرفع يبدأ فور اختيار الصورة لتوفير وقت الحفظ.</p>
               <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handleProofFile(e.target.files?.[0] || null)} />
             </label>
@@ -325,7 +308,7 @@ export default function RiderTripForm({ open, rider, branch, shiftOpen, attendan
 
             {!shiftOpen ? <p className="rounded-2xl bg-amber-50 p-3 text-xs font-black text-amber-700">الشيفت غير ظاهر؛ المشوار سيتسجل للمراجعة بدون تعطيلك.</p> : null}
 
-            <button type="button" onClick={() => void saveTrip()} disabled={saving || Boolean(proofError)} className="w-full rounded-2xl bg-[#008E92] py-4 text-lg font-black text-white disabled:opacity-60">{saving ? 'جاري التسجيل…' : 'حفظ المشوار فورًا ✅'}</button>
+            <button type="button" onClick={() => void saveTrip()} disabled={saving || Boolean(proofError)} className="w-full rounded-2xl bg-[#008E92] py-4 text-lg font-black text-white disabled:opacity-60">{saving ? (proofUploading ? 'استكمال رفع الإثبات…' : 'جاري التسجيل…') : 'حفظ المشوار فورًا ✅'}</button>
           </div>
         </section>
       </div>
