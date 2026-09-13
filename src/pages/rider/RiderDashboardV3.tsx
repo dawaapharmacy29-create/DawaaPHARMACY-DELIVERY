@@ -157,13 +157,6 @@ export default function RiderDashboardV3() {
     }
   }, [applyFastPayload, navigate, refreshDevice])
 
-  const refreshOrderById = useCallback(async (orderId?: string | null) => {
-    if (!orderId) return
-    const { data, error } = await supabase.from('delivery_orders').select('*').eq('id', orderId).maybeSingle()
-    if (error || !data) return
-    setOrders((prev) => [data as DeliveryOrder, ...prev.filter((item: any) => String(item.id) !== String(orderId))])
-  }, [])
-
   useEffect(() => { void loadDashboard(false, true) }, [loadDashboard])
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -347,8 +340,7 @@ export default function RiderDashboardV3() {
         </section>
       </RiderOperatingDashboard>
 
-      <RiderQuickOrderForm open={quickOrderOpen} rider={rider} branchName={branch?.name ?? rider.branch_name} onClose={() => setQuickOrderOpen(false)} onSaved={(orderId) => {
-        void refreshOrderById(orderId)
+      <RiderQuickOrderForm open={quickOrderOpen} rider={rider} branchName={branch?.name ?? rider.branch_name} onClose={() => setQuickOrderOpen(false)} onSaved={() => {
         void loadDashboard(false, false)
       }} />
       <RiderTripForm open={tripOpen} rider={rider} branch={branch} shiftOpen={shiftOpen} attendanceId={(attendance as any)?.id || null} onClose={() => setTripOpen(false)} onSaved={(trip) => {
