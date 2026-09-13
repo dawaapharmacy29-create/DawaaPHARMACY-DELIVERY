@@ -19,6 +19,9 @@ type RiderGpsFix = {
   accuracy: number | null
 }
 
+type RuntimeContext = [RiderGpsFix, Awaited<ReturnType<typeof readRiderDeviceSnapshot>>]
+const RUNTIME_CONTEXT_MAX_AGE_MS = 60_000
+
 function getStoredRiderToken(): string | null {
   try {
     const raw = localStorage.getItem('dawaa_rider_session')
@@ -70,18 +73,27 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
   const [saving, setSaving] = useState(false)
   const [lastError, setLastError] = useState('')
   const isSubmittingRef = useRef(false)
-  const runtimeContextRef = useRef<Promise<[RiderGpsFix, Awaited<ReturnType<typeof readRiderDeviceSnapshot>>]> | null>(null)
+  const runtimeContextRef = useRef<Promise<RuntimeContext> | null>(null)
+  const runtimeContextStartedAtRef = useRef(0)
+
+  function startRuntimeContext() {
+    runtimeContextStartedAtRef.current = Date.now()
+    const promise = Promise.all([
+      requestRiderGps(),
+      readRiderDeviceSnapshot(),
+    ]) as Promise<RuntimeContext>
+    runtimeContextRef.current = promise
+    return promise
+  }
 
   useEffect(() => {
     if (!open) {
       runtimeContextRef.current = null
+      runtimeContextStartedAtRef.current = 0
       return
     }
-    // Start the two slow browser reads while the rider is typing instead of after pressing Save.
-    runtimeContextRef.current = Promise.all([
-      requestRiderGps(),
-      readRiderDeviceSnapshot(),
-    ])
+    // Start the slow browser reads while the rider is typing instead of after pressing Save.
+    startRuntimeContext()
   }, [open])
 
   if (!open) return null
@@ -117,12 +129,13 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
       const token = getStoredRiderToken()
       if (!token) throw new Error('انتهت الجلسة. سجل دخول مرة أخرى من تطبيق الدليفري.')
 
-      const runtimeContext = runtimeContextRef.current || Promise.all([
-        requestRiderGps(),
-        readRiderDeviceSnapshot(),
-      ])
+      const contextAge = Date.now() - runtimeContextStartedAtRef.current
+      const runtimeContext = runtimeContextRef.current && contextAge <= RUNTIME_CONTEXT_MAX_AGE_MS
+        ? runtimeContextRef.current
+        : startRuntimeContext()
       const [gps, device] = await runtimeContext
       runtimeContextRef.current = null
+      runtimeContextStartedAtRef.current = 0
 
       const customerNameForSave = customerName.trim() || customerCode.trim() || customerPhone.trim() || 'عميل غير مسجل'
       const customerCodeForSave = customerCode.trim() || null
@@ -176,10 +189,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
     } catch (error: any) {
       const message = error?.message || 'تعذر تسجيل الأوردر السريع'
       setLastError(message)
-      runtimeContextRef.current = Promise.all([
-        requestRiderGps(),
-        readRiderDeviceSnapshot(),
-      ])
+      startRuntimeContext()
       toast.error(message)
     } finally {
       setSaving(false)
