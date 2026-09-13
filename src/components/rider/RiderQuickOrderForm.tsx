@@ -45,7 +45,9 @@ function requestRiderGps(): Promise<RiderGpsFix> {
         accuracy: Number.isFinite(pos.coords.accuracy) ? Math.round(pos.coords.accuracy) : null,
       }),
       () => resolve({ lat: null, lng: null, accuracy: null }),
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 },
+      // التسجيل اليومي لا يجب أن يتوقف طويلًا على GPS. استخدم آخر قراءة حديثة إن وجدت
+      // ثم اسمح بمهلة قصيرة فقط للحصول على قراءة جديدة.
+      { enableHighAccuracy: false, timeout: 2500, maximumAge: 120000 },
     )
   })
 }
@@ -101,8 +103,11 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
       const token = getStoredRiderToken()
       if (!token) throw new Error('انتهت الجلسة. سجل دخول مرة أخرى من تطبيق الدليفري.')
 
-      const gps = await requestRiderGps()
-      const device = await readRiderDeviceSnapshot()
+      // نفّذ قراءة GPS والجهاز بالتوازي، وتجنب طلب GPS ثاني داخل device snapshot.
+      const [gps, device] = await Promise.all([
+        requestRiderGps(),
+        readRiderDeviceSnapshot({ includeGps: false }),
+      ])
 
       const customerNameForSave = customerName.trim() || customerCode.trim() || customerPhone.trim() || 'عميل غير مسجل'
       const customerCodeForSave = customerCode.trim() || null
@@ -149,9 +154,12 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
         toast.success(result.message || 'تم تسجيل الأوردر السريع بنجاح')
       }
 
+      // بعد تأكيد السيرفر للحفظ: اقفل الفورم فورًا، ثم حدّث الداشبورد بدون تعطيل المندوب.
       reset()
-      await onSaved()
       onClose()
+      void Promise.resolve(onSaved()).catch(() => {
+        // Realtime/refresh سيعيد مزامنة البيانات لاحقًا؛ لا نعيد فتح الفورم بعد نجاح الحفظ.
+      })
     } catch (error: any) {
       const message = error?.message || 'تعذر تسجيل الأوردر السريع'
       setLastError(message)
@@ -178,21 +186,21 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
 
           <div className="space-y-3">
             <Field label="رقم الفاتورة *">
-              <input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="dawaa-input text-right" placeholder="اكتب رقم الفاتورة" />
+              <input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="dawaa-input text-right" placeholder="اكتب رقم الفاتورة" inputMode="numeric" autoFocus />
             </Field>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="كود العميل">
-                <input value={customerCode} onChange={(e) => setCustomerCode(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" />
+                <input value={customerCode} onChange={(e) => setCustomerCode(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" inputMode="numeric" />
               </Field>
               <Field label="اسم العميل">
                 <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" />
               </Field>
               <Field label="رقم الهاتف">
-                <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" />
+                <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} className="dawaa-input text-right" placeholder="اختياري" inputMode="tel" />
               </Field>
               <Field label="قيمة الفاتورة">
-                <input type="number" value={invoiceAmount} onChange={(e) => setInvoiceAmount(e.target.value)} className="dawaa-input text-right" placeholder="0" />
+                <input type="number" value={invoiceAmount} onChange={(e) => setInvoiceAmount(e.target.value)} className="dawaa-input text-right" placeholder="0" inputMode="decimal" />
               </Field>
             </div>
 
