@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
@@ -70,6 +70,19 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
   const [saving, setSaving] = useState(false)
   const [lastError, setLastError] = useState('')
   const isSubmittingRef = useRef(false)
+  const runtimeContextRef = useRef<Promise<[RiderGpsFix, Awaited<ReturnType<typeof readRiderDeviceSnapshot>>]> | null>(null)
+
+  useEffect(() => {
+    if (!open) {
+      runtimeContextRef.current = null
+      return
+    }
+    // Start the two slow browser reads while the rider is typing instead of after pressing Save.
+    runtimeContextRef.current = Promise.all([
+      requestRiderGps(),
+      readRiderDeviceSnapshot(),
+    ])
+  }, [open])
 
   if (!open) return null
 
@@ -104,11 +117,12 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
       const token = getStoredRiderToken()
       if (!token) throw new Error('انتهت الجلسة. سجل دخول مرة أخرى من تطبيق الدليفري.')
 
-      // GPS and device snapshot are independent; doing them in parallel removes a full wait step.
-      const [gps, device] = await Promise.all([
+      const runtimeContext = runtimeContextRef.current || Promise.all([
         requestRiderGps(),
         readRiderDeviceSnapshot(),
       ])
+      const [gps, device] = await runtimeContext
+      runtimeContextRef.current = null
 
       const customerNameForSave = customerName.trim() || customerCode.trim() || customerPhone.trim() || 'عميل غير مسجل'
       const customerCodeForSave = customerCode.trim() || null
@@ -158,11 +172,14 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
       const savedOrderId = result?.order_id ? String(result.order_id) : null
       reset()
       onClose()
-      // Do not keep the save modal blocked while the parent refreshes its small order slice.
       void Promise.resolve(onSaved(savedOrderId)).catch(() => {})
     } catch (error: any) {
       const message = error?.message || 'تعذر تسجيل الأوردر السريع'
       setLastError(message)
+      runtimeContextRef.current = Promise.all([
+        requestRiderGps(),
+        readRiderDeviceSnapshot(),
+      ])
       toast.error(message)
     } finally {
       setSaving(false)
