@@ -1,7 +1,7 @@
 import { Navigate, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useEffect, useState } from 'react'
-import { getUserProfile, restoreRiderSession, validateStoredRiderSession } from '../lib/auth'
+import { getUserProfile, restoreRiderSession } from '../lib/auth'
 import { canAccessPage, isManagerRole, type PageKey } from '../lib/permissions'
 
 function managerHome(role?: string | null) {
@@ -44,20 +44,15 @@ export default function ProtectedRoute({ children, pageKey }: { children: React.
       const path = location.pathname
       const isRiderRoute = path.startsWith('/rider')
       const isAdminRoute = path.startsWith('/admin')
-      let s = restoreRiderSession()
+      const s = restoreRiderSession()
 
       if (isRiderRoute && !s?.session_token) {
         finish(false, '/rider-login')
         return
       }
-      if (isRiderRoute && s?.session_token) {
-        s = await validateStoredRiderSession()
-        if (!s) {
-          finish(false, '/rider-login')
-          return
-        }
-      }
 
+      // Rider V3 validates the server session itself while loading its operating payload.
+      // Avoid a second network round-trip here on every app open/route refresh.
       const hasLocalAccount = !!(s?.account_id || s?.rider_id)
       const hasRealRider = !!s?.rider_id
       const role = s?.role || 'rider'
