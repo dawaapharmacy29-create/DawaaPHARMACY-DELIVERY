@@ -72,7 +72,9 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
   const [customerQuery, setCustomerQuery] = useState('')
   const [customerResults, setCustomerResults] = useState<CustomerHit[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerHit | null>(null)
+  const [manualCustomerName, setManualCustomerName] = useState('')
   const [customerSearching, setCustomerSearching] = useState(false)
+  const [customerSearchDone, setCustomerSearchDone] = useState(false)
   const [invoiceAmount, setInvoiceAmount] = useState('')
   const [multiplier, setMultiplier] = useState<1 | 1.5>(1)
   const [notes, setNotes] = useState('')
@@ -82,13 +84,15 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
   const runtimeContextRef = useRef<Promise<RuntimeContext> | null>(null)
   const runtimeContextStartedAtRef = useRef(0)
 
-  const customerCode = selectedCustomer?.customer_code || ''
-  const customerName = selectedCustomer?.customer_name || ''
+  const customerCode = selectedCustomer?.customer_code || customerQuery.trim()
+  const customerName = selectedCustomer?.customer_name || manualCustomerName.trim()
   const customerPhone = selectedCustomer?.phone || ''
   const customerAddress = useMemo(() => {
     if (!selectedCustomer) return ''
     return [selectedCustomer.address, selectedCustomer.area].filter(Boolean).join(' - ')
   }, [selectedCustomer])
+  const manualMode = !selectedCustomer && customerSearchDone && customerQuery.trim().length > 0 && customerResults.length === 0
+  const canSave = Boolean(invoiceNumber.trim() && customerCode && (selectedCustomer || manualCustomerName.trim()))
 
   function startRuntimeContext() {
     runtimeContextStartedAtRef.current = Date.now()
@@ -109,6 +113,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
   useEffect(() => {
     if (!open || selectedCustomer || customerQuery.trim().length < 1) {
       if (!selectedCustomer) setCustomerResults([])
+      setCustomerSearchDone(false)
       return
     }
 
@@ -116,6 +121,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
       const token = getStoredRiderToken()
       if (!token) return
       setCustomerSearching(true)
+      setCustomerSearchDone(false)
       try {
         const { data, error } = await supabase.rpc('rider_search_customers_by_code', {
           p_token: token,
@@ -125,11 +131,13 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
         const result = getRpcResult<any>(data)
         if (error || !result?.success) throw new Error(error?.message || result?.message || 'تعذر البحث عن العميل')
         setCustomerResults(Array.isArray(result.customers) ? result.customers : [])
+        setLastError('')
       } catch (error: any) {
         setCustomerResults([])
         setLastError(error?.message || 'تعذر البحث عن العميل')
       } finally {
         setCustomerSearching(false)
+        setCustomerSearchDone(true)
       }
     }, 220)
 
@@ -141,12 +149,16 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
   function selectCustomer(customer: CustomerHit) {
     setSelectedCustomer(customer)
     setCustomerQuery(customer.customer_code)
+    setManualCustomerName('')
     setCustomerResults([])
+    setCustomerSearchDone(false)
     setLastError('')
   }
 
   function changeCustomerQuery(value: string) {
     setCustomerQuery(value)
+    setCustomerSearchDone(false)
+    setManualCustomerName('')
     if (selectedCustomer && value.trim() !== selectedCustomer.customer_code) setSelectedCustomer(null)
   }
 
@@ -155,6 +167,8 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
     setCustomerQuery('')
     setCustomerResults([])
     setSelectedCustomer(null)
+    setManualCustomerName('')
+    setCustomerSearchDone(false)
     setInvoiceAmount('')
     setMultiplier(1)
     setNotes('')
@@ -164,12 +178,19 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
   async function saveOrder() {
     if (isSubmittingRef.current) return
     const invoice = invoiceNumber.trim()
+    const code = customerCode.trim()
+    const name = customerName.trim()
+
     if (!invoice) {
       toast.error('رقم الفاتورة مطلوب')
       return
     }
-    if (!selectedCustomer?.id || !selectedCustomer.customer_code) {
-      toast.error('ابحث بكود العميل واختار العميل من النتائج أولًا')
+    if (!code) {
+      toast.error('كود العميل مطلوب')
+      return
+    }
+    if (!selectedCustomer && !name) {
+      toast.error('العميل غير موجود في التطبيق. اكتب اسم العميل من BConnect')
       return
     }
     if (!navigator.onLine) {
@@ -195,6 +216,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
       const amount = invoiceAmount.trim() ? Number(invoiceAmount) : 0
       const auditNote = [
         notes.trim(),
+        selectedCustomer ? 'العميل من قاعدة التطبيق' : 'عميل جديد من BConnect - إدخال يدوي',
         `نوع الأوردر: ×${multiplier}`,
         multiplier === 1.5 ? 'أوردر بعيد - بانتظار اعتماد الإدارة' : 'أوردر عادي',
         `الفرع: ${branchName || rider.branch_name || 'غير محدد'}`,
@@ -203,10 +225,11 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
         `GPS accuracy: ${gps.accuracy ?? 'unknown'}m`,
       ].filter(Boolean).join('\n')
 
-      const { data, error } = await supabase.rpc('rider_create_order_v2', {
+      const { data, error } = await supabase.rpc('rider_create_order_v3', {
         p_token: token,
-        p_customer_id: selectedCustomer.id,
-        p_customer_code: selectedCustomer.customer_code,
+        p_customer_id: selectedCustomer?.id || null,
+        p_customer_code: code,
+        p_customer_name: name,
         p_invoice_number: invoice,
         p_invoice_amount: Number.isFinite(amount) ? amount : 0,
         p_order_multiplier: multiplier,
@@ -221,7 +244,9 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
         throw new Error(error?.message || result?.message || result?.error || 'رفض السيرفر تسجيل الأوردر')
       }
 
-      if (multiplier === 1.5) {
+      if (result.manual_customer_entry) {
+        toast.success(result.message || 'تم تسجيل أوردر العميل الجديد وسيتم مراجعته ومزامنته')
+      } else if (multiplier === 1.5) {
         toast.success(result.message || 'تم تسجيل الأوردر ×1.5 وهو بانتظار اعتماد الإدارة')
       } else if (gps.accuracy && gps.accuracy > 100) {
         toast.warning(`تم تسجيل الأوردر لكن دقة GPS ضعيفة (${gps.accuracy} متر)، وقد يحتاج مراجعة.`)
@@ -252,7 +277,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
             <div>
               <p className="text-xs font-black text-[#008E92]">Rider V3</p>
               <h2 className="text-xl font-black text-[#061827]">تسجيل أوردر</h2>
-              <p className="mt-1 text-xs font-bold text-slate-500">كود العميل + رقم الفاتورة إلزامي، وبيانات العميل من القاعدة تلقائيًا.</p>
+              <p className="mt-1 text-xs font-bold text-slate-500">ابحث بكود العميل. لو جديد ومش موجود، سجّل الكود والاسم من BConnect.</p>
             </div>
             <button type="button" onClick={onClose} disabled={saving} className="grid h-11 w-11 place-items-center rounded-2xl bg-slate-100 text-slate-500 disabled:opacity-50">
               <X size={20} />
@@ -262,15 +287,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
           <div className="space-y-4">
             <div className="relative">
               <Field label="كود العميل *">
-                <input
-                  autoFocus
-                  inputMode="numeric"
-                  value={customerQuery}
-                  onChange={(e) => changeCustomerQuery(e.target.value)}
-                  className="dawaa-input text-right"
-                  placeholder="اكتب كود العميل للبحث"
-                  autoComplete="off"
-                />
+                <input autoFocus inputMode="numeric" value={customerQuery} onChange={(e) => changeCustomerQuery(e.target.value)} className="dawaa-input text-right" placeholder="اكتب كود العميل للبحث" autoComplete="off" />
               </Field>
               {customerSearching ? <p className="mt-1 text-xs font-bold text-slate-400">جاري البحث...</p> : null}
               {!selectedCustomer && customerResults.length > 0 ? (
@@ -304,6 +321,19 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
               </div>
             ) : null}
 
+            {manualMode ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
+                <p className="text-sm font-black text-amber-900">العميل غير موجود في التطبيق</p>
+                <p className="mt-1 text-xs font-bold text-amber-700">لو ده عميل جديد موجود في BConnect، اكتب اسمه يدويًا. الكود هيتسجل كما كتبته.</p>
+                <div className="mt-3">
+                  <Field label="اسم العميل من BConnect *">
+                    <input value={manualCustomerName} onChange={(e) => setManualCustomerName(e.target.value)} className="dawaa-input text-right" placeholder="اكتب اسم العميل" autoComplete="off" />
+                  </Field>
+                </div>
+                <p className="mt-2 rounded-xl bg-white/70 p-2 text-xs font-black text-amber-800">سيتم تعليم الأوردر كعميل جديد يحتاج مزامنة ومراجعة، بدون إنشاء عميل مكرر تلقائيًا.</p>
+              </div>
+            ) : null}
+
             <Field label="رقم الفاتورة *">
               <input inputMode="numeric" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="dawaa-input text-right" placeholder="اكتب رقم الفاتورة" />
             </Field>
@@ -312,12 +342,10 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
               <p className="mb-2 text-xs font-black text-slate-500">نوع الأوردر *</p>
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => setMultiplier(1)} className={`rounded-2xl border p-4 text-center ${multiplier === 1 ? 'border-[#008E92] bg-[#EAF8F8] text-[#006A70]' : 'border-slate-200 bg-white text-slate-600'}`}>
-                  <p className="text-lg font-black">×1</p>
-                  <p className="mt-1 text-xs font-bold">أوردر عادي</p>
+                  <p className="text-lg font-black">×1</p><p className="mt-1 text-xs font-bold">أوردر عادي</p>
                 </button>
                 <button type="button" onClick={() => setMultiplier(1.5)} className={`rounded-2xl border p-4 text-center ${multiplier === 1.5 ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-slate-200 bg-white text-slate-600'}`}>
-                  <p className="text-lg font-black">×1.5</p>
-                  <p className="mt-1 text-xs font-bold">أوردر بعيد</p>
+                  <p className="text-lg font-black">×1.5</p><p className="mt-1 text-xs font-bold">أوردر بعيد</p>
                 </button>
               </div>
               {multiplier === 1.5 ? <p className="mt-2 rounded-xl bg-amber-50 p-2 text-center text-xs font-black text-amber-800">الأوردر هيتسجل ×1.5 ويظل بانتظار اعتماد الإدارة.</p> : null}
@@ -333,7 +361,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
 
             {lastError ? <p className="rounded-2xl bg-rose-50 p-3 text-center text-xs font-black text-rose-700">{lastError}</p> : null}
 
-            <button type="button" onClick={() => void saveOrder()} disabled={saving || !selectedCustomer || !invoiceNumber.trim()} className="w-full rounded-2xl bg-[#008E92] py-4 text-lg font-black text-white disabled:opacity-50">
+            <button type="button" onClick={() => void saveOrder()} disabled={saving || !canSave} className="w-full rounded-2xl bg-[#008E92] py-4 text-lg font-black text-white disabled:opacity-50">
               {saving ? 'جاري الحفظ والتحقق...' : multiplier === 1.5 ? 'تسجيل الأوردر ×1.5 ⏳' : 'حفظ الأوردر ×1 ✅'}
             </button>
           </div>
