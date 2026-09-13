@@ -1,0 +1,44 @@
+name: Delivery schema contract
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  prevent-stale-rider-account-branch-name:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Reject new stale branch_name references
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch origin "${{ github.base_ref }}" --depth=1
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="HEAD^"
+          fi
+
+          ADDED_LINES="$(git diff --unified=0 "$BASE" HEAD -- '*.sql' '*.ts' '*.tsx' \
+            | grep '^+' \
+            | grep -v '^+++' \
+            | grep -v '20260913_fix_rider_create_order_branch_name.sql' || true)"
+
+          if printf '%s\n' "$ADDED_LINES" | grep -Eiq '(rider_accounts\.branch_name|ra\.branch_name|v_account\.branch_name)'; then
+            echo 'ERROR: New code references branch_name as if it existed on rider_accounts.'
+            echo 'Use branch_id and resolve the display/name from public.branches (or riders.branch_name fallback).'
+            printf '%s\n' "$ADDED_LINES" | grep -Ein '(rider_accounts\.branch_name|ra\.branch_name|v_account\.branch_name)' || true
+            exit 1
+          fi
+
+          echo 'Schema contract OK: no new stale rider_accounts.branch_name references.'
