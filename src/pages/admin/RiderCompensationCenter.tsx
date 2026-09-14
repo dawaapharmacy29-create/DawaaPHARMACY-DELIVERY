@@ -153,7 +153,7 @@ export default function RiderCompensationCenter() {
       + multiplier.reduce((sum, order) => sum + Number(order.order_earning ?? Number(orderRate) * Number(order.order_multiplier ?? 1.5)), 0)
     const tripValue = approvedTrips.reduce((sum, trip) => sum + Number(trip.trip_earning ?? tripRate), 0)
     const rewards = adjustments.filter(item => item.adjustment_type === 'reward' && String(item.status || '').toLowerCase() === 'approved').reduce((sum, item) => sum + Math.abs(Number(item.final_amount ?? item.amount ?? 0)), 0)
-    const penalties = approvedPenaltyRows.reduce((sum, item) => sum + Math.abs(Number(item.final_amount ?? item.amount ?? 0)), 0)
+    const penalties = adjustments.filter(item => item.adjustment_type === 'penalty' && String(item.status || '').toLowerCase() === 'approved').reduce((sum, item) => sum + Math.abs(Number(item.final_amount ?? item.amount ?? 0)), 0)
     return {
       totalOrders: orders.length,
       countedOrders: countedOrders.length,
@@ -166,7 +166,7 @@ export default function RiderCompensationCenter() {
       penalties,
       net: orderValue + tripValue + normalizedBonusEarned + rewards - penalties,
     }
-  }, [orders, trips, adjustments, approvedPenaltyRows, orderRate, tripRate, normalizedBonusEarned])
+  }, [orders, trips, adjustments, orderRate, tripRate, normalizedBonusEarned])
 
   const lastQuarterly = assessments.find(row => row.bonus_type === 'quarterly' && row.status === 'approved')
 
