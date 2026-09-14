@@ -99,7 +99,7 @@ begin
           approval_status='pending',
           security_flags=coalesce(security_flags,'{}'::jsonb) || jsonb_build_object('manual_customer_entry',v_manual,'manual_customer_code',case when v_manual then v_code else null end),
           updated_at=now()
-      where id=(v_result->>'order_id')::uuid;
+      where id=(v_result->>'order_id');
     elsif v_manual then
       update public.delivery_orders
       set needs_review=true,
@@ -108,7 +108,7 @@ begin
           approval_status='pending',
           security_flags=coalesce(security_flags,'{}'::jsonb) || jsonb_build_object('manual_customer_entry',true,'manual_customer_code',v_code,'manual_customer_name',v_name),
           updated_at=now()
-      where id=(v_result->>'order_id')::uuid;
+      where id=(v_result->>'order_id');
     end if;
 
     v_result := v_result || jsonb_build_object(
