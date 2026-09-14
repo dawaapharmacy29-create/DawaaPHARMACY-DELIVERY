@@ -23,6 +23,7 @@ export type RiderCycleSummary = {
   orders_x15_rejected?: number
   orders_accepted?: number
   orders_rejected?: number
+  orders_pending?: number
   orders_today?: number
   trips_total?: number
   trips_accepted?: number
@@ -161,6 +162,7 @@ export default function RiderOperatingDashboard({
   const cycleOrders = Number(cycleSummary.orders_total || 0)
   const cycleAccepted = Number(cycleSummary.orders_accepted || 0)
   const cycleRejected = Number(cycleSummary.orders_rejected || 0)
+  const cyclePending = Number(cycleSummary.orders_pending || 0)
   const cycleTrips = Number(cycleSummary.trips_total || 0)
   const cycleTripsAccepted = Number(cycleSummary.trips_accepted || 0)
   const cycleTripsRejected = Number(cycleSummary.trips_rejected || 0)
@@ -230,10 +232,15 @@ export default function RiderOperatingDashboard({
             <Metric label="أوردرات اليوم" value={Number(cycleSummary.orders_today || 0)} hint="مسجلة اليوم" tone="blue" strong />
           </div>
 
+          <div className="mt-3 rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-xs font-black text-amber-800">
+            إجمالي الأوردرات = المقبول + المرفوض + تحت المراجعة. وجود فرق بين الإجمالي والمقبول لا يعني أنه مرفوض.
+          </div>
+
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Metric label="إجمالي الأوردرات" value={cycleOrders} hint="الدورة كاملة" tone="slate" />
             <Metric label="الأوردرات المقبولة" value={cycleAccepted} hint="تم احتسابها" tone="green" />
             <Metric label="الأوردرات المرفوضة" value={cycleRejected} hint="مستبعدة/فشل" tone={cycleRejected ? 'red' : 'slate'} />
+            <Metric label="أوردرات تحت المراجعة" value={cyclePending} hint="لم يُحسم احتسابها بعد" tone={cyclePending ? 'amber' : 'green'} />
             <Metric label="إجمالي المشاوير" value={cycleTrips} hint="الدورة كاملة" tone="teal" />
             <Metric label="المشاوير المقبولة" value={cycleTripsAccepted} hint="معتمدة" tone="green" />
             <Metric label="المشاوير المرفوضة" value={cycleTripsRejected} hint="مرفوضة" tone={cycleTripsRejected ? 'red' : 'slate'} />
