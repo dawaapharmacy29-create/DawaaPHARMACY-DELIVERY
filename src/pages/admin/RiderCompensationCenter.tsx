@@ -140,6 +140,9 @@ export default function RiderCompensationCenter() {
   const criteriaWeightTotal = criteria.reduce((sum, item) => sum + Number(item.weight || 0), 0)
   const bonusEarned = criteria.reduce((sum, item) => sum + (Number(item.weight || 0) * Math.max(0, Math.min(5, Number(item.score || 0))) / 5), 0)
   const normalizedBonusEarned = criteriaWeightTotal > 0 ? bonusEarned * (bonusBase / criteriaWeightTotal) : 0
+  const penaltyRows = useMemo(() => adjustments.filter(item => item.adjustment_type === 'penalty'), [adjustments])
+  const approvedPenaltyRows = useMemo(() => penaltyRows.filter(item => String(item.status || '').toLowerCase() === 'approved'), [penaltyRows])
+  const pendingPenaltyRows = useMemo(() => penaltyRows.filter(item => String(item.status || '').toLowerCase() !== 'approved'), [penaltyRows])
 
   const summary = useMemo(() => {
     const countedOrders = orders.filter(order => !['failed', 'cancelled', 'canceled'].includes(status(order)) && (order.is_countable === true || String(order.final_count_status || '').startsWith('counted')))
@@ -150,7 +153,7 @@ export default function RiderCompensationCenter() {
       + multiplier.reduce((sum, order) => sum + Number(order.order_earning ?? Number(orderRate) * Number(order.order_multiplier ?? 1.5)), 0)
     const tripValue = approvedTrips.reduce((sum, trip) => sum + Number(trip.trip_earning ?? tripRate), 0)
     const rewards = adjustments.filter(item => item.adjustment_type === 'reward' && String(item.status || '').toLowerCase() === 'approved').reduce((sum, item) => sum + Math.abs(Number(item.final_amount ?? item.amount ?? 0)), 0)
-    const penalties = adjustments.filter(item => item.adjustment_type === 'penalty' && String(item.status || '').toLowerCase() === 'approved').reduce((sum, item) => sum + Math.abs(Number(item.final_amount ?? item.amount ?? 0)), 0)
+    const penalties = approvedPenaltyRows.reduce((sum, item) => sum + Math.abs(Number(item.final_amount ?? item.amount ?? 0)), 0)
     return {
       totalOrders: orders.length,
       countedOrders: countedOrders.length,
@@ -163,7 +166,7 @@ export default function RiderCompensationCenter() {
       penalties,
       net: orderValue + tripValue + normalizedBonusEarned + rewards - penalties,
     }
-  }, [orders, trips, adjustments, orderRate, tripRate, normalizedBonusEarned])
+  }, [orders, trips, adjustments, approvedPenaltyRows, orderRate, tripRate, normalizedBonusEarned])
 
   const lastQuarterly = assessments.find(row => row.bonus_type === 'quarterly' && row.status === 'approved')
 
@@ -271,6 +274,30 @@ export default function RiderCompensationCenter() {
           <div className="flex items-end gap-2"><button onClick={() => setCycle('current')} className="rounded-2xl bg-[#EAF8F8] px-3 py-3 text-xs font-black text-[#008E92]">الحالية</button><button onClick={() => setCycle('previous')} className="rounded-2xl bg-slate-100 px-3 py-3 text-xs font-black text-slate-700">السابقة</button></div>
         </div>
       </section>
+
+      {rider && (
+        <section className={`rounded-3xl border p-5 shadow-md ${penaltyRows.length ? 'border-rose-200 bg-rose-50' : 'border-emerald-200 bg-emerald-50'}`}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className={`text-xs font-black ${penaltyRows.length ? 'text-rose-600' : 'text-emerald-700'}`}>الخصومات تظهر فور اختيار المندوب</p>
+              <h2 className="mt-1 text-2xl font-black text-[#061827]">{rider.name || rider.username}</h2>
+              <p className="mt-1 text-sm font-bold text-slate-500">الدورة {from} إلى {to}</p>
+            </div>
+            <div className="text-left">
+              <p className="text-xs font-black text-slate-500">إجمالي الخصومات المعتمدة</p>
+              <p className={`mt-1 text-3xl font-black ${summary.penalties ? 'text-rose-700' : 'text-emerald-700'}`}>{money(summary.penalties)} ج.م</p>
+              <p className="mt-1 text-xs font-black text-slate-500">{approvedPenaltyRows.length} معتمد{pendingPenaltyRows.length ? ` · ${pendingPenaltyRows.length} غير معتمد/قيد المراجعة` : ''}</p>
+            </div>
+          </div>
+          {penaltyRows.length === 0 ? (
+            <div className="mt-4 rounded-2xl bg-white/80 p-4 text-sm font-black text-emerald-700">لا توجد خصومات مسجلة على هذا المندوب في الفترة المختارة.</div>
+          ) : (
+            <div className="mt-4 grid gap-2 md:grid-cols-2">
+              {penaltyRows.map(item => <div key={item.id} className="rounded-2xl border border-rose-100 bg-white p-3"><div className="flex items-start justify-between gap-3"><div><p className="font-black text-slate-800">{item.reason || 'خصم بدون سبب مسجل'}</p><p className="mt-1 text-xs font-bold text-slate-400">{item.cycle_start} → {item.cycle_end} · {String(item.status || 'غير محدد')}</p></div><p className="whitespace-nowrap text-lg font-black text-rose-700">-{money(Math.abs(Number(item.final_amount ?? item.amount ?? 0)))} ج</p></div></div>)}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="rounded-3xl border bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
