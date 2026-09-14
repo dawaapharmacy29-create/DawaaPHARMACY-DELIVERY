@@ -89,12 +89,38 @@ export default function TripsFast(){
 
   function patchLocal(id:string,patch:any){ setRows(prev=>prev.map(row=>row.id===id?{...row,...patch}:row)); setDetails((current:any)=>current?.id===id?{...current,...patch}:current) }
   function setBusyId(id:string,on:boolean){ setBusy(prev=>{const next=new Set(prev);on?next.add(id):next.delete(id);return next}) }
+  function updateSummaryStatus(fromStatus:string,toStatus:string,count=1){
+    if(fromStatus===toStatus)return
+    setSummary((current:any)=>{
+      const next={...current}
+      const keyFor=(status:string)=>status==='pending_approval'?'pending':status==='approved'?'approved':status==='rejected'?'rejected':null
+      const fromKey=keyFor(fromStatus)
+      const toKey=keyFor(toStatus)
+      if(fromKey)next[fromKey]=Math.max(0,Number(next[fromKey]||0)-count)
+      if(toKey)next[toKey]=Number(next[toKey]||0)+count
+      return next
+    })
+  }
+  function removeIfOutsideStatusFilter(id:string,status:string){
+    if(statusFilter==='all'||statusFilter===status)return
+    setRows(prev=>prev.filter(row=>row.id!==id))
+    setTotalFiltered(prev=>Math.max(0,prev-1))
+    setSelected(prev=>{const next=new Set(prev);next.delete(id);return next})
+    setDetails(current=>current?.id===id?null:current)
+  }
 
   async function changeStatus(trip:any,status:'approved'|'rejected'|'pending_approval',reason?:string){
     const previous={...trip}
+    const previousStatus=String(trip.status||'')
     const patch=status==='approved'?{status:'approved',review_status:'approved',approved_at:new Date().toISOString(),rejection_reason:null,needs_review:false,review_reason:null}:status==='rejected'?{status:'rejected',review_status:'rejected',approved_at:null,rejection_reason:reason||'تم الرفض إداريًا',needs_review:false,review_reason:null}:{status:'pending_approval',review_status:'pending_approval',approved_at:null,rejection_reason:null,needs_review:true,review_reason:'إعادة للمراجعة الإدارية'}
     setBusyId(trip.id,true);patchLocal(trip.id,patch)
-    try{const {error}=await supabase.from('internal_trips').update(patch).eq('id',trip.id);if(error)throw error;toast.success(status==='approved'?'تم اعتماد المشوار':status==='rejected'?'تم رفض المشوار':'تمت إعادة المشوار للمراجعة');void load()}
+    try{
+      const {error}=await supabase.from('internal_trips').update(patch).eq('id',trip.id)
+      if(error)throw error
+      updateSummaryStatus(previousStatus,status)
+      removeIfOutsideStatusFilter(trip.id,status)
+      toast.success(status==='approved'?'تم اعتماد المشوار':status==='rejected'?'تم رفض المشوار':'تمت إعادة المشوار للمراجعة')
+    }
     catch(error){patchLocal(trip.id,previous);toast.error('تعذر حفظ القرار وتمت إعادة الحالة السابقة')}
     finally{setBusyId(trip.id,false)}
   }
@@ -109,7 +135,11 @@ export default function TripsFast(){
     const now=new Date().toISOString()
     const {error}=await supabase.from('internal_trips').update({status:'approved',review_status:'approved',approved_at:now,rejection_reason:null,needs_review:false,review_reason:null}).in('id',ids)
     if(error)return toast.error('فشل اعتماد المجموعة')
-    toast.success(`تم اعتماد ${ids.length} مشوار`);setSelected(new Set());void load()
+    setRows(prev=>statusFilter==='pending_approval'?prev.filter(row=>!ids.includes(row.id)):prev.map(row=>ids.includes(row.id)?{...row,status:'approved',review_status:'approved',approved_at:now,rejection_reason:null,needs_review:false,review_reason:null}:row))
+    if(statusFilter==='pending_approval')setTotalFiltered(prev=>Math.max(0,prev-ids.length))
+    updateSummaryStatus('pending_approval','approved',ids.length)
+    setSelected(new Set())
+    toast.success(`تم اعتماد ${ids.length} مشوار`)
   }
 
   const pages=Math.max(1,Math.ceil(totalFiltered/pageSize))
