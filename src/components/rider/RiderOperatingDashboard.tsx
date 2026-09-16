@@ -1,5 +1,5 @@
-import { ReactNode } from 'react'
-import { LogOut, RefreshCw } from 'lucide-react'
+import { ReactNode, useState } from 'react'
+import { LogOut, RefreshCw, X } from 'lucide-react'
 import type { Attendance, DeliveryOrder, InternalTrip, Rider } from '../../lib/types'
 import { formatTime } from '../../lib/helpers'
 
@@ -29,6 +29,8 @@ export type RiderCycleSummary = {
   trips_accepted?: number
   trips_rejected?: number
   trips_pending?: number
+  rejected_orders?: any[]
+  rejected_trips?: any[]
 }
 
 type Props = {
@@ -74,6 +76,23 @@ function shortDate(value?: string) {
   return `${d}/${m}/${y}`
 }
 
+function formatCairoDateTime(value?: string | null) {
+  if (!value) return 'وقت غير محدد'
+  try {
+    return new Intl.DateTimeFormat('ar-EG', {
+      timeZone: 'Africa/Cairo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    }).format(new Date(value))
+  } catch {
+    return String(value)
+  }
+}
+
 function StatusPill({ children, tone = 'slate' }: { children: ReactNode; tone?: 'green' | 'red' | 'amber' | 'teal' | 'slate' }) {
   const styles = {
     green: 'bg-emerald-50 text-emerald-700 border-emerald-100',
@@ -109,7 +128,7 @@ function ActionButton({ title, subtitle, icon, onClick, tone = 'teal', disabled 
   )
 }
 
-function Metric({ label, value, hint, tone = 'slate', strong = false }: { label: string; value: string | number; hint?: string; tone?: 'green' | 'red' | 'amber' | 'teal' | 'blue' | 'slate'; strong?: boolean }) {
+function Metric({ label, value, hint, tone = 'slate', strong = false, onClick }: { label: string; value: string | number; hint?: string; tone?: 'green' | 'red' | 'amber' | 'teal' | 'blue' | 'slate'; strong?: boolean; onClick?: () => void }) {
   const styles = {
     green: 'bg-emerald-50 text-emerald-800 border-emerald-100',
     red: 'bg-rose-50 text-rose-800 border-rose-100',
@@ -118,13 +137,14 @@ function Metric({ label, value, hint, tone = 'slate', strong = false }: { label:
     blue: 'bg-sky-50 text-sky-800 border-sky-100',
     slate: 'bg-white text-slate-800 border-slate-100',
   }
-  return (
-    <div className={`rounded-3xl border p-4 shadow-sm ${strong ? 'min-h-[116px]' : ''} ${styles[tone]}`}>
-      <p className="text-xs font-black opacity-70">{label}</p>
-      <p className={`${strong ? 'text-4xl' : 'text-3xl'} mt-2 font-black`}>{value}</p>
-      {hint ? <p className="mt-1 text-[11px] font-bold opacity-65">{hint}</p> : null}
-    </div>
-  )
+  const body = <>
+    <p className="text-xs font-black opacity-70">{label}</p>
+    <p className={`${strong ? 'text-4xl' : 'text-3xl'} mt-2 font-black`}>{value}</p>
+    {hint ? <p className="mt-1 text-[11px] font-bold opacity-65">{hint}</p> : null}
+    {onClick ? <p className="mt-2 text-[10px] font-black underline opacity-80">اضغط لعرض التفاصيل</p> : null}
+  </>
+  const cls = `rounded-3xl border p-4 text-right shadow-sm ${strong ? 'min-h-[116px]' : ''} ${styles[tone]} ${onClick ? 'cursor-pointer transition active:scale-[0.98] hover:shadow-md' : ''}`
+  return onClick ? <button type="button" onClick={onClick} className={cls}>{body}</button> : <div className={cls}>{body}</div>
 }
 
 export default function RiderOperatingDashboard({
@@ -145,6 +165,7 @@ export default function RiderOperatingDashboard({
   onRefresh,
   onLogout,
 }: Props) {
+  const [rejectedDetails, setRejectedDetails] = useState<'orders' | 'trips' | null>(null)
   const shiftOpen = Boolean(attendance?.check_in_at && !attendance?.check_out_at)
   const shiftClosed = Boolean(attendance?.check_in_at && attendance?.check_out_at)
   const openOrders = orders.filter(isOpen)
@@ -167,6 +188,8 @@ export default function RiderOperatingDashboard({
   const cycleTripsAccepted = Number(cycleSummary.trips_accepted || 0)
   const cycleTripsRejected = Number(cycleSummary.trips_rejected || 0)
   const cycleTripsPending = Number(cycleSummary.trips_pending || 0)
+  const rejectedOrders = Array.isArray(cycleSummary.rejected_orders) ? cycleSummary.rejected_orders : []
+  const rejectedTrips = Array.isArray(cycleSummary.rejected_trips) ? cycleSummary.rejected_trips : []
 
   return (
     <div className="min-h-screen bg-[#F6FAFB] pb-24" dir="rtl">
@@ -239,11 +262,11 @@ export default function RiderOperatingDashboard({
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Metric label="إجمالي الأوردرات" value={cycleOrders} hint="الدورة كاملة" tone="slate" />
             <Metric label="الأوردرات المقبولة" value={cycleAccepted} hint="تم احتسابها" tone="green" />
-            <Metric label="الأوردرات المرفوضة" value={cycleRejected} hint="مستبعدة/فشل" tone={cycleRejected ? 'red' : 'slate'} />
+            <Metric label="الأوردرات المرفوضة" value={cycleRejected} hint="مستبعدة/فشل" tone={cycleRejected ? 'red' : 'slate'} onClick={cycleRejected ? () => setRejectedDetails('orders') : undefined} />
             <Metric label="أوردرات تحت المراجعة" value={cyclePending} hint="لم يُحسم احتسابها بعد" tone={cyclePending ? 'amber' : 'green'} />
             <Metric label="إجمالي المشاوير" value={cycleTrips} hint="الدورة كاملة" tone="teal" />
             <Metric label="المشاوير المقبولة" value={cycleTripsAccepted} hint="معتمدة" tone="green" />
-            <Metric label="المشاوير المرفوضة" value={cycleTripsRejected} hint="مرفوضة" tone={cycleTripsRejected ? 'red' : 'slate'} />
+            <Metric label="المشاوير المرفوضة" value={cycleTripsRejected} hint="مرفوضة" tone={cycleTripsRejected ? 'red' : 'slate'} onClick={cycleTripsRejected ? () => setRejectedDetails('trips') : undefined} />
             <Metric label="مشاوير تحت المراجعة" value={cycleTripsPending} hint="بانتظار الاعتماد" tone={cycleTripsPending ? 'amber' : 'green'} />
             <Metric label="المزامنة" value={pendingSyncCount} hint="عمليات على الجهاز" tone={pendingSyncCount ? 'amber' : 'green'} />
           </div>
@@ -281,6 +304,59 @@ export default function RiderOperatingDashboard({
 
         {children}
       </main>
+
+      {rejectedDetails ? <div className="fixed inset-0 z-[100] bg-slate-950/55 p-3 backdrop-blur-sm" onMouseDown={() => setRejectedDetails(null)}>
+        <div className="mx-auto flex h-full max-w-3xl items-end sm:items-center">
+          <section className="max-h-[92vh] w-full overflow-y-auto rounded-[32px] bg-white p-4 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b bg-white pb-3">
+              <div>
+                <p className="text-xs font-black text-rose-600">الدورة الحالية</p>
+                <h2 className="text-xl font-black text-[#061827]">{rejectedDetails === 'orders' ? 'تفاصيل الأوردرات المرفوضة' : 'تفاصيل المشاوير المرفوضة'}</h2>
+                <p className="mt-1 text-xs font-bold text-slate-500">من {shortDate(cycleSummary.cycle_start)} إلى {shortDate(cycleSummary.cycle_end)}</p>
+              </div>
+              <button type="button" onClick={() => setRejectedDetails(null)} className="grid h-10 w-10 place-items-center rounded-xl bg-slate-100"><X size={18} /></button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {rejectedDetails === 'orders' ? (
+                rejectedOrders.length ? rejectedOrders.map((order: any) => {
+                  const reason = order.failure_reason || order.review_reason || order.reconciliation_notes || order.final_count_status || 'لم يتم تسجيل سبب واضح'
+                  return <article key={order.id} className="rounded-3xl border border-rose-100 bg-rose-50/60 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-base font-black text-[#061827]">فاتورة {order.invoice_number || '—'}</p>
+                        <p className="mt-1 text-sm font-black text-slate-800">{order.customer_name || 'عميل غير محدد'}</p>
+                      </div>
+                      <span className="rounded-full bg-rose-100 px-3 py-1 text-xs font-black text-rose-700">مرفوض</span>
+                    </div>
+                    <div className="mt-3 grid gap-2 text-xs font-bold text-slate-600 sm:grid-cols-2">
+                      <p><b>القيمة:</b> {Number(order.invoice_amount || 0).toFixed(2)} ج</p>
+                      <p><b>التاريخ والوقت:</b> {formatCairoDateTime(order.registered_at || order.created_at)}</p>
+                      {order.customer_address ? <p className="sm:col-span-2"><b>العنوان:</b> {order.customer_address}</p> : null}
+                    </div>
+                    <div className="mt-3 rounded-2xl bg-white p-3 text-sm font-bold text-rose-800"><b>سبب الرفض:</b> {reason}</div>
+                  </article>
+                }) : <p className="rounded-2xl bg-slate-50 p-5 text-center text-sm font-black text-slate-500">لا توجد تفاصيل أوردرات مرفوضة متاحة حاليًا.</p>
+              ) : (
+                rejectedTrips.length ? rejectedTrips.map((trip: any) => {
+                  const reason = trip.rejection_reason || trip.reason || trip.notes || 'لم يتم تسجيل سبب واضح'
+                  return <article key={trip.id} className="rounded-3xl border border-rose-100 bg-rose-50/60 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-base font-black text-[#061827]">{trip.from_label || '—'} ← {trip.to_label || '—'}</p>
+                        <p className="mt-1 text-xs font-bold text-slate-500">{trip.trip_type || 'مشوار'}</p>
+                      </div>
+                      <span className="rounded-full bg-rose-100 px-3 py-1 text-xs font-black text-rose-700">مرفوض</span>
+                    </div>
+                    <p className="mt-3 text-xs font-bold text-slate-600"><b>التاريخ والوقت:</b> {formatCairoDateTime(trip.registered_at || trip.created_at)}</p>
+                    <div className="mt-3 rounded-2xl bg-white p-3 text-sm font-bold text-rose-800"><b>سبب الرفض:</b> {reason}</div>
+                  </article>
+                }) : <p className="rounded-2xl bg-slate-50 p-5 text-center text-sm font-black text-slate-500">لا توجد تفاصيل مشاوير مرفوضة متاحة حاليًا.</p>
+              )}
+            </div>
+          </section>
+        </div>
+      </div> : null}
     </div>
   )
 }
