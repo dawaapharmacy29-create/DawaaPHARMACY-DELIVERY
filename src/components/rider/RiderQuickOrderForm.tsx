@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { readRiderDeviceSnapshot } from '../../lib/riderDeviceSnapshot'
+import { DUPLICATE_REASON_LABELS } from '../../lib/helpers'
 import type { Rider } from '../../lib/types'
 
 type Props = {
@@ -78,6 +79,10 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
   const [invoiceAmount, setInvoiceAmount] = useState('')
   const [multiplier, setMultiplier] = useState<1 | 1.5>(1)
   const [notes, setNotes] = useState('')
+  const [duplicateRequired, setDuplicateRequired] = useState(false)
+  const [duplicateReason, setDuplicateReason] = useState('')
+  const [duplicateNote, setDuplicateNote] = useState('')
+  const [duplicateDoctorName, setDuplicateDoctorName] = useState('')
   const [saving, setSaving] = useState(false)
   const [lastError, setLastError] = useState('')
   const isSubmittingRef = useRef(false)
@@ -92,7 +97,8 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
     return [selectedCustomer.address, selectedCustomer.area].filter(Boolean).join(' - ')
   }, [selectedCustomer])
   const manualMode = !selectedCustomer && customerSearchDone && customerQuery.trim().length > 0 && customerResults.length === 0
-  const canSave = Boolean(invoiceNumber.trim() && customerCode && (selectedCustomer || manualCustomerName.trim()))
+  const duplicateDetailsValid = !duplicateRequired || Boolean(duplicateReason && (duplicateNote.trim() || notes.trim()).length >= 5)
+  const canSave = Boolean(invoiceNumber.trim() && customerCode && (selectedCustomer || manualCustomerName.trim()) && duplicateDetailsValid)
 
   function startRuntimeContext() {
     runtimeContextStartedAtRef.current = Date.now()
@@ -172,6 +178,10 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
     setInvoiceAmount('')
     setMultiplier(1)
     setNotes('')
+    setDuplicateRequired(false)
+    setDuplicateReason('')
+    setDuplicateNote('')
+    setDuplicateDoctorName('')
     setLastError('')
   }
 
@@ -191,6 +201,15 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
     }
     if (!selectedCustomer && !name) {
       toast.error('العميل غير موجود في التطبيق. اكتب اسم العميل من BConnect')
+      return
+    }
+    if (duplicateRequired && !duplicateReason) {
+      toast.error('اختار سبب التكرار')
+      return
+    }
+    const effectiveDuplicateNote = (duplicateNote.trim() || notes.trim())
+    if (duplicateRequired && effectiveDuplicateNote.length < 5) {
+      toast.error('اكتب تفاصيل واضحة للتكرار لا تقل عن 5 حروف')
       return
     }
     if (!navigator.onLine) {
@@ -225,23 +244,57 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
         `GPS accuracy: ${gps.accuracy ?? 'unknown'}m`,
       ].filter(Boolean).join('\n')
 
-      const { data, error } = await supabase.rpc('rider_create_order_v3', {
-        p_token: token,
-        p_customer_id: selectedCustomer?.id || null,
-        p_customer_code: code,
-        p_customer_name: name,
-        p_invoice_number: invoice,
-        p_invoice_amount: Number.isFinite(amount) ? amount : 0,
-        p_order_multiplier: multiplier,
-        p_notes: auditNote,
-        p_gps_lat: gps.lat,
-        p_gps_lng: gps.lng,
-        p_gps_accuracy_m: gps.accuracy,
-      })
+      const request = duplicateRequired
+        ? supabase.rpc('rider_create_order', {
+            p_token: token,
+            p_customer_id: selectedCustomer?.id || null,
+            p_customer_code: code,
+            p_customer_name: name,
+            p_customer_phone: customerPhone || null,
+            p_customer_address: customerAddress || null,
+            p_invoice_number: invoice,
+            p_invoice_amount: Number.isFinite(amount) ? amount : 0,
+            p_order_multiplier: multiplier,
+            p_notes: auditNote,
+            p_is_duplicate_invoice: true,
+            p_duplicate_reason: duplicateReason,
+            p_duplicate_note: effectiveDuplicateNote,
+            p_preparing_doctor_name: duplicateDoctorName.trim() || null,
+            p_original_order_id: null,
+            p_gps_lat: gps.lat,
+            p_gps_lng: gps.lng,
+            p_gps_accuracy_m: gps.accuracy,
+            p_receipt_image_path: null,
+            p_receipt_image_url: null,
+            p_receipt_ocr_json: null,
+          })
+        : supabase.rpc('rider_create_order_v3', {
+            p_token: token,
+            p_customer_id: selectedCustomer?.id || null,
+            p_customer_code: code,
+            p_customer_name: name,
+            p_invoice_number: invoice,
+            p_invoice_amount: Number.isFinite(amount) ? amount : 0,
+            p_order_multiplier: multiplier,
+            p_notes: auditNote,
+            p_gps_lat: gps.lat,
+            p_gps_lng: gps.lng,
+            p_gps_accuracy_m: gps.accuracy,
+          })
 
+      const { data, error } = await request
       const result = getRpcResult<any>(data)
       if (error || !result?.success) {
-        throw new Error(error?.message || result?.message || result?.error || 'رفض السيرفر تسجيل الأوردر')
+        const code = String(result?.error || error?.code || '')
+        const message = String(error?.message || result?.message || result?.error || 'رفض السيرفر تسجيل الأوردر')
+        if (!duplicateRequired && (code === 'DUPLICATE_DETAILS_REQUIRED' || /مكرر|duplicate/i.test(message))) {
+          setDuplicateRequired(true)
+          if (!duplicateNote.trim() && notes.trim()) setDuplicateNote(notes.trim())
+          setLastError('الفاتورة مكررة: اختار سبب التكرار، وتأكد من تفاصيل الملاحظة ثم اضغط حفظ مرة أخرى.')
+          toast.warning('الفاتورة مكررة — أكمل سبب التكرار والتفاصيل ثم احفظها للمراجعة.')
+          return
+        }
+        throw new Error(message)
       }
 
       if (result.manual_customer_entry) {
@@ -335,7 +388,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
             ) : null}
 
             <Field label="رقم الفاتورة *">
-              <input inputMode="numeric" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="dawaa-input text-right" placeholder="اكتب رقم الفاتورة" />
+              <input inputMode="numeric" value={invoiceNumber} onChange={(e) => { setInvoiceNumber(e.target.value); setDuplicateRequired(false); setDuplicateReason(''); setDuplicateNote(''); setDuplicateDoctorName(''); setLastError('') }} className="dawaa-input text-right" placeholder="اكتب رقم الفاتورة" />
             </Field>
 
             <div>
@@ -358,6 +411,27 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
             <Field label="ملاحظات">
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className="dawaa-input resize-none text-right" placeholder="ملاحظة اختيارية" />
             </Field>
+
+            {duplicateRequired ? (
+              <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3">
+                <p className="text-sm font-black text-amber-900">⚠️ الفاتورة مكررة وتحتاج بيانات المراجعة</p>
+                <p className="mt-1 text-xs font-bold text-amber-700">الملاحظة المكتوبة في الأوردر يمكن استخدامها كتفاصيل للتكرار، واسم الدكتور اختياري.</p>
+                <div className="mt-3 space-y-3">
+                  <Field label="سبب التكرار *">
+                    <select value={duplicateReason} onChange={(e) => setDuplicateReason(e.target.value)} className="dawaa-input text-right">
+                      <option value="">اختار سبب التكرار</option>
+                      {Object.entries(DUPLICATE_REASON_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="تفاصيل التكرار *">
+                    <textarea value={duplicateNote || notes} onChange={(e) => setDuplicateNote(e.target.value)} rows={3} className="dawaa-input resize-none text-right" placeholder="اكتب تفاصيل واضحة لا تقل عن 5 حروف" />
+                  </Field>
+                  <Field label="اسم الدكتور اللي حضّر الأوردر (اختياري)">
+                    <input value={duplicateDoctorName} onChange={(e) => setDuplicateDoctorName(e.target.value)} className="dawaa-input text-right" placeholder="مثال: د/ أحمد" />
+                  </Field>
+                </div>
+              </div>
+            ) : null}
 
             {lastError ? <p className="rounded-2xl bg-rose-50 p-3 text-center text-xs font-black text-rose-700">{lastError}</p> : null}
 
