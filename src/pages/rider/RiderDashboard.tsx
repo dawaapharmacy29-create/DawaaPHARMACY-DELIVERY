@@ -1959,12 +1959,9 @@ export default function RiderDashboard() {
       toast.error("اختار سبب التكرار");
       return;
     }
-    if (isDup && !dupDoctorName.trim()) {
-      toast.error("اكتب اسم الدكتور اللي طلع/حضّر الأوردر");
-      return;
-    }
-    if (isDup && dupNote.trim().length < 10) {
-      toast.error("اكتب ملاحظة 10 حروف على الأقل");
+    const effectiveDupNote = (dupNote.trim() || orderNotes.trim());
+    if (isDup && effectiveDupNote.length < 5) {
+      toast.error("اكتب ملاحظة واضحة للتكرار لا تقل عن 5 حروف");
       return;
     }
 
@@ -1985,6 +1982,7 @@ export default function RiderDashboard() {
         const existing = Array.isArray(existingRows) ? existingRows[0] : null;
         if (existing) {
           setDupWarning(existing as unknown as DeliveryOrder);
+          if (!dupNote.trim() && orderNotes.trim()) setDupNote(orderNotes.trim());
           setActiveModal("duplicate");
           return;
         }
@@ -2133,8 +2131,8 @@ export default function RiderDashboard() {
           p_notes: orderNotes || null,
           p_is_duplicate_invoice: isDup,
           p_duplicate_reason: isDup ? dupReason : null,
-          p_duplicate_note: isDup ? dupNote.trim() : null,
-          p_preparing_doctor_name: isDup ? dupDoctorName.trim() : null,
+          p_duplicate_note: isDup ? effectiveDupNote : null,
+          p_preparing_doctor_name: isDup ? (dupDoctorName.trim() || null) : null,
           p_original_order_id: isDup ? (dupWarning?.id ?? null) : null,
           p_gps_lat: gps.lat,
           p_gps_lng: gps.lng,
@@ -3797,7 +3795,7 @@ export default function RiderDashboard() {
               ))}
             </select>
           </Field>
-          <Field label="اسم الدكتور اللي طلع/حضّر الأوردر *">
+          <Field label="اسم الدكتور اللي طلع/حضّر الأوردر (اختياري)">
             <input
               value={dupDoctorName}
               onChange={(e) => setDupDoctorName(e.target.value)}
@@ -3805,23 +3803,22 @@ export default function RiderDashboard() {
               placeholder="مثال: د/ أحمد أو د/ شيماء"
             />
           </Field>
-          <Field label="ملاحظة * (10 حروف على الأقل)">
+          <Field label="تفاصيل التكرار * (5 حروف على الأقل)">
             <textarea
               value={dupNote}
               onChange={(e) => setDupNote(e.target.value)}
               rows={3}
               className="dawaa-input text-right resize-none"
-              placeholder="اكتب تفاصيل التكرار"
+              placeholder="اكتب تفاصيل التكرار، ويمكن استخدام ملاحظات الأوردر"
             />
-            <p className="text-xs text-slate-400">{dupNote.length}/10</p>
+            <p className="text-xs text-slate-400">{(dupNote.trim() || orderNotes.trim()).length}/5</p>
           </Field>
           <button
             onClick={() => handleSaveOrder(true)}
             disabled={
               saving ||
               !dupReason ||
-              !dupDoctorName.trim() ||
-              dupNote.trim().length < 10
+              (dupNote.trim() || orderNotes.trim()).length < 5
             }
             className="w-full rounded-2xl bg-amber-500 py-4 font-black text-white disabled:opacity-50"
           >
