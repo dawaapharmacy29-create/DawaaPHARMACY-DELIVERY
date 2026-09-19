@@ -93,9 +93,23 @@ export default function OrderDetailsModal({
             <Detail label="سبب التحويل" value={valueOf(order, 'reassignment_reason')} />
           </div>
 
-          <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-            <p className="text-xs font-black text-slate-500">ملاحظات المطابقة</p>
-            <p className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{valueOf(order, 'reconciliation_notes', 'notes')}</p>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <div className="rounded-2xl border border-teal-100 bg-teal-50 p-4">
+              <p className="text-xs font-black text-teal-700">ملاحظات الأوردر</p>
+              <p className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{valueOf(order, 'notes')}</p>
+            </div>
+            <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+              <p className="text-xs font-black text-amber-700">تفاصيل الفاتورة المكررة</p>
+              <p className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{valueOf(order, 'duplicate_note')}</p>
+            </div>
+            <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
+              <p className="text-xs font-black text-sky-700">ملاحظات المطابقة</p>
+              <p className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{valueOf(order, 'reconciliation_notes')}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+              <p className="text-xs font-black text-slate-500">ملاحظات الخروج / الريسيت</p>
+              <p className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{valueOf(order, 'dispatch_notes', 'receipt_ocr_note')}</p>
+            </div>
           </div>
 
           <div className="mt-5 flex flex-wrap gap-2">
