@@ -64,8 +64,12 @@ await patchFile('src/pages/admin/RiderCompensationCenter.tsx', source => {
       uncountedOrders: Math.max(0, Number(ordersSummary.total ?? orders.length) - Number(ordersSummary.counted ?? 0)),
       normalOrders: Number(ordersSummary.x1 ?? 0),
       multiplierOrders: Number(ordersSummary.x1_5 ?? 0),
-      failedOrders: Number(ordersSummary.excluded ?? 0),
+      failedOrders: Number(ordersSummary.failed ?? 0),
+      excludedOrders: Number(ordersSummary.excluded ?? 0),
       duplicateOrders: Number(ordersSummary.duplicates ?? 0),
+      duplicateApprovedOrders: Number(ordersSummary.duplicate_approved ?? 0),
+      duplicatePendingOrders: Number(ordersSummary.duplicate_pending ?? 0),
+      duplicateRejectedOrders: Number(ordersSummary.duplicate_rejected ?? 0),
       unapprovedOrders: Number(ordersSummary.pending_review ?? 0),
       totalTrips: Number(tripsSummary.total ?? trips.length),
       approvedTrips: Number(tripsSummary.approved ?? 0),
@@ -101,15 +105,15 @@ await patchFile('src/pages/admin/RiderCompensationCenter.tsx', source => {
   )
   source = source.replace(
     "['الأوردرات الفاشلة', summary.failedOrders],",
-    "['الأوردرات الفاشلة (حالة رقابية)', summary.failedOrders],",
+    "['الأوردرات الفاشلة فعليًا', summary.failedOrders], ['الأوردرات المستبعدة', summary.excludedOrders],",
   )
   source = source.replace(
     "['الأوردرات المكررة', summary.duplicateOrders],",
-    "['الأوردرات المكررة (حالة رقابية)', summary.duplicateOrders],",
+    "['الأوردرات المكررة', summary.duplicateOrders], ['مكرر معتمد', summary.duplicateApprovedOrders], ['مكرر قيد المراجعة', summary.duplicatePendingOrders], ['مكرر مرفوض', summary.duplicateRejectedOrders],",
   )
   source = source.replace(
     "['غير المعتمدة', summary.unapprovedOrders],",
-    "['غير المعتمدة (حالة رقابية)', summary.unapprovedOrders],",
+    "['قيد المراجعة', summary.unapprovedOrders],",
   )
 
   source = source.replace(
@@ -173,7 +177,13 @@ await patchFile('src/pages/admin/RiderMonthlyReports.tsx', source => {
     return {
       normalOrdersCount,
       multiplierOrdersCount,
-      failedOrdersCount: Number(ordersSummary.excluded ?? 0),
+      failedOrdersCount: Number(ordersSummary.failed ?? 0),
+      excludedOrdersCount: Number(ordersSummary.excluded ?? 0),
+      duplicateOrdersCount: Number(ordersSummary.duplicates ?? 0),
+      duplicateApprovedOrdersCount: Number(ordersSummary.duplicate_approved ?? 0),
+      duplicatePendingOrdersCount: Number(ordersSummary.duplicate_pending ?? 0),
+      duplicateRejectedOrdersCount: Number(ordersSummary.duplicate_rejected ?? 0),
+      pendingOrdersCount: Number(ordersSummary.pending_review ?? 0),
       tripsCount: Number(tripsSummary.total ?? trips.length),
       approvedTripsCount: Number(tripsSummary.approved ?? 0),
       pendingTripsCount: Number(tripsSummary.pending ?? 0),
