@@ -44,7 +44,6 @@ export default function RiderMonthlyReports() {
   const [orders, setOrders] = useState<Row[]>([])
   const [trips, setTrips] = useState<Row[]>([])
   const [adjustments, setAdjustments] = useState<Row[]>([])
-  const [financialSummary, setFinancialSummary] = useState<Row | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [adjustmentType, setAdjustmentType] = useState<AdjustmentType>('penalty')
@@ -60,9 +59,7 @@ export default function RiderMonthlyReports() {
   async function loadRiders() {
     const { data, error } = await supabase
       .from('riders')
-      .select('id,name,username,branch_name,branch_id,hourly_rate,order_rate,trip_rate,monthly_incentive_base,quarterly_incentive_base,status,active')
-      .eq('active', true)
-      .eq('status', 'active')
+      .select('id,name,username,branch_name,branch_id,order_rate,trip_rate,status')
       .order('name', { ascending: true })
     if (error) {
       toast.error(`تعذر تحميل المناديب: ${error.message}`)
@@ -76,18 +73,15 @@ export default function RiderMonthlyReports() {
   async function loadReport() {
     if (!riderId) return
     setLoading(true)
-    const [ordersRes, tripsRes, adjustmentsRes, financialRes] = await Promise.allSettled([
+    const [ordersRes, tripsRes, adjustmentsRes] = await Promise.allSettled([
       supabase.from('delivery_orders').select('*').eq('rider_id', riderId).gte('work_date', from).lte('work_date', to).order('work_date', { ascending: false }),
       supabase.from('internal_trips').select('*').eq('rider_id', riderId).gte('work_date', from).lte('work_date', to).order('work_date', { ascending: false }),
       supabase.from('rider_adjustments').select('*').eq('rider_id', riderId).gte('cycle_start', from).lte('cycle_end', to).order('created_at', { ascending: false }),
-      supabase.rpc('delivery_rider_financial_summary_v1', { p_rider_id: riderId, p_period_start: from, p_period_end: to }),
     ])
     setOrders(ordersRes.status === 'fulfilled' && !ordersRes.value.error ? ((ordersRes.value.data || []) as Row[]) : [])
     setTrips(tripsRes.status === 'fulfilled' && !tripsRes.value.error ? ((tripsRes.value.data || []) as Row[]) : [])
     setAdjustments(adjustmentsRes.status === 'fulfilled' && !adjustmentsRes.value.error ? ((adjustmentsRes.value.data || []) as Row[]) : [])
-    setFinancialSummary(financialRes.status === 'fulfilled' && !financialRes.value.error ? ((financialRes.value.data || null) as Row | null) : null)
     if (adjustmentsRes.status === 'fulfilled' && adjustmentsRes.value.error) toast.warning('شغل Migration 0072 لتفعيل جدول الحركات')
-    if (financialRes.status === 'fulfilled' && financialRes.value.error) toast.error(`تعذر تحميل الحساب المالي الموحد: ${financialRes.value.error.message}`)
     setLoading(false)
   }
 
@@ -95,36 +89,36 @@ export default function RiderMonthlyReports() {
   useEffect(() => { void loadReport() }, [riderId, from, to])
 
   const summary = useMemo(() => {
-    const fOrders = financialSummary?.orders || {}
-    const fTrips = financialSummary?.trips || {}
-    const fAttendance = financialSummary?.attendance || {}
-    const fBonuses = financialSummary?.bonuses || {}
-    const rates = financialSummary?.rates || {}
-    const normalOrdersCount = Number(fOrders.x1 ?? 0)
-    const multiplierOrdersCount = Number(fOrders.x1_5 ?? 0)
-    const normalOrdersValue = normalOrdersCount * Number(rates.order_1x_rate ?? rider?.order_rate ?? 0)
-    const multiplierOrdersValue = multiplierOrdersCount * Number(rates.order_1_5x_rate ?? (Number(rider?.order_rate || 0) * 1.5))
+    const validOrders = orders.filter(o => !['failed', 'cancelled', 'canceled'].includes(statusOf(o)))
+    const normalOrders = validOrders.filter(o => orderMultiplier(o) < 1.5)
+    const multiplierOrders = validOrders.filter(o => orderMultiplier(o) >= 1.5)
+    const failedOrders = orders.filter(o => statusOf(o) === 'failed')
+    const approvedTrips = trips.filter(t => ['approved', 'completed'].includes(statusOf(t)))
+    const pendingTrips = trips.filter(t => statusOf(t) === 'pending_approval')
+    const orderRate = Number(rider?.order_rate || 0)
+    const tripRate = Number(rider?.trip_rate || 0)
+    const normalOrdersValue = normalOrders.reduce((sum, o) => sum + Number(o.order_earning ?? orderRate), 0)
+    const multiplierOrdersValue = multiplierOrders.reduce((sum, o) => sum + Number(o.order_earning ?? orderRate * orderMultiplier(o)), 0)
+    const tripsValue = approvedTrips.reduce((sum, t) => sum + Number(t.trip_earning ?? tripRate), 0)
+    const rewardsTotal = adjustments.filter(a => a.adjustment_type === 'reward' && String(a.status || '').toLowerCase() === 'approved').reduce((sum, a) => sum + Math.abs(Number(a.final_amount ?? a.amount ?? 0)), 0)
+    const penaltiesTotal = adjustments.filter(a => a.adjustment_type === 'penalty' && String(a.status || '').toLowerCase() === 'approved').reduce((sum, a) => sum + Math.abs(Number(a.final_amount ?? a.amount ?? 0)), 0)
+    const gross = normalOrdersValue + multiplierOrdersValue + tripsValue + rewardsTotal
     return {
-      normalOrdersCount,
-      multiplierOrdersCount,
-      failedOrdersCount: Number(fOrders.excluded ?? 0),
-      tripsCount: Number(fTrips.total ?? trips.length),
-      approvedTripsCount: Number(fTrips.approved ?? 0),
-      pendingTripsCount: Number(fTrips.pending ?? 0),
+      normalOrdersCount: normalOrders.length,
+      multiplierOrdersCount: multiplierOrders.length,
+      failedOrdersCount: failedOrders.length,
+      tripsCount: trips.length,
+      approvedTripsCount: approvedTrips.length,
+      pendingTripsCount: pendingTrips.length,
       normalOrdersValue,
       multiplierOrdersValue,
-      tripsValue: Number(fTrips.pay ?? 0),
-      workHours: Number(fAttendance.work_hours ?? 0),
-      hourlyPay: Number(fAttendance.hourly_pay ?? 0),
-      monthlyIncentive: Number(fBonuses.monthly_earned ?? 0),
-      quarterlyIncentive: Number(fBonuses.quarterly_earned ?? 0),
-      rewardsTotal: Number(fBonuses.rewards ?? 0),
-      penaltiesTotal: Number(fBonuses.penalties ?? 0),
-      gross: Number(financialSummary?.gross_pay ?? 0),
-      net: Number(financialSummary?.net_pay ?? 0),
-      readiness: financialSummary?.readiness || null,
+      tripsValue,
+      rewardsTotal,
+      penaltiesTotal,
+      gross,
+      net: gross - penaltiesTotal,
     }
-  }, [orders, trips, rider, financialSummary])
+  }, [orders, trips, adjustments, rider])
 
   async function saveAdjustment() {
     if (!rider) return toast.error('اختار الدليفري أولاً')
@@ -228,17 +222,14 @@ export default function RiderMonthlyReports() {
           <div className="text-left"><p className="text-xl font-black text-[#061827]">{rider?.name || rider?.username || '—'}</p><p className="mt-1 text-sm font-bold text-slate-500">{rider?.branch_name || 'بدون فرع'}</p></div>
         </div>
         <div className="grid gap-3 md:grid-cols-4">
-          <Metric label="ساعات العمل" value={money(summary.workHours)} sub={`أجر الساعات ${money(summary.hourlyPay)} ج.م`} />
           <Metric label="أوردرات ×1" value={summary.normalOrdersCount} sub={`${money(summary.normalOrdersValue)} ج.م`} />
           <Metric label="أوردرات ×1.5" value={summary.multiplierOrdersCount} sub={`${money(summary.multiplierOrdersValue)} ج.م`} />
-          <Metric label="المشاوير" value={summary.tripsCount} sub={`المعتمد ${summary.approvedTripsCount} · المعلق ${summary.pendingTripsCount} · ${money(summary.tripsValue)} ج.م`} />
-          <Metric label="الحافز الشهري" value={money(summary.monthlyIncentive)} sub="حسب Snapshot/التقييم المعتمد" tone="green" />
-          <Metric label="الحافز الربع سنوي" value={money(summary.quarterlyIncentive)} sub="عند الاعتماد فقط" />
-          <Metric label="فاشل/مستبعد" value={summary.failedOrdersCount} sub="لا يدخل في العمولة" />
+          <Metric label="المشاوير" value={summary.tripsCount} sub={`المعتمد ${summary.approvedTripsCount} · المعلق ${summary.pendingTripsCount}`} />
+          <Metric label="فواتير فاشلة" value={summary.failedOrdersCount} sub="للمراجعة" />
           <Metric label="مكافآت" value={money(summary.rewardsTotal)} sub="بعد الاعتماد" tone="green" />
           <Metric label="خصومات" value={money(summary.penaltiesTotal)} sub="بعد الاعتماد" tone="rose" />
           <Metric label="الإجمالي" value={money(summary.gross)} sub="قبل الخصم" />
-          <Metric label="الصافي" value={money(summary.net)} sub="المصدر المالي الموحد" tone="dark" />
+          <Metric label="الصافي" value={money(summary.net)} sub="بعد الخصومات" tone="dark" />
         </div>
         <div className="mt-5 grid gap-4 lg:grid-cols-2">
           <Table title="آخر الأوردرات" headers={["التاريخ", "الفاتورة", "القيمة", "المعامل", "الحالة"]} rows={orders.slice(0, 25).map(o => [rowDate(o, 'delivery_date'), o.invoice_number || o.invoice_no || '—', money(Number(o.invoice_amount || o.invoice_value || 0)), `×${orderMultiplier(o)}`, o.status || '—'])} />

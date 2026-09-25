@@ -73,7 +73,6 @@ export default function RiderCompensationCenter() {
   const [trips, setTrips] = useState<Row[]>([])
   const [adjustments, setAdjustments] = useState<Row[]>([])
   const [assessments, setAssessments] = useState<Row[]>([])
-  const [financialSummary, setFinancialSummary] = useState<Row | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [orderRate, setOrderRate] = useState('0')
@@ -93,7 +92,7 @@ export default function RiderCompensationCenter() {
   const rider = useMemo(() => riders.find(item => String(item.id) === riderId) || null, [riders, riderId])
 
   async function loadRiders() {
-    const { data, error } = await supabase.from('riders').select('*').eq('active', true).eq('status', 'active').order('name', { ascending: true })
+    const { data, error } = await supabase.from('riders').select('*').order('name', { ascending: true })
     if (error) return toast.error(`تعذر تحميل المناديب: ${error.message}`)
     const rows = (data || []) as Row[]
     setRiders(rows)
@@ -104,31 +103,21 @@ export default function RiderCompensationCenter() {
     if (!riderId) return
     setLoading(true)
     try {
-      const [ordersRows, tripsRows, adjustmentRows, assessmentRows, financialRes] = await Promise.all([
+      const [ordersRows, tripsRows, adjustmentRows, assessmentRows] = await Promise.all([
         fetchAllPages(() => supabase.from('delivery_orders').select('*').eq('rider_id', riderId).gte('work_date', from).lte('work_date', to).order('id', { ascending: true })),
         fetchAllPages(() => supabase.from('internal_trips').select('*').eq('rider_id', riderId).gte('work_date', from).lte('work_date', to).order('id', { ascending: true })),
         fetchAllPages(() => supabase.from('rider_adjustments').select('*').eq('rider_id', riderId).gte('cycle_start', from).lte('cycle_end', to).order('id', { ascending: true })),
         fetchAllPages(() => supabase.from('rider_bonus_assessments').select('*').eq('rider_id', riderId).order('created_at', { ascending: false })),
-        supabase.rpc('delivery_rider_financial_summary_v1', { p_rider_id: riderId, p_period_start: from, p_period_end: to }),
       ])
-      if (financialRes.error) throw financialRes.error
-      const financial = (financialRes.data || null) as Row | null
       setOrders(ordersRows)
       setTrips(tripsRows)
       setAdjustments(adjustmentRows)
       setAssessments(assessmentRows)
-      setFinancialSummary(financial)
-      setOrderRate(String(financial?.rates?.order_1x_rate ?? rider?.order_rate ?? 0))
-      setTripRate(String(financial?.rates?.trip_rate ?? rider?.trip_rate ?? 0))
+      setOrderRate(String(rider?.order_rate ?? 0))
+      setTripRate(String(rider?.trip_rate ?? 0))
       const existing = assessmentRows.find(row => row.cycle_start === from && row.cycle_end === to && row.bonus_type === bonusType)
       if (existing?.criteria) setCriteria(existing.criteria as Criterion[])
-      if (!existing) {
-        setMonthlyBonusBase(String(financial?.rates?.monthly_bonus_base ?? rider?.monthly_incentive_base ?? rider?.monthly_bonus_base ?? 0))
-        setQuarterlyBonusBase(String(financial?.rates?.quarterly_bonus_base ?? rider?.quarterly_incentive_base ?? 0))
-        setAssessmentNote('')
-      }
       if (existing?.base_amount) bonusType === 'monthly' ? setMonthlyBonusBase(String(existing.base_amount)) : setQuarterlyBonusBase(String(existing.base_amount))
-      if (existing) setAssessmentNote(String(existing.notes || ''))
     } catch (error: any) {
       toast.error(error?.message || 'تعذر تحميل التقرير الكامل')
     } finally {
@@ -137,7 +126,7 @@ export default function RiderCompensationCenter() {
   }
 
   useEffect(() => { void loadRiders() }, [])
-  useEffect(() => { void loadReport() }, [riderId, from, to, bonusType])
+  useEffect(() => { void loadReport() }, [riderId, from, to])
 
   useEffect(() => {
     if (adjustmentCycle === 'current') {
@@ -156,43 +145,28 @@ export default function RiderCompensationCenter() {
   const pendingPenaltyRows = useMemo(() => penaltyRows.filter(item => String(item.status || '').toLowerCase() !== 'approved'), [penaltyRows])
 
   const summary = useMemo(() => {
-    const failedStatuses = ['failed', 'cancelled', 'canceled', 'returned']
-    const isDuplicate = (order: Row) => Boolean(order.is_duplicate_invoice || order.duplicate_warning || order.original_order_id)
-    const countedOrders = orders.filter(order => !failedStatuses.includes(status(order))
-      && !isDuplicate(order)
-      && order.excluded_from_incentive !== true
-      && order.not_countable !== true
-      && order.needs_review !== true
-      && (order.is_countable === true || String(order.final_count_status || '').startsWith('counted')))
+    const countedOrders = orders.filter(order => !['failed', 'cancelled', 'canceled'].includes(status(order)) && (order.is_countable === true || String(order.final_count_status || '').startsWith('counted')))
     const normal = countedOrders.filter(order => Number(order.order_multiplier ?? 1) < 1.5)
     const multiplier = countedOrders.filter(order => Number(order.order_multiplier ?? 1) >= 1.5)
-    const approvedTrips = trips.filter(trip => !trip.duplicate_of && trip.is_countable !== false && ['approved', 'completed'].includes(status(trip)))
-    const localOrderValue = normal.length * Number(orderRate || 0) + multiplier.length * Number(orderRate || 0) * 1.5
-    const localTripValue = approvedTrips.reduce((sum, trip) => sum + Number(trip.trip_multiplier ?? 1), 0) * Number(tripRate || 0)
-    const localRewards = adjustments.filter(item => item.adjustment_type === 'reward' && String(item.status || '').toLowerCase() === 'approved').reduce((sum, item) => sum + Math.abs(Number(item.final_amount ?? item.amount ?? 0)), 0)
-    const localPenalties = adjustments.filter(item => item.adjustment_type === 'penalty' && String(item.status || '').toLowerCase() === 'approved').reduce((sum, item) => sum + Math.abs(Number(item.final_amount ?? item.amount ?? 0)), 0)
-    const fOrders = financialSummary?.orders || {}
-    const fTrips = financialSummary?.trips || {}
-    const fAttendance = financialSummary?.attendance || {}
-    const fBonuses = financialSummary?.bonuses || {}
+    const approvedTrips = trips.filter(trip => ['approved', 'completed'].includes(status(trip)))
+    const orderValue = normal.reduce((sum, order) => sum + Number(order.order_earning ?? orderRate), 0)
+      + multiplier.reduce((sum, order) => sum + Number(order.order_earning ?? Number(orderRate) * Number(order.order_multiplier ?? 1.5)), 0)
+    const tripValue = approvedTrips.reduce((sum, trip) => sum + Number(trip.trip_earning ?? tripRate), 0)
+    const rewards = adjustments.filter(item => item.adjustment_type === 'reward' && String(item.status || '').toLowerCase() === 'approved').reduce((sum, item) => sum + Math.abs(Number(item.final_amount ?? item.amount ?? 0)), 0)
+    const penalties = adjustments.filter(item => item.adjustment_type === 'penalty' && String(item.status || '').toLowerCase() === 'approved').reduce((sum, item) => sum + Math.abs(Number(item.final_amount ?? item.amount ?? 0)), 0)
     return {
-      totalOrders: Number(fOrders.total ?? orders.length),
-      countedOrders: Number(fOrders.counted ?? countedOrders.length),
-      normalOrders: Number(fOrders.x1 ?? normal.length),
-      multiplierOrders: Number(fOrders.x1_5 ?? multiplier.length),
-      approvedTrips: Number(fTrips.approved ?? approvedTrips.length),
-      orderValue: Number(fOrders.pay ?? localOrderValue),
-      tripValue: Number(fTrips.pay ?? localTripValue),
-      hourlyPay: Number(fAttendance.hourly_pay ?? 0),
-      workHours: Number(fAttendance.work_hours ?? 0),
-      monthlyBonus: Number(fBonuses.monthly_earned ?? normalizedBonusEarned),
-      quarterlyBonus: Number(fBonuses.quarterly_earned ?? 0),
-      rewards: Number(fBonuses.rewards ?? localRewards),
-      penalties: Number(fBonuses.penalties ?? localPenalties),
-      net: Number(financialSummary?.net_pay ?? (localOrderValue + localTripValue + normalizedBonusEarned + localRewards - localPenalties)),
-      readiness: financialSummary?.readiness || null,
+      totalOrders: orders.length,
+      countedOrders: countedOrders.length,
+      normalOrders: normal.length,
+      multiplierOrders: multiplier.length,
+      approvedTrips: approvedTrips.length,
+      orderValue,
+      tripValue,
+      rewards,
+      penalties,
+      net: orderValue + tripValue + normalizedBonusEarned + rewards - penalties,
     }
-  }, [orders, trips, adjustments, orderRate, tripRate, normalizedBonusEarned, financialSummary])
+  }, [orders, trips, adjustments, orderRate, tripRate, normalizedBonusEarned])
 
   const lastQuarterly = assessments.find(row => row.bonus_type === 'quarterly' && row.status === 'approved')
 
@@ -332,7 +306,7 @@ export default function RiderCompensationCenter() {
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {[
-            ['ساعات العمل', summary.workHours], ['أجر الساعات', `${money(summary.hourlyPay)} ج`], ['الأوردرات المحتسبة', summary.countedOrders], ['المشاوير المعتمدة', summary.approvedTrips], ['قيمة الأوردرات', `${money(summary.orderValue)} ج`], ['قيمة المشاوير', `${money(summary.tripValue)} ج`], ['الحافز الشهري', `${money(summary.monthlyBonus)} ج`], ['الحافز الربع سنوي', `${money(summary.quarterlyBonus)} ج`], ['الصافي النهائي', `${money(summary.net)} ج`],
+            ['الأوردرات المحتسبة', summary.countedOrders], ['المشاوير المعتمدة', summary.approvedTrips], ['قيمة الأوردرات', `${money(summary.orderValue)} ج`], ['قيمة المشاوير', `${money(summary.tripValue)} ج`], ['الصافي النهائي', `${money(summary.net)} ج`],
           ].map(([label, value]) => <div key={String(label)} className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-black text-slate-500">{label}</p><p className="mt-1 text-xl font-black text-[#061827]">{value}</p></div>)}
         </div>
       </section>
@@ -340,7 +314,7 @@ export default function RiderCompensationCenter() {
       <section className="grid gap-4 lg:grid-cols-2 print:hidden">
         <div className="rounded-3xl border bg-white p-5 shadow-sm">
           <h2 className="mb-4 text-xl font-black text-[#061827]">أسعار الاحتساب</h2>
-          <div className="grid grid-cols-2 gap-3"><label className="text-xs font-black text-slate-500">سعر الأوردر للدورة<input type="number" value={orderRate} readOnly className="mt-1 w-full rounded-2xl border bg-slate-100 px-3 py-3"/></label><label className="text-xs font-black text-slate-500">سعر المشوار للدورة<input type="number" value={tripRate} readOnly className="mt-1 w-full rounded-2xl border bg-slate-100 px-3 py-3"/></label></div><p className="mt-2 text-xs font-bold text-slate-500">الأسعار مقفولة من Snapshot الدورة لضمان عدم تغيير التقارير القديمة عند تعديل سعر المندوب لاحقًا.</p>
+          <div className="grid grid-cols-2 gap-3"><label className="text-xs font-black text-slate-500">سعر الأوردر<input type="number" value={orderRate} onChange={event => setOrderRate(event.target.value)} className="mt-1 w-full rounded-2xl border bg-slate-50 px-3 py-3"/></label><label className="text-xs font-black text-slate-500">سعر المشوار<input type="number" value={tripRate} onChange={event => setTripRate(event.target.value)} className="mt-1 w-full rounded-2xl border bg-slate-50 px-3 py-3"/></label></div>
         </div>
         <div className="rounded-3xl border bg-white p-5 shadow-sm">
           <h2 className="mb-4 text-xl font-black text-[#061827]">خصم أو مكافأة استثنائية</h2>
