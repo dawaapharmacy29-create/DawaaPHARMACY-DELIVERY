@@ -61,6 +61,7 @@ await patchFile('src/pages/admin/RiderCompensationCenter.tsx', source => {
     return {
       totalOrders: Number(ordersSummary.total ?? orders.length),
       countedOrders: Number(ordersSummary.counted ?? 0),
+      uncountedOrders: Math.max(0, Number(ordersSummary.total ?? orders.length) - Number(ordersSummary.counted ?? 0)),
       normalOrders: Number(ordersSummary.x1 ?? 0),
       multiplierOrders: Number(ordersSummary.x1_5 ?? 0),
       failedOrders: Number(ordersSummary.excluded ?? 0),
@@ -92,6 +93,23 @@ await patchFile('src/pages/admin/RiderCompensationCenter.tsx', source => {
   source = source.replace(
     /\['الصافي النهائي', `\$\{money\(summary\.net\)\} ج`\]/,
     "['أجر الساعات', \`\${money(summary.hourlyPay)} ج\`], ['ساعات العمل', summary.workHours], ['الحافز الشهري', \`\${money(summary.monthlyBonus)} ج\`], ['الحافز الربع سنوي', \`\${money(summary.quarterlyBonus)} ج\`], ['الصافي النهائي', \`\${money(summary.net)} ج\`]",
+  )
+
+  source = source.replace(
+    "['إجمالي المحتسب', summary.countedOrders],",
+    "['المعتمد المحتسب', summary.countedOrders], ['غير المحتسب فعليًا', summary.uncountedOrders],",
+  )
+  source = source.replace(
+    "['الأوردرات الفاشلة', summary.failedOrders],",
+    "['الأوردرات الفاشلة (حالة رقابية)', summary.failedOrders],",
+  )
+  source = source.replace(
+    "['الأوردرات المكررة', summary.duplicateOrders],",
+    "['الأوردرات المكررة (حالة رقابية)', summary.duplicateOrders],",
+  )
+  source = source.replace(
+    "['غير المعتمدة', summary.unapprovedOrders],",
+    "['غير المعتمدة (حالة رقابية)', summary.unapprovedOrders],",
   )
 
   source = source.replace(
