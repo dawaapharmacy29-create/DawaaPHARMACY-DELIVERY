@@ -133,7 +133,7 @@ replaceRegex(
   'load accumulated cycle invoices',
 )
 
-replaceRegex(/\.gte\('delivery_date', period\.start\)\s+\.lte\('delivery_date', period\.end\)/, ".gte('delivery_date', selectedFrom)\n         .lte('delivery_date', selectedTo)", 'selected order cycle')
+replaceRegex(/\.gte\('delivery_date', (?:period\.start|selectedFrom)\)\s+\.lte\('delivery_date', (?:period\.end|selectedTo)\)/, ".gte('delivery_date', selectedFrom)\n         .lte('delivery_date', selectedTo)", 'selected order cycle')
 replaceText("      let multiplierReview = 0", "      let multiplierReview = 0\n      let customerNameMismatches = 0", 'mismatch counter')
 replaceRegex(/const match = inv \? bconnectMap\.get\(inv\) : null/, "const match = findSystemMatch(order)\n        const nameMismatch = Boolean(match && customerNamesDiffer((order as any).customer_name || order.customer_name_snapshot, match.customer_name))", 'system match selection')
 replaceText(
