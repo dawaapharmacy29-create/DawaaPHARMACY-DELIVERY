@@ -67,11 +67,18 @@ async function loadAllCycleOrders(from: string, to: string) {
 async function patchPeriodLabel() {
   const file = new URL('../src/pages/admin/Reconciliation.tsx', import.meta.url)
   let source = await readFile(file, 'utf8')
-  const before = '<p className="text-sm text-white/80">الدورة الحالية: {period.start} إلى {period.end} — الفاشل لا يحتسب، والتكرار يحتاج مراجعة</p>'
+  const beforeVariants = [
+    '<p className="text-sm text-white/80">الدورة الحالية: {period.start} إلى {period.end} — الفاشل لا يحتسب، والتكرار يحتاج مراجعة</p>',
+    '<p className="text-sm text-white/80">الدورة المحددة: {selectedFrom} إلى {selectedTo} — الفاشل لا يحتسب، والتكرار يحتاج مراجعة</p>',
+  ]
   const after = '<p className="text-sm text-white/80">الفترة المختارة: {selectedFrom} إلى {selectedTo} — الفاشل لا يحتسب، والتكرار يحتاج مراجعة</p>'
   if (!source.includes(after)) {
-    if (!source.includes(before)) throw new Error('period header anchor not found')
-    source = source.replace(before, after)
+    const before = beforeVariants.find(value => source.includes(value))
+    if (!before) {
+      console.warn('period header already changed or anchor unavailable; skipping label-only patch')
+    } else {
+      source = source.replace(before, after)
+    }
   }
   await writeFile(file, source, 'utf8')
 }
