@@ -838,18 +838,43 @@ export default function Reconciliation() {
 
   async function handleMarkNotFound(orderId: string) {
     try {
-      await supabase.from('delivery_orders').update({
+      const updatedAt = new Date().toISOString()
+      const patch = {
         bconnect_match_status: 'invoice_not_found',
         is_countable: false,
         final_count_status: 'excluded_invoice_not_found',
         count_exclusion_reason: 'marked_not_found_by_admin',
-        updated_at: new Date().toISOString(),
-      }).eq('id', orderId)
-      toast.success('تم استبعاد الفاتورة من الحساب')
-      await loadAll()
-    } catch (error) {
+        needs_review: false,
+        updated_at: updatedAt,
+      } as const
+
+      const { data, error } = await supabase
+        .from('delivery_orders')
+        .update(patch)
+        .eq('id', orderId)
+        .select('*')
+        .maybeSingle()
+
+      if (error) throw error
+
+      // Keep the current reconciliation screen mounted. A full loadAll() used to
+      // flip the page-level loading state and reload the entire cycle after every
+      // single exclusion. Update just the affected row instead.
+      setOrders(prev => prev.map(order =>
+        order.id === orderId
+          ? ({ ...order, ...patch, ...(data || {}) } as DeliveryOrder)
+          : order
+      ))
+      setDetailsOrder(prev =>
+        prev?.id === orderId
+          ? ({ ...prev, ...patch, ...(data || {}) } as DeliveryOrder)
+          : prev
+      )
+
+      toast.success('تم استبعاد الفاتورة من الحساب بدون إعادة تحميل الصفحة')
+    } catch (error: any) {
       console.error(error)
-      toast.error('فشل التحديث')
+      toast.error('فشل التحديث: ' + (error?.message ?? ''))
     }
   }
 
