@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Camera, CheckSquare, ChevronLeft, ChevronRight, Eye, ImageOff, RotateCcw, Search, Square, X, ZoomIn, ZoomOut } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { getRiders } from '../../lib/delivery'
 import { getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
 import type { Rider } from '../../lib/types'
+import CycleSelector from '../../components/CycleSelector'
 
 type StatusFilter = 'all' | 'pending_approval' | 'approved' | 'rejected'
 type ProofFilter = 'all' | 'with_photo' | 'without_photo'
@@ -35,7 +36,10 @@ function Stat({label,value,tone='slate',onClick}:{label:string;value:number;tone
 
 export default function TripsFast(){
   const navigate=useNavigate()
+  const [searchParams,setSearchParams]=useSearchParams()
   const period=useMemo(()=>getOperationalPeriod(),[])
+  const selectedFrom=searchParams.get('from')||period.start
+  const selectedTo=searchParams.get('to')||period.end
   const [rows,setRows]=useState<any[]>([])
   const [summary,setSummary]=useState<any>({})
   const [riders,setRiders]=useState<Rider[]>([])
@@ -60,7 +64,7 @@ export default function TripsFast(){
   const imageDragRef=useRef({pointerId:-1,x:0,y:0,scrollLeft:0,scrollTop:0})
 
   useEffect(()=>{ const id=window.setTimeout(()=>setDebouncedSearch(search.trim()),300); return()=>window.clearTimeout(id)},[search])
-  useEffect(()=>{ setPage(0) },[statusFilter,proofFilter,typeFilter,riderFilter,debouncedSearch])
+  useEffect(()=>{ setPage(0) },[statusFilter,proofFilter,typeFilter,riderFilter,debouncedSearch,selectedFrom,selectedTo])
   useEffect(()=>{ void getRiders().then(setRiders).catch(()=>{}) },[])
   useEffect(()=>{ setImageZoom(1);setIsImageDragging(false);if(imageViewportRef.current){imageViewportRef.current.scrollLeft=0;imageViewportRef.current.scrollTop=0} },[details?.id])
   useEffect(()=>{
@@ -80,7 +84,7 @@ export default function TripsFast(){
     try{
       setLoading(true)
       const {data,error}=await supabase.rpc('admin_trips_fast',{
-        p_period_start:period.start,p_period_end:period.end,p_status:statusFilter,p_proof:proofFilter,p_trip_type:typeFilter,
+        p_period_start:selectedFrom,p_period_end:selectedTo,p_status:statusFilter,p_proof:proofFilter,p_trip_type:typeFilter,
         p_rider_id:riderFilter==='all'?null:riderFilter,p_search:debouncedSearch||null,p_limit:pageSize,p_offset:page*pageSize,
       })
       if(error)throw error
@@ -94,7 +98,7 @@ export default function TripsFast(){
     }catch(error:any){ if(seq===requestSeq.current) toast.error(error?.message||'فشل تحميل بيانات المشاوير') }
     finally{ if(seq===requestSeq.current)setLoading(false) }
   }
-  useEffect(()=>{ void load() },[page,statusFilter,proofFilter,typeFilter,riderFilter,debouncedSearch])
+  useEffect(()=>{ void load() },[page,statusFilter,proofFilter,typeFilter,riderFilter,debouncedSearch,selectedFrom,selectedTo])
 
   function patchLocal(id:string,patch:any){ setRows(prev=>prev.map(row=>row.id===id?{...row,...patch}:row)); setDetails((current:any)=>current?.id===id?{...current,...patch}:current) }
   function setBusyId(id:string,on:boolean){ setBusy(prev=>{const next=new Set(prev);on?next.add(id):next.delete(id);return next}) }
@@ -146,10 +150,19 @@ export default function TripsFast(){
     if(statusFilter==='pending_approval')setTotalFiltered(prev=>Math.max(0,prev-ids.length));updateSummaryStatus('pending_approval','rejected',ids.length);setSelected(new Set());toast.success(`تم رفض ${ids.length} مشوار`)
   }
 
+  function handleCycleApply(from:string,to:string){
+    const next=new URLSearchParams(searchParams)
+    next.set('from',from)
+    next.set('to',to)
+    setSearchParams(next)
+  }
+
   const pages=Math.max(1,Math.ceil(totalFiltered/pageSize))
   return <div className="min-h-screen bg-[#F3F7F8]" dir="rtl">
-    <header className="bg-gradient-to-l from-[#061827] to-[#008E92] p-4 text-white"><div className="mx-auto flex max-w-7xl items-center justify-between gap-4"><button onClick={()=>navigate('/admin')} className="flex items-center gap-3 text-right"><span className="rounded-xl bg-white/10 p-2"><ArrowLeft size={22}/></span><div><h1 className="text-xl font-black">إدارة ورقابة المشاوير · Fast</h1><p className="text-xs text-teal-100">تحميل على دفعات بدل أكثر من ألف سجل مرة واحدة</p></div></button><button onClick={()=>void load()} className="rounded-xl bg-white/10 px-4 py-2 text-xs font-black">تحديث</button></div></header>
+    <header className="bg-gradient-to-l from-[#061827] to-[#008E92] p-4 text-white"><div className="mx-auto flex max-w-7xl items-center justify-between gap-4"><button onClick={()=>navigate('/admin')} className="flex items-center gap-3 text-right"><span className="rounded-xl bg-white/10 p-2"><ArrowLeft size={22}/></span><div><h1 className="text-xl font-black">إدارة ورقابة المشاوير · Fast</h1><p className="text-xs text-teal-100">الدورة المحددة: {selectedFrom} إلى {selectedTo} · تحميل على دفعات للتحليل والمراجعة</p></div></button><button onClick={()=>void load()} className="rounded-xl bg-white/10 px-4 py-2 text-xs font-black">تحديث</button></div></header>
     <main className="mx-auto max-w-7xl space-y-4 p-4">
+      <CycleSelector from={selectedFrom} to={selectedTo} onApply={handleCycleApply} />
+      <section className="rounded-3xl border border-teal-100 bg-teal-50 px-4 py-3 text-sm font-bold text-teal-900">تحليل المشاوير للفترة <span dir="ltr" className="font-black">{selectedFrom} → {selectedTo}</span> · الأرقام التالية تخص الدورة/الفترة المختارة فقط.</section>
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6"><Stat label="كل المشاوير" value={summary.all||0} onClick={()=>{setStatusFilter('all');setProofFilter('all')}}/><Stat label="بصورة" value={summary.with_photo||0} tone="green" onClick={()=>setProofFilter('with_photo')}/><Stat label="بدون صورة" value={summary.without_photo||0} tone="red" onClick={()=>setProofFilter('without_photo')}/><Stat label="مستني اعتماد" value={summary.pending||0} tone="amber" onClick={()=>setStatusFilter('pending_approval')}/><Stat label="معتمد" value={summary.approved||0} tone="green" onClick={()=>setStatusFilter('approved')}/><Stat label="مرفوض" value={summary.rejected||0} tone="red" onClick={()=>setStatusFilter('rejected')}/></section>
       <section className="sticky top-2 z-20 rounded-3xl border bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center gap-2"><button onClick={toggleAllPending} className="inline-flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-xs font-black">{allPendingSelected?<CheckSquare size={16}/>:<Square size={16}/>} اختيار المستني في الصفحة ({pendingVisible.length})</button><button onClick={()=>void bulkApprove()} disabled={!selected.size} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white disabled:opacity-40">اعتماد المختار ({selected.size})</button><button onClick={()=>{if(!selected.size)return toast.error('اختر مشاوير مستنية اعتماد');setRejectTrip({bulk:true});setRejectReason('')}} disabled={!selected.size} className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-black text-white disabled:opacity-40">رفض المختار ({selected.size})</button>{selected.size>0&&<button onClick={()=>setSelected(new Set())} className="rounded-xl border px-3 py-2 text-xs font-black">إلغاء الاختيار</button>}</div>
