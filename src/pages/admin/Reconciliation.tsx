@@ -504,8 +504,8 @@ export default function Reconciliation() {
       console.info('Reconciliation import sample invoices', bconnect.slice(0, 10).map(r => r.invoice_number))
 
       const { data: batchData, error: batchError } = await supabase.rpc('save_monthly_invoice_import_batch', {
-        p_period_start: period.start,
-        p_period_end: period.end,
+        p_period_start: selectedFrom,
+        p_period_end: selectedTo,
         p_file_name: file.name,
         p_total_rows: rows.length,
         p_delivery_rows: bconnect.length
@@ -518,8 +518,8 @@ export default function Reconciliation() {
         const { error: invoiceInsertError } = await supabase.from('monthly_system_invoices').insert(
           bconnect.map(row => ({
             batch_id: batchId,
-            period_start: period.start,
-            period_end: period.end,
+            period_start: selectedFrom,
+            period_end: selectedTo,
             invoice_number: row.invoice_number,
             invoice_type: row.invoice_type,
             branch_name: row.branch_name,
@@ -543,8 +543,8 @@ export default function Reconciliation() {
       const currentOrders = orders.length ? orders : ((await supabase
         .from('delivery_orders')
         .select('*')
-        .gte('delivery_date', period.start)
-        .lte('delivery_date', period.end)).data ?? []) as DeliveryOrder[]
+        .gte('delivery_date', selectedFrom)
+        .lte('delivery_date', selectedTo)).data ?? []) as DeliveryOrder[]
 
       const orderInvoices = new Set(currentOrders.map(normalizeOrderInvoice).filter(Boolean))
       const updates: any[] = []
@@ -625,8 +625,8 @@ export default function Reconciliation() {
 
         resultRows.push({
           batch_id: batchId,
-          period_start: period.start,
-          period_end: period.end,
+          period_start: selectedFrom,
+          period_end: selectedTo,
           invoice_number: inv || null,
           rider_id: order.rider_id,
           rider_name: (order as any).rider_name || riderMap.get(order.rider_id)?.name || null,
@@ -653,8 +653,8 @@ export default function Reconciliation() {
       const bconnectOnly = bconnect.filter(row => !orderInvoices.has(row.invoice_number))
       resultRows.push(...bconnectOnly.map(row => ({
         batch_id: batchId,
-        period_start: period.start,
-        period_end: period.end,
+        period_start: selectedFrom,
+        period_end: selectedTo,
         invoice_number: row.invoice_number,
         rider_id: null,
         rider_name: null,
@@ -679,8 +679,8 @@ export default function Reconciliation() {
         if (resultInsertError) throw resultInsertError
         await supabase.rpc('archive_monthly_rider_performance', {
           p_batch_id: batchId,
-          p_period_start: period.start,
-          p_period_end: period.end
+          p_period_start: selectedFrom,
+          p_period_end: selectedTo
         })
       }
 
@@ -690,9 +690,9 @@ export default function Reconciliation() {
         const unmatchedCount = notFound + duplicatesPending + bconnectOnly.length
         await supabase.from('reconciliation_upload_log').insert({
           file_name: file.name,
-          period_start: period.start,
-          period_end: period.end,
-          match_date: period.end,
+          period_start: selectedFrom,
+          period_end: selectedTo,
+          match_date: selectedTo,
           rows_count: rows.length,
           matched_count: matchedCount,
           unmatched_count: unmatchedCount,
@@ -996,7 +996,7 @@ export default function Reconciliation() {
         .danger{color:#b91c1c;font-weight:bold}.ok{color:#047857;font-weight:bold}.muted{color:#64748b}.details{text-align:right;font-size:10px;line-height:1.6}
       </style></head><body>
       <h1>تقرير الدليفري الشهري النهائي</h1>
-      <h2>الدورة: ${period.start} إلى ${period.end} — تم التصدير: ${nowText}</h2>
+      <h2>الدورة: ${selectedFrom} إلى ${selectedTo} — تم التصدير: ${nowText}</h2>
       <table><thead><tr>
         <th>المندوب</th><th>الفرع</th><th>حضور أيام</th><th>ساعات حضور</th><th>أذونات</th><th>حافز البداية</th><th>خصومات</th><th>مكافآت</th><th>حافز بعد القرار</th>
         <th>أوردرات إجمالي</th><th>أوردرات ×1</th><th>أوردرات ×1.5</th><th>وحدات الأوردرات</th><th>مشاوير</th><th>فاشلة/خاطئة</th><th>مكررة/مراجعة</th><th>محذوفة</th><th>تفاصيل الخصم/المكافأة</th>
@@ -1044,9 +1044,9 @@ export default function Reconciliation() {
   )
 
   function exportSummaryCsv() {
-    downloadCsv(`delivery-summary-${period.start}-${period.end}.csv`, riderSummaryRows.map(row => ({
-      period_start: period.start,
-      period_end: period.end,
+    downloadCsv(`delivery-summary-${selectedFrom}-${selectedTo}.csv`, riderSummaryRows.map(row => ({
+      period_start: selectedFrom,
+      period_end: selectedTo,
       rider_name: row.rider.name,
       username: row.rider.username,
       normal_counted_orders: row.normal,
@@ -1073,7 +1073,7 @@ export default function Reconciliation() {
   }
 
   function exportOrdersCsv() {
-    downloadCsv(`delivery-orders-audit-${period.start}-${period.end}.csv`, filteredOrders.map(order => ({
+    downloadCsv(`delivery-orders-audit-${selectedFrom}-${selectedTo}.csv`, filteredOrders.map(order => ({
       invoice_number: normalizeOrderInvoice(order),
       rider_name: riderMap.get(order.rider_id)?.name || (order as any).rider_name || '',
       customer_code: (order as any).customer_code_snapshot || (order as any).customer_code || '',
@@ -1097,7 +1097,7 @@ export default function Reconciliation() {
   }
 
   function exportMissingBconnectCsv() {
-    downloadCsv(`bconnect-without-rider-${period.start}-${period.end}.csv`, missingFromRiders.map(row => ({
+    downloadCsv(`bconnect-without-rider-${selectedFrom}-${selectedTo}.csv`, missingFromRiders.map(row => ({
       invoice_number: row.invoice_number,
       customer_code: row.customer_code,
       customer_name: row.customer_name,
@@ -1114,7 +1114,7 @@ export default function Reconciliation() {
           <button onClick={() => navigate('/admin')} className="rounded-full bg-white/20 p-2 hover:bg-white/30"><ArrowLeft size={24} /></button>
           <div>
             <h1 className="text-2xl font-black">مطابقة بي كونكت وحساب الدليفري</h1>
-            <p className="text-sm text-white/80">الدورة الحالية: {period.start} إلى {period.end} — الفاشل لا يحتسب، والتكرار يحتاج مراجعة</p>
+            <p className="text-sm text-white/80">الدورة المحددة: {selectedFrom} إلى {selectedTo} — الفاشل لا يحتسب، والتكرار يحتاج مراجعة</p>
           </div>
         </div>
       </header>
