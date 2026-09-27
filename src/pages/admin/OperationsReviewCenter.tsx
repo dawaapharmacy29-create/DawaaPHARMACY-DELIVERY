@@ -38,19 +38,23 @@ export default function OperationsReviewCenter() {
   const selectedTo = searchParams.get('to') || period.end
   const [counts,setCounts] = useState<Counts>({pendingOrders:0,notFound:0,duplicatePending:0,duplicateExcluded:0,failed:0,pendingTrips:0,tripsWithoutInvoice:0})
   const [loading,setLoading] = useState(true)
+  const [error,setError] = useState('')
 
   useEffect(() => {
     let alive=true
     async function load(){
       setLoading(true)
       try{
-        const [ordersRes,tripsRes] = await Promise.allSettled([
+        setError('')
+        const [ordersRes,tripsRes] = await Promise.all([
           supabase.from('delivery_orders').select('final_count_status,status,is_countable,is_duplicate_invoice,deleted_at').gte('delivery_date',selectedFrom).lte('delivery_date',selectedTo).is('deleted_at',null),
           supabase.from('internal_trips').select('status,review_status,has_invoice_reference,related_invoice_number,duplicate_of').gte('trip_date',selectedFrom).lte('trip_date',selectedTo),
         ])
         if(!alive)return
-        const orders = ordersRes.status==='fulfilled' ? (ordersRes.value.data||[]) as any[] : []
-        const trips = tripsRes.status==='fulfilled' ? (tripsRes.value.data||[]) as any[] : []
+        if (ordersRes.error) throw ordersRes.error
+        if (tripsRes.error) throw tripsRes.error
+        const orders = (ordersRes.data||[]) as any[]
+        const trips = (tripsRes.data||[]) as any[]
         const status=(row:any)=>String(row.final_count_status||'')
         setCounts({
           pendingOrders: orders.filter(row => status(row).startsWith('pending')).length,
@@ -61,6 +65,8 @@ export default function OperationsReviewCenter() {
           pendingTrips: trips.filter(row => ['pending','pending_approval',''].includes(String(row.review_status||row.status||''))).length,
           tripsWithoutInvoice: trips.filter(row => !row.duplicate_of && row.has_invoice_reference===false && !String(row.related_invoice_number||'').trim()).length,
         })
+      } catch (loadError: any) {
+        if (alive) setError(loadError?.message || 'تعذر تحميل بيانات مراجعة الدورة')
       } finally { if(alive)setLoading(false) }
     }
     void load()
@@ -83,6 +89,7 @@ export default function OperationsReviewCenter() {
   return <div className="space-y-5" dir="rtl">
     <OperationsAdminTabs />
     <CycleSelector from={selectedFrom} to={selectedTo} onApply={applyCycle} />
+    {error && <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">تعذر تحديث مركز المراجعة: {error}</div>}
     <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
       <p className="text-xs font-black text-[#008E92]">التشغيل والمراجعة</p>
       <div className="mt-1 flex flex-wrap items-start justify-between gap-4">
