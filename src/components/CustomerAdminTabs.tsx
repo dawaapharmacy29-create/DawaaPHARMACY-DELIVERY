@@ -2,9 +2,9 @@ import { NavLink } from 'react-router-dom'
 import { BarChart3, MapPinned, UploadCloud, UsersRound } from 'lucide-react'
 
 const items = [
-  { to: '/admin/customer-center', label: 'مركز العملاء', icon: UsersRound, end: true },
+  { to: '/admin/customer-center', label: 'مركز العملاء والمناطق', icon: UsersRound, end: true },
   { to: '/admin/customer-analytics', label: 'تحليل العملاء', icon: BarChart3 },
-  { to: '/admin/customer-import', label: 'تحديث البيانات', icon: UploadCloud },
+  { to: '/admin/customer-import', label: 'تحديث بيانات العملاء', icon: UploadCloud },
   { to: '/admin/route-planner', label: 'المناطق والمسارات', icon: MapPinned },
 ]
 
