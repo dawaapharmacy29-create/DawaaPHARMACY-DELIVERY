@@ -85,7 +85,7 @@ const groups: AdminNavGroup[] = [
     icon: BarChart3,
     links: [
       { to: '/admin/reports-center', label: 'مركز التقارير والإدارة' },
-      { to: '/admin/reports', label: 'تقارير الدورة' },
+      { to: '/admin/reports', label: 'تقرير الدليفري للدورة' },
       { to: '/admin/cycles', label: 'أرشيف الدورات' },
       { to: '/admin/fraud-alerts', label: 'مراجعة الحالات غير الطبيعية' },
       { to: '/admin/cash-flow', label: 'ملخص مستحقات الدورة' },
