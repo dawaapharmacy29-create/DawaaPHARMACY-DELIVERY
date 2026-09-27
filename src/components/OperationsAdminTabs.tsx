@@ -2,13 +2,13 @@ import { NavLink } from 'react-router-dom'
 import { ClipboardCheck, CopyCheck, FileQuestion, Gauge, GitCompareArrows, Route, ShieldCheck } from 'lucide-react'
 
 const items = [
-  { to: '/admin/review-center', label: 'مركز المراجعة', icon: Gauge, end: true },
+  { to: '/admin/review-center', label: 'مركز مراجعة الدورة', icon: Gauge, end: true },
   { to: '/admin/reconciliation', label: 'مطابقة الأوردرات', icon: GitCompareArrows },
   { to: '/admin/trips', label: 'مراجعة المشاوير', icon: Route },
-  { to: '/admin/duplicate-invoices', label: 'المكرر', icon: CopyCheck },
-  { to: '/admin/trips-without-invoice', label: 'بدون فاتورة', icon: FileQuestion },
+  { to: '/admin/duplicate-invoices', label: 'الأوردرات المكررة', icon: CopyCheck },
+  { to: '/admin/trips-without-invoice', label: 'مشاوير بدون فاتورة', icon: FileQuestion },
   { to: '/admin/cycle-closing', label: 'إغلاق الدورة', icon: ClipboardCheck },
-  { to: '/admin/ops', label: 'التشغيل الحي', icon: ShieldCheck },
+  { to: '/admin/ops', label: 'متابعة التشغيل الحي', icon: ShieldCheck },
 ]
 
 export default function OperationsAdminTabs() {
