@@ -870,18 +870,33 @@ export default function Reconciliation() {
     try {
       const order = orders.find(o => o.id === orderId)
       const isMultiplier = ((order?.order_multiplier ?? 1) >= 1.5)
-      await supabase.from('delivery_orders').update({
+      const patch = {
         bconnect_match_status: 'manually_approved',
         is_countable: true,
         final_count_status: isMultiplier ? 'counted_multiplier_manual_approval' : 'counted_manual_approval',
+        count_exclusion_reason: null,
+        needs_review: isMultiplier,
         reconciliation_notes: isMultiplier ? 'اعتماد يدوي — أوردر ×1.5 ما زال للمراجعة الإدارية' : 'اعتماد يدوي بواسطة الإدارة',
         updated_at: new Date().toISOString(),
-      }).eq('id', orderId)
-      toast.success('تمت المطابقة اليدوية')
-      await loadAll()
-    } catch (error) {
+      }
+      const { data, error } = await supabase
+        .from('delivery_orders')
+        .update(patch)
+        .eq('id', orderId)
+        .select('*')
+        .maybeSingle()
+      if (error) throw error
+
+      setOrders(prev => prev.map(item =>
+        item.id === orderId ? ({ ...item, ...patch, ...(data || {}) } as DeliveryOrder) : item
+      ))
+      setDetailsOrder(prev =>
+        prev?.id === orderId ? ({ ...prev, ...patch, ...(data || {}) } as DeliveryOrder) : prev
+      )
+      toast.success('تمت المطابقة اليدوية بدون إعادة تحميل الصفحة')
+    } catch (error: any) {
       console.error(error)
-      toast.error('فشل المطابقة اليدوية')
+      toast.error('فشل المطابقة اليدوية: ' + (error?.message ?? ''))
     }
   }
 
