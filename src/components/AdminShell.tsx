@@ -125,7 +125,7 @@ export default function AdminShell({ children }: AdminShellProps) {
 
   const visibleGroups = useMemo(() => {
     if (!permissionsReady) return []
-    return visibleGroups
+    return groups
       .map(group => ({ ...group, links: group.links.filter(link => canAccessPage(role, link.pageKey)) }))
       .filter(group => group.links.length > 0)
   }, [permissionsReady, role])
@@ -159,7 +159,7 @@ export default function AdminShell({ children }: AdminShellProps) {
   const filteredGroups = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
     if (!query) return visibleGroups
-    return groups
+    return visibleGroups
       .map(group => ({
         ...group,
         links: group.links.filter(link => `${link.label} ${group.title} ${group.hint}`.toLowerCase().includes(query)),
