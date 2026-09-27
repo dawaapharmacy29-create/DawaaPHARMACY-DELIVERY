@@ -34,8 +34,8 @@ export default function OperationsReviewCenter() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const period = useMemo(() => getOperationalPeriod(), [])
-  const selectedFrom = searchParams.get('from') || selectedFrom
-  const selectedTo = searchParams.get('to') || selectedTo
+  const selectedFrom = searchParams.get('from') || period.start
+  const selectedTo = searchParams.get('to') || period.end
   const [counts,setCounts] = useState<Counts>({pendingOrders:0,notFound:0,duplicatePending:0,duplicateExcluded:0,failed:0,pendingTrips:0,tripsWithoutInvoice:0})
   const [loading,setLoading] = useState(true)
 
