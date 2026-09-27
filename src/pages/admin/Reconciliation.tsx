@@ -1458,7 +1458,7 @@ export default function Reconciliation() {
                           riderMap={riderMap}
                         />
                       )}
-                      {(order as any).reconciliation_notes && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-sm font-bold text-slate-600">{(order as any).reconciliation_notes}</p>
+                      {(order as any).reconciliation_notes && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-sm font-bold text-slate-600">{(order as any).reconciliation_notes}</p>}
                       {(order as any).deletion_reason && <p className="mt-2 rounded-lg bg-slate-100 p-2 text-sm font-bold text-slate-700">سبب الحذف: {(order as any).deletion_reason}</p>}
                       {(order as any).reassignment_reason && <p className="mt-2 rounded-lg bg-blue-50 p-2 text-sm font-bold text-blue-700">سبب التحويل: {(order as any).reassignment_reason}</p>}
                     </div>
