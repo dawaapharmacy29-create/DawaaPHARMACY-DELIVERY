@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Upload, AlertTriangle, CheckCircle2, Download, Eye, EyeOff } from 'lucide-react'
+import { Upload, AlertTriangle, CheckCircle2, Download, Eye, EyeOff, CalendarDays } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { getBranches, getRiders, upsertRiderScheduleTemplate } from '../../lib/delivery'
 import { supabase } from '../../lib/supabase'
@@ -81,7 +80,6 @@ function parseShiftDirect(start: string, end: string): { planned_hours: number; 
 }
 
 export default function RiderSchedules() {
-  const navigate = useNavigate()
   const [activePanel, setActivePanel] = useState<'import' | 'preview' | 'accounts'>('import')
   const [file, setFile] = useState<File | null>(null)
   const [previewData, setPreviewData] = useState<ParsedRiderRow[]>([])
@@ -459,39 +457,32 @@ export default function RiderSchedules() {
 
   return (
     <div className="min-h-screen bg-[#F3F7F8]" dir="rtl">
-      <header className="bg-gradient-to-l from-[#061827] to-[#008E92] p-4 text-white">
-        <div className="mx-auto flex max-w-4xl items-center gap-4">
-          <button onClick={() => navigate('/admin')} className="rounded-xl bg-white/10 p-2 hover:bg-white/20">
-            <ArrowLeft size={22} />
-          </button>
-          <img src="/logo.png" className="h-10 w-10 rounded-xl bg-white object-contain p-1" alt="دواء" />
-          <div>
-            <h1 className="text-xl font-black">استيراد جدول الدليفري</h1>
-            <p className="text-xs text-teal-100">رفع Excel أو CSV لجداول الدليفري والمواعيد</p>
+      <main className="mx-auto max-w-5xl space-y-4 p-4">
+        <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-50 text-violet-700"><CalendarDays size={20}/></span>
+              <div>
+                <h1 className="text-xl font-black text-[#061827]">الجداول والمواعيد</h1>
+                <p className="mt-1 text-sm font-bold text-slate-500">استيراد أو مراجعة جداول العمل قبل الاعتماد، مع إظهار التحذيرات بوضوح.</p>
+              </div>
+            </div>
+            <div className="rounded-2xl bg-slate-50 px-4 py-2 text-xs font-black text-slate-500">{riders.length} مندوب محمل</div>
           </div>
-        </div>
-      </header>
-
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-slate-200 bg-white px-4">
-        {(['import', 'preview', 'accounts'] as const).map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActivePanel(tab)}
-            className={`px-4 py-3 text-sm font-bold transition-colors ${
-              activePanel === tab
-                ? 'border-b-2 border-[#008E92] text-[#008E92]'
-                : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            {tab === 'import' ? '📂 رفع الملف' :
-             tab === 'preview' ? `👁️ معاينة (${previewData.length})` :
-             `🔑 الحسابات (${generatedAccounts.length})`}
-          </button>
-        ))}
-      </div>
-
-      <main className="mx-auto max-w-4xl p-4 space-y-4">
+          <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-slate-50 p-1.5">
+            {(['import', 'preview', 'accounts'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActivePanel(tab)}
+                className={`rounded-xl px-3 py-2.5 text-sm font-black transition ${
+                  activePanel === tab ? 'bg-white text-[#008E92] shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {tab === 'import' ? 'رفع الملف' : tab === 'preview' ? `المعاينة (${previewData.length})` : `الحسابات (${generatedAccounts.length})`}
+              </button>
+            ))}
+          </div>
+        </section>
 
         {/* ===== Import Tab ===== */}
         {activePanel === 'import' && (
