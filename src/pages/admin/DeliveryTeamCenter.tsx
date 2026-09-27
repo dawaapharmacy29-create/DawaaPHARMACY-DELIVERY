@@ -39,19 +39,24 @@ function HubCard({ title, text, to, icon, badge, tone = 'teal' }: { title: strin
 export default function DeliveryTeamCenter() {
   const [stats, setStats] = useState<TeamStats>({ total: 0, active: 0, inactive: 0, missingRate: 0, missingAccount: 0, lockedAccounts: 0 })
   const [loading, setLoading] = useState(true)
+  const [warning, setWarning] = useState('')
 
   useEffect(() => {
     let alive = true
     async function load() {
       setLoading(true)
       try {
+        setWarning('')
         const [ridersResult, accountsResult] = await Promise.allSettled([
           getRiders(),
           supabase.from('staff_accounts_full_view').select('rider_id,account_id,account_status,locked_until,account_scope'),
         ])
         if (!alive) return
         const riders = ridersResult.status === 'fulfilled' ? ridersResult.value : []
-        const accountRows = accountsResult.status === 'fulfilled' ? (accountsResult.value.data || []) as any[] : []
+        const accountRows = accountsResult.status === 'fulfilled' && !accountsResult.value.error ? (accountsResult.value.data || []) as any[] : []
+        if (ridersResult.status === 'rejected' || accountsResult.status === 'rejected' || (accountsResult.status === 'fulfilled' && accountsResult.value.error)) {
+          setWarning('تعذر تحميل جزء من بيانات الفريق. الأرقام الظاهرة قد تكون غير مكتملة.')
+        }
         const riderAccountMap = new Map(accountRows.filter(row => row.account_scope === 'rider' && row.rider_id).map(row => [row.rider_id, row]))
         const active = riders.filter((r: any) => r.status === 'active').length
         const missingRate = riders.filter((r: any) => r.status === 'active' && (Number(r.order_rate || 0) <= 0 || Number(r.trip_rate || 0) <= 0)).length
@@ -78,6 +83,7 @@ export default function DeliveryTeamCenter() {
   return (
     <div className="space-y-5" dir="rtl">
       <TeamAdminTabs />
+      {warning && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-black text-amber-800">{warning}</div>}
       <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
