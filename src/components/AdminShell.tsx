@@ -1,4 +1,6 @@
 import { ReactNode, useEffect, useMemo, useState } from 'react'
+import { getCurrentSession, getUserProfile } from '../lib/auth'
+import { canAccessPage, type PageKey } from '../lib/permissions'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   BarChart3,
@@ -22,6 +24,7 @@ type AdminShellProps = {
 type AdminNavLink = {
   to: string
   label: string
+  pageKey: PageKey
 }
 
 type AdminNavGroup = {
@@ -37,8 +40,8 @@ const groups: AdminNavGroup[] = [
     hint: 'القرار السريع وملخص الدورة',
     icon: LayoutDashboard,
     links: [
-      { to: '/admin', label: 'لوحة الإدارة' },
-      { to: '/admin/executive', label: 'ملخص الإدارة' },
+      { to: '/admin', label: 'لوحة الإدارة', pageKey: 'dashboard' },
+      { to: '/admin/executive', label: 'ملخص الإدارة', pageKey: 'dashboard' },
     ],
   },
   {
@@ -46,11 +49,11 @@ const groups: AdminNavGroup[] = [
     hint: 'الأوردرات والمشاوير والحالات المعلقة',
     icon: PackageSearch,
     links: [
-      { to: '/admin/review-center', label: 'مركز مراجعة الدورة' },
-      { to: '/admin/reconciliation', label: 'مطابقة الأوردرات' },
-      { to: '/admin/trips', label: 'مراجعة المشاوير' },
-      { to: '/admin/duplicate-invoices', label: 'الأوردرات المكررة' },
-      { to: '/admin/trips-without-invoice', label: 'حالات بدون فاتورة' },
+      { to: '/admin/review-center', label: 'مركز مراجعة الدورة', pageKey: 'dashboard' },
+      { to: '/admin/reconciliation', label: 'مطابقة الأوردرات', pageKey: 'reconciliation' },
+      { to: '/admin/trips', label: 'مراجعة المشاوير', pageKey: 'trips' },
+      { to: '/admin/duplicate-invoices', label: 'الأوردرات المكررة', pageKey: 'duplicate_invoices' },
+      { to: '/admin/trips-without-invoice', label: 'حالات بدون فاتورة', pageKey: 'trips_without_invoice' },
     ],
   },
   {
@@ -58,14 +61,14 @@ const groups: AdminNavGroup[] = [
     hint: 'الفريق والجداول والحسابات والمستحقات',
     icon: Users,
     links: [
-      { to: '/admin/riders', label: 'فريق الدليفري' },
-      { to: '/admin/rider-schedules', label: 'الجداول والمواعيد' },
-      { to: '/admin/rider-accounts', label: 'الحسابات والأجهزة' },
-      { to: '/admin/performance', label: 'أداء الدليفري' },
-      { to: '/admin/hourly-analytics', label: 'الأداء حسب الساعة' },
-      { to: '/admin/rider-actions', label: 'طلبات وقرارات الدليفري' },
-      { to: '/admin/penalty-incentive', label: 'سجل الخصومات والمكافآت' },
-      { to: '/admin/rider-compensation', label: 'مستحقات الدليفري' },
+      { to: '/admin/riders', label: 'فريق الدليفري', pageKey: 'riders' },
+      { to: '/admin/rider-schedules', label: 'الجداول والمواعيد', pageKey: 'rider_schedules' },
+      { to: '/admin/rider-accounts', label: 'الحسابات والأجهزة', pageKey: 'rider_accounts' },
+      { to: '/admin/performance', label: 'أداء الدليفري', pageKey: 'performance' },
+      { to: '/admin/hourly-analytics', label: 'الأداء حسب الساعة', pageKey: 'performance' },
+      { to: '/admin/rider-actions', label: 'طلبات وقرارات الدليفري', pageKey: 'rider_actions' },
+      { to: '/admin/penalty-incentive', label: 'سجل الخصومات والمكافآت', pageKey: 'dashboard' },
+      { to: '/admin/rider-compensation', label: 'مستحقات الدليفري', pageKey: 'performance' },
     ],
   },
   {
@@ -73,10 +76,10 @@ const groups: AdminNavGroup[] = [
     hint: 'العملاء والمناطق والتحليل',
     icon: MapPinned,
     links: [
-      { to: '/admin/customer-center', label: 'مركز العملاء والمناطق' },
-      { to: '/admin/customer-analytics', label: 'تحليل العملاء' },
-      { to: '/admin/customer-import', label: 'تحديث بيانات العملاء' },
-      { to: '/admin/route-planner', label: 'المناطق والمسارات' },
+      { to: '/admin/customer-center', label: 'مركز العملاء والمناطق', pageKey: 'customer_analytics' },
+      { to: '/admin/customer-analytics', label: 'تحليل العملاء', pageKey: 'customer_analytics' },
+      { to: '/admin/customer-import', label: 'تحديث بيانات العملاء', pageKey: 'customer_import' },
+      { to: '/admin/route-planner', label: 'المناطق والمسارات', pageKey: 'dashboard' },
     ],
   },
   {
@@ -84,12 +87,12 @@ const groups: AdminNavGroup[] = [
     hint: 'التقارير والرقابة والماليات',
     icon: BarChart3,
     links: [
-      { to: '/admin/reports-center', label: 'مركز التقارير والإدارة' },
-      { to: '/admin/reports', label: 'تقرير الدليفري للدورة' },
-      { to: '/admin/cycles', label: 'أرشيف الدورات' },
-      { to: '/admin/fraud-alerts', label: 'مراجعة الحالات غير الطبيعية' },
-      { to: '/admin/cash-flow', label: 'ملخص مستحقات الدورة' },
-      { to: '/admin/branch', label: 'لوحة مدير الفرع' },
+      { to: '/admin/reports-center', label: 'مركز التقارير والإدارة', pageKey: 'dashboard' },
+      { to: '/admin/reports', label: 'تقرير الدليفري للدورة', pageKey: 'dashboard' },
+      { to: '/admin/cycles', label: 'أرشيف الدورات', pageKey: 'dashboard' },
+      { to: '/admin/fraud-alerts', label: 'مراجعة الحالات غير الطبيعية', pageKey: 'dashboard' },
+      { to: '/admin/cash-flow', label: 'ملخص مستحقات الدورة', pageKey: 'dashboard' },
+      { to: '/admin/branch', label: 'لوحة مدير الفرع', pageKey: 'branch_dashboard' },
     ],
   },
 ]
@@ -99,17 +102,41 @@ const allLinks = groups.flatMap(group => group.links)
 export default function AdminShell({ children }: AdminShellProps) {
   const location = useLocation()
   const navigate = useNavigate()
+  const [role, setRole] = useState<string | null>(null)
+  const [permissionsReady, setPermissionsReady] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const session = await getCurrentSession()
+      const profile = session?.user?.id ? await getUserProfile(session.user.id) : null
+      if (!alive) return
+      setRole(profile?.role || null)
+      setPermissionsReady(true)
+    })()
+    return () => { alive = false }
+  }, [])
+
+  const visibleGroups = useMemo(() => {
+    if (!permissionsReady) return groups
+    return visibleGroups
+      .map(group => ({ ...group, links: group.links.filter(link => canAccessPage(role, link.pageKey)) }))
+      .filter(group => group.links.length > 0)
+  }, [permissionsReady, role])
+
+  const visibleLinks = useMemo(() => visibleGroups.flatMap(group => group.links), [visibleGroups])
+
   const currentPath = useMemo(() => {
-    const exact = allLinks.find(link => link.to === location.pathname)
+    const exact = visibleLinks.find(link => link.to === location.pathname)
     if (exact) return exact.to
-    const parent = allLinks.find(link => location.pathname.startsWith(`${link.to}/`))
+    const parent = visibleLinks.find(link => location.pathname.startsWith(`${link.to}/`))
     return parent?.to || '/admin'
-  }, [location.pathname])
+  }, [location.pathname, visibleLinks])
   const activeGroupTitle = useMemo(() => {
-    return groups.find(group => group.links.some(link => link.to === currentPath))?.title || 'الرئيسية'
-  }, [currentPath])
-  const currentLink = useMemo(() => allLinks.find(link => link.to === currentPath), [currentPath])
-  const currentGroup = useMemo(() => groups.find(group => group.links.some(link => link.to === currentPath)), [currentPath])
+    return visibleGroups.find(group => group.links.some(link => link.to === currentPath))?.title || 'الرئيسية'
+  }, [currentPath, visibleGroups])
+  const currentLink = useMemo(() => visibleLinks.find(link => link.to === currentPath), [currentPath, visibleLinks])
+  const currentGroup = useMemo(() => visibleGroups.find(group => group.links.some(link => link.to === currentPath)), [currentPath, visibleGroups])
 
   const [openGroups, setOpenGroups] = useState<string[]>(() => ['الرئيسية', 'التشغيل والمراجعة'])
   const [searchQuery, setSearchQuery] = useState('')
@@ -125,14 +152,14 @@ export default function AdminShell({ children }: AdminShellProps) {
 
   const filteredGroups = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
-    if (!query) return groups
+    if (!query) return visibleGroups
     return groups
       .map(group => ({
         ...group,
         links: group.links.filter(link => `${link.label} ${group.title} ${group.hint}`.toLowerCase().includes(query)),
       }))
       .filter(group => group.links.length > 0)
-  }, [searchQuery])
+  }, [searchQuery, visibleGroups])
 
   useEffect(() => {
     if (searchQuery.trim()) setOpenGroups(filteredGroups.map(group => group.title))
@@ -146,7 +173,7 @@ export default function AdminShell({ children }: AdminShellProps) {
   }
 
   function toggleAllGroups() {
-    setOpenGroups(current => current.length === groups.length ? [activeGroupTitle] : groups.map(group => group.title))
+    setOpenGroups(current => current.length === visibleGroups.length ? [activeGroupTitle] : visibleGroups.map(group => group.title))
   }
 
   const sidebarContent = (
@@ -244,7 +271,7 @@ export default function AdminShell({ children }: AdminShellProps) {
       </nav>
 
       <div className="pointer-events-none sticky bottom-0 -mx-4 bg-gradient-to-t from-white via-white/95 to-transparent px-4 pb-2 pt-8 text-center text-[11px] font-black text-slate-400">
-        {allLinks.length} صفحة إدارة منظمة داخل {groups.length} أقسام
+        {visibleLinks.length} صفحة متاحة داخل {visibleGroups.length} أقسام
       </div>
     </>
   )
