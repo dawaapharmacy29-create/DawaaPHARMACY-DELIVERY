@@ -22,6 +22,14 @@ function safeStatus(order: any) {
   return String(order.duplicate_review_status || (order.is_duplicate_invoice ? 'pending' : 'pending'))
 }
 
+type UnifiedNoteSummary = {
+  order_id: string
+  note_count: number
+  business_note_count: number
+  unified_business_notes?: string | null
+  unified_all_notes?: string | null
+}
+
 export default function DuplicateInvoices() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -32,6 +40,7 @@ export default function DuplicateInvoices() {
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [detailsOrder, setDetailsOrder] = useState<DeliveryOrder | null>(null)
+  const [noteSummaryMap, setNoteSummaryMap] = useState<Record<string, UnifiedNoteSummary>>({})
 
   const selectedFrom = searchParams.get('from') || period.start
   const selectedTo = searchParams.get('to') || period.end
@@ -69,6 +78,23 @@ export default function DuplicateInvoices() {
       })
 
       setOrders(duplicateOrders.sort((a: any, b: any) => String(orderDate(b)).localeCompare(String(orderDate(a)))))
+      const duplicateIds = duplicateOrders.map(order => String((order as any).id || '')).filter(Boolean)
+      if (duplicateIds.length > 0) {
+        const { data: noteRows, error: noteError } = await supabase
+          .from('delivery_order_note_summary_v1')
+          .select('order_id,note_count,business_note_count,unified_business_notes,unified_all_notes')
+          .in('order_id', duplicateIds)
+        if (!noteError) {
+          const nextMap: Record<string, UnifiedNoteSummary> = {}
+          ;(noteRows || []).forEach((row: any) => { nextMap[String(row.order_id)] = row as UnifiedNoteSummary })
+          setNoteSummaryMap(nextMap)
+        } else {
+          console.error('Failed to load unified duplicate notes', noteError)
+          setNoteSummaryMap({})
+        }
+      } else {
+        setNoteSummaryMap({})
+      }
       if (ridersData.status === 'fulfilled') setRiders(ridersData.value)
     } catch (error) {
       console.error(error)
@@ -112,7 +138,7 @@ export default function DuplicateInvoices() {
   async function handleApprove(orderId: string) {
     const order = orders.find(o => o.id === orderId)
     const duplicateReason = String((order as any)?.duplicate_reason || '').trim()
-    const duplicateNote = String((order as any)?.duplicate_note || (order as any)?.notes || '').trim()
+    const duplicateNote = String(noteSummaryMap[orderId]?.unified_business_notes || (order as any)?.duplicate_note || (order as any)?.notes || '').trim()
     const doctorName = String((order as any)?.preparing_doctor_name || (order as any)?.receipt_extracted_doctor_name || '').trim()
     if (!duplicateReason || duplicateNote.length < 8 || !doctorName) {
       toast.error('لا يمكن اعتماد الفاتورة المكررة قبل وجود سبب التكرار، ملاحظة واضحة، واسم الدكتور/المحضر')
@@ -192,7 +218,8 @@ export default function DuplicateInvoices() {
               const repeatCount = groupedCounts.get(invoice) || 1
               const doctorName = (order as any).preparing_doctor_name || (order as any).receipt_extracted_doctor_name || 'غير مسجل'
               const duplicateReason = (order as any).duplicate_reason || ''
-              const duplicateNote = (order as any).duplicate_note || (order as any).notes || ''
+              const unifiedSummary = noteSummaryMap[String(order.id)]
+              const duplicateNote = unifiedSummary?.unified_business_notes || (order as any).duplicate_note || (order as any).notes || ''
               const missingAuditInfo = status === 'pending' && (!duplicateReason || duplicateNote.length < 8 || doctorName === 'غير مسجل')
               return (
                 <div key={order.id} className="rounded-2xl bg-white p-4 shadow-sm">
@@ -215,9 +242,9 @@ export default function DuplicateInvoices() {
                         <div><p className="text-slate-500">سبب التكرار</p><p className="font-bold">{duplicateReason || '—'}</p></div>
                         <div><p className="text-slate-500">الدكتور/المحضّر</p><p className="font-bold">{doctorName}</p></div>
                         <div><p className="text-slate-500">كود العميل</p><p className="font-bold">{(order as any).customer_code_snapshot || '—'}</p></div>
-                        <div><p className="text-slate-500">ملاحظة الدليفري</p><p className="font-bold">{duplicateNote || '—'}</p></div>
+                        <div><p className="text-slate-500">الملاحظات الموحدة</p><p className="font-bold">{duplicateNote || '—'}</p></div>
                       </div>
-                      {duplicateNote && <div className="mt-2 rounded-lg bg-slate-50 p-2 text-sm"><p className="text-slate-500">تفاصيل الملاحظة</p><p className="font-bold">{duplicateNote}</p></div>}
+                      {duplicateNote && <div className="mt-2 rounded-lg bg-slate-50 p-2 text-sm"><div className="mb-1 flex items-center justify-between gap-2"><p className="text-slate-500">سجل الملاحظات الموحد</p><span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-black text-slate-600">{unifiedSummary?.business_note_count || 0} ملاحظة</span></div><p className="whitespace-pre-wrap font-bold">{duplicateNote}</p></div>}
                     </div>
                     <div className="flex gap-2 sm:flex-col">
                       <button onClick={() => setDetailsOrder(order)} className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 font-black text-white hover:bg-slate-800"><Eye size={18} />تفاصيل</button>
