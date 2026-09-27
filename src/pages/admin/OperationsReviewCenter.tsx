@@ -30,6 +30,7 @@ function QueueCard({ title, text, value, to, icon, tone = 'amber' }: { title: st
 }
 
 export default function OperationsReviewCenter() {
+  const navigate = useNavigate()
   const period = useMemo(() => getOperationalPeriod(), [])
   const [counts,setCounts] = useState<Counts>({pendingOrders:0,notFound:0,duplicatePending:0,duplicateExcluded:0,failed:0,pendingTrips:0,tripsWithoutInvoice:0})
   const [loading,setLoading] = useState(true)
@@ -89,7 +90,7 @@ export default function OperationsReviewCenter() {
 
     <section className="rounded-[1.8rem] border border-teal-100 bg-teal-50 p-5">
       <div className="flex items-start gap-3"><CheckCircle2 className="mt-0.5 text-teal-700"/><div><h2 className="font-black text-teal-900">ترتيب العمل المقترح داخل الصفحة</h2><p className="mt-1 text-sm font-bold leading-7 text-teal-800">ابدأ بالمعلق والمكرر، ثم غير الموجود، ثم المشاوير، وبعد إنهاء القرارات افتح إغلاق الدورة للتأكد من الجاهزية المالية والأرشيف.</p></div></div>
-      <button type="button" onClick={()=>location.assign('/admin/cycle-closing')} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#008E92] px-4 py-2.5 text-xs font-black text-white"><LockKeyhole size={16}/> فتح إغلاق الدورة</button>
+      <button type="button" onClick={()=>navigate('/admin/cycle-closing')} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#008E92] px-4 py-2.5 text-xs font-black text-white"><LockKeyhole size={16}/> فتح إغلاق الدورة</button>
     </section>
   </div>
 }
