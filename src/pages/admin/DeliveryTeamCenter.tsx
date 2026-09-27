@@ -44,6 +44,7 @@ export default function DeliveryTeamCenter() {
   const [warning, setWarning] = useState('')
 
   useEffect(() => {
+    if (!accessReady) return
     let alive = true
     async function load() {
       setLoading(true)
