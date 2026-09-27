@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-import TeamAdminTabs from '../../components/TeamAdminTabs'
   RefreshCw, Search, Download, Eye, EyeOff,
   UserPlus, Edit3, Key, ToggleLeft, ToggleRight, ShieldCheck,
   Users, UserCheck, UserX, LockKeyhole
@@ -9,6 +8,7 @@ import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import Modal from '../../components/Modal'
 import { CANONICAL_BRANCHES, canonicalBranchName } from '../../lib/branchUtils'
+import TeamAdminTabs from '../../components/TeamAdminTabs'
 
 type StaffAccountRow = {
   row_id: string
