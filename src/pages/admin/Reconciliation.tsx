@@ -384,6 +384,32 @@ export default function Reconciliation() {
     return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([inv]) => inv))
   }, [orders])
 
+  const duplicateGroups = useMemo(() => {
+    const groups = new Map<string, DeliveryOrder[]>()
+    orders.forEach(order => {
+      const inv = normalizeOrderInvoice(order)
+      if (!inv) return
+      const current = groups.get(inv) || []
+      current.push(order)
+      groups.set(inv, current)
+    })
+    groups.forEach(group => group.sort((a, b) => {
+      const aTime = new Date((a as any).registered_at || (a as any).created_at || 0).getTime()
+      const bTime = new Date((b as any).registered_at || (b as any).created_at || 0).getTime()
+      return aTime - bTime
+    }))
+    return groups
+  }, [orders])
+
+  const duplicatePendingTotal = orders.filter(order =>
+    !(order as any).deleted_at &&
+    String((order as any).final_count_status || '') === 'pending_duplicate_review'
+  ).length
+  const duplicateExcludedTotal = orders.filter(order =>
+    !(order as any).deleted_at &&
+    String((order as any).final_count_status || '') === 'excluded_duplicate_already_counted'
+  ).length
+
   const filteredOrders = orders.filter(order => {
     const inv = normalizeOrderInvoice(order)
     const isFailed = order.status === 'failed'
@@ -435,6 +461,27 @@ export default function Reconciliation() {
     const matchesSearch = !searchTerm.trim() || haystack.some(v => wildcardMatchText(v, searchTerm))
     return matchesFilter && matchesSearch && matchesDrill
   })
+
+  const displayedOrders = useMemo(() => {
+    const rows = [...filteredOrders]
+    if (filter !== 'duplicate') return rows
+    const priority = (order: DeliveryOrder) => {
+      const status = String((order as any).final_count_status || '')
+      if (status === 'pending_duplicate_review') return 0
+      if (status === 'excluded_duplicate_already_counted') return 1
+      if ((order as any).is_countable === true) return 2
+      return 3
+    }
+    return rows.sort((a, b) => {
+      const p = priority(a) - priority(b)
+      if (p !== 0) return p
+      const ai = normalizeOrderInvoice(a)
+      const bi = normalizeOrderInvoice(b)
+      const byInvoice = ai.localeCompare(bi, 'ar', { numeric: true })
+      if (byInvoice !== 0) return byInvoice
+      return new Date((a as any).registered_at || 0).getTime() - new Date((b as any).registered_at || 0).getTime()
+    })
+  }, [filteredOrders, filter])
 
   async function readImportFile(file: File): Promise<Record<string, unknown>[]> {
     const buffer = await file.arrayBuffer()
@@ -1270,6 +1317,38 @@ export default function Reconciliation() {
           </div>
         )}
 
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-xl font-black text-[#061827]">مركز قرار الدورة</h2>
+              <p className="mt-1 text-sm font-bold text-slate-500">ابدأ بالحالات التي تحتاج قرارًا إداريًا، ثم راجع المستبعدات للتأكد قبل قفل الدورة.</p>
+            </div>
+            <span className="rounded-full bg-slate-100 px-4 py-2 text-xs font-black text-slate-600">الأولوية: المعلق ← غير الموجود ← الفاشل ← المستبعد</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <button type="button" onClick={() => applyMainFilter('duplicate')} className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-right transition hover:-translate-y-0.5 hover:shadow-md">
+              <p className="text-3xl font-black text-amber-700">{duplicatePendingTotal}</p>
+              <p className="mt-1 font-black text-amber-900">مكرر يحتاج قرار الآن</p>
+              <p className="mt-1 text-xs font-bold text-amber-700">يظهر أولًا داخل فلتر المكرر مع مقارنة التسجيلات.</p>
+            </button>
+            <button type="button" onClick={() => applyMainFilter('not_found')} className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-right transition hover:-translate-y-0.5 hover:shadow-md">
+              <p className="text-3xl font-black text-rose-700">{notFoundTotal}</p>
+              <p className="mt-1 font-black text-rose-900">غير موجود في ملف المبيعات</p>
+              <p className="mt-1 text-xs font-bold text-rose-700">راجع الرقم/التاريخ أو اعتمد يدويًا لو عندك إثبات.</p>
+            </button>
+            <button type="button" onClick={() => applyMainFilter('failed')} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-right transition hover:-translate-y-0.5 hover:shadow-md">
+              <p className="text-3xl font-black text-slate-700">{failedTotal}</p>
+              <p className="mt-1 font-black text-slate-900">فاشل ومستبعد</p>
+              <p className="mt-1 text-xs font-bold text-slate-600">راجع فقط الحالات التي تشير الملاحظة فيها إلى أن مندوبًا آخر نفذها.</p>
+            </button>
+            <button type="button" onClick={() => applyMainFilter('duplicate')} className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-right transition hover:-translate-y-0.5 hover:shadow-md">
+              <p className="text-3xl font-black text-blue-700">{duplicateExcludedTotal}</p>
+              <p className="mt-1 font-black text-blue-900">مكرر مستبعد بالفعل</p>
+              <p className="mt-1 text-xs font-bold text-blue-700">للمراجعة النهائية فقط قبل قفل الدورة.</p>
+            </button>
+          </div>
+        </section>
+
         {hasDrillFilters && (
           <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -1325,11 +1404,11 @@ export default function Reconciliation() {
           </div>
         </div>
 
-        {filteredOrders.length === 0 ? (
+        {displayedOrders.length === 0 ? (
           <div className="rounded-3xl border border-dashed p-8 text-center font-bold text-slate-500">مفيش نتائج</div>
         ) : (
           <div className="space-y-3">
-            {filteredOrders.map(order => {
+            {displayedOrders.map(order => {
               const rider = riderMap.get(order.rider_id)
               const inv = normalizeOrderInvoice(order)
               const finalStatus = (order as any).final_count_status || 'pending'
@@ -1351,11 +1430,18 @@ export default function Reconciliation() {
                         <Info label="كود العميل" value={(order as any).customer_code_snapshot || (order as any).customer_code || '—'} />
                         <Info label="التليفون" value={order.customer_phone_snapshot || (order as any).customer_phone || '—'} />
                         <Info label="قيمة الفاتورة" value={formatMoney(order.invoice_amount || (order as any).invoice_value || 0)} />
-                        <Info label="حالة بي كونكت" value={order.bconnect_match_status || 'pending'} />
-                        <Info label="سبب الاستبعاد" value={(order as any).count_exclusion_reason || '—'} />
+                        <Info label="حالة المطابقة" value={friendlyReason(order.bconnect_match_status || 'pending')} />
+                        <Info label="سبب القرار" value={friendlyReason((order as any).count_exclusion_reason)} />
                         <Info label="دكتور التحضير" value={(order as any).preparing_doctor_name || '—'} />
                       </div>
-                      {(order as any).reconciliation_notes && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-sm font-bold text-slate-600">{(order as any).reconciliation_notes}</p>}
+                      {(duplicateInvoiceSet.has(inv) || order.is_duplicate_invoice) && (
+                        <DuplicateDecisionPanel
+                          order={order}
+                          siblings={duplicateGroups.get(inv) || [order]}
+                          riderMap={riderMap}
+                        />
+                      )}
+                      {(order as any).reconciliation_notes && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-sm font-bold text-slate-600">{(order as any).reconciliation_notes}</p>
                       {(order as any).deletion_reason && <p className="mt-2 rounded-lg bg-slate-100 p-2 text-sm font-bold text-slate-700">سبب الحذف: {(order as any).deletion_reason}</p>}
                       {(order as any).reassignment_reason && <p className="mt-2 rounded-lg bg-blue-50 p-2 text-sm font-bold text-blue-700">سبب التحويل: {(order as any).reassignment_reason}</p>}
                     </div>
@@ -1486,6 +1572,93 @@ function FilterButton({ active, onClick, children }: { active: boolean; onClick:
 
 function Info({ label, value }: { label: string; value: string }) {
   return <div><p className="text-slate-500">{label}</p><p className="font-bold">{value}</p></div>
+}
+
+function friendlyReason(value: unknown) {
+  const raw = String(value || '').trim()
+  const map: Record<string, string> = {
+    second_visit: 'زيارة ثانية للعميل',
+    preparation_error: 'خطأ تجهيز / إعادة توصيل',
+    return: 'مرتجع / إعادة حركة',
+    invoice_correction: 'تصحيح رقم فاتورة',
+    duplicate_extra_unapproved: 'تسجيل إضافي لنفس الفاتورة بدون اعتماد',
+    other: 'سبب آخر',
+    failed_order: 'الأوردر فاشل',
+    invoice_not_found_in_bconnect: 'رقم الفاتورة غير موجود في ملف المبيعات',
+    duplicate_requires_admin_approval: 'تكرار يحتاج قرار إداري',
+    marked_not_found_by_admin: 'مستبعد يدويًا بواسطة الإدارة',
+  }
+  return map[raw] || raw || 'غير مسجل'
+}
+
+function DuplicateDecisionPanel({
+  order,
+  siblings,
+  riderMap,
+}: {
+  order: DeliveryOrder
+  siblings: DeliveryOrder[]
+  riderMap: Map<string, Rider>
+}) {
+  const currentId = order.id
+  const others = siblings.filter(item => item.id !== currentId)
+  const countedOther = others.find(item => (item as any).is_countable === true)
+  const failedOther = others.find(item => item.status === 'failed' || String((item as any).final_count_status || '') === 'excluded_failed')
+  const currentDelivered = order.status === 'delivered' || order.status === 'registered'
+  const currentPending = String((order as any).final_count_status || '') === 'pending_duplicate_review'
+
+  let decisionTitle = 'راجع التسجيلات قبل القرار'
+  let decisionText = 'نفس رقم الفاتورة مسجل أكثر من مرة. قارن التنفيذ الفعلي والمندوب والوقت والسبب.'
+  let decisionClass = 'border-amber-200 bg-amber-50 text-amber-900'
+  if (currentPending && failedOther && currentDelivered && !countedOther) {
+    decisionTitle = 'مرشح قوي للاعتماد'
+    decisionText = 'يوجد تسجيل آخر لنفس الفاتورة فاشل وغير محتسب، بينما هذا التسجيل منفذ. راجع المندوب والوقت ثم اعتمد إذا كانت إعادة التوصيل صحيحة.'
+    decisionClass = 'border-emerald-200 bg-emerald-50 text-emerald-900'
+  } else if (countedOther) {
+    decisionTitle = 'مرشح للاستبعاد'
+    decisionText = 'يوجد تسجيل آخر لنفس رقم الفاتورة محتسب بالفعل. لا تعتمد هذا التسجيل إلا لو ثبت أنها زيارة/توصيلة مستقلة فعلًا.'
+    decisionClass = 'border-rose-200 bg-rose-50 text-rose-900'
+  }
+
+  return (
+    <div className="mt-3 rounded-2xl border border-amber-200 bg-white p-3 shadow-sm">
+      <div className={`mb-3 rounded-xl border p-3 ${decisionClass}`}>
+        <p className="font-black">{decisionTitle}</p>
+        <p className="mt-1 text-xs font-bold leading-6">{decisionText}</p>
+      </div>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-sm font-black text-slate-800">مقارنة تسجيلات نفس الفاتورة ({siblings.length})</p>
+        <span className="text-xs font-bold text-slate-500">التسجيل الحالي مميز بإطار أغمق</span>
+      </div>
+      <div className="grid gap-2 lg:grid-cols-2">
+        {siblings.map(item => {
+          const isCurrent = item.id === currentId
+          const rider = riderMap.get(item.rider_id)
+          const counted = (item as any).is_countable === true
+          const finalStatus = String((item as any).final_count_status || '')
+          const stamp = (item as any).delivered_at || (item as any).registered_at || (item as any).created_at
+          return (
+            <div key={item.id} className={`rounded-xl border p-3 text-xs ${isCurrent ? 'border-slate-700 bg-slate-50' : 'border-slate-200 bg-white'}`}>
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="font-black text-slate-900">{isCurrent ? 'هذا التسجيل' : 'التسجيل الآخر'}</span>
+                <span className={`rounded-full px-2 py-1 font-black ${counted ? 'bg-emerald-100 text-emerald-700' : item.status === 'failed' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
+                  {counted ? 'محتسب' : item.status === 'failed' ? 'فاشل' : 'غير محتسب'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                <Info label="المندوب" value={rider?.name || (item as any).rider_name || 'غير محدد'} />
+                <Info label="حالة التنفيذ" value={item.status || '—'} />
+                <Info label="التوقيت" value={stamp ? new Date(stamp).toLocaleString('ar-EG') : '—'} />
+                <Info label="النتيجة المالية" value={finalStatus || '—'} />
+                <Info label="سبب التكرار" value={friendlyReason((item as any).duplicate_reason)} />
+                <Info label="سبب الفشل" value={friendlyReason((item as any).failed_reason)} />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 function StatusPill({ counted, status, finalStatus }: { counted: boolean; status: string; finalStatus: string }) {
