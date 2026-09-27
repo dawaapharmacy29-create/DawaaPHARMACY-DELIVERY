@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, CheckCircle2, ClipboardCheck, FileText, RefreshCw, Search, ShieldAlert, TrendingUp, XCircle } from 'lucide-react'
+import { CheckCircle2, ClipboardCheck, FileText, RefreshCw, Search, ShieldAlert, TrendingUp, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
@@ -28,7 +28,7 @@ export default function ExecutiveDashboardUnified() {
       const { data, error } = await supabase.rpc('delivery_performance_fast', { p_from: period.start, p_to: period.end })
       if (error) throw error
       const result = rpcResult(data)
-      if (!result?.success) throw new Error(result?.message || 'تعذر تحميل لوحة الإدارة العليا')
+      if (!result?.success) throw new Error(result?.message || 'تعذر تحميل ملخص الإدارة')
       setRows(Array.isArray(result.rows) ? result.rows : [])
     } catch (error: any) {
       toast.error(error?.message || 'تعذر تحميل لوحة الإدارة العليا')
@@ -48,7 +48,7 @@ export default function ExecutiveDashboardUnified() {
   const deliveryRate = summary.total ? summary.delivered / summary.total * 100 : 0
 
   return <div className="space-y-5 p-4" dir="rtl">
-    <header className="flex flex-wrap items-center justify-between gap-3 rounded-[2rem] border bg-white p-5 shadow-sm"><div><button onClick={() => navigate('/admin')} className="mb-3 inline-flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-2 font-black"><ArrowRight size={16}/> رجوع</button><h1 className="text-3xl font-black">لوحة الإدارة العليا</h1><p className="text-xs font-bold text-slate-400">تجميع مباشر على السيرفر · {period.start} → {period.end}</p></div><button onClick={load} disabled={loading} className="rounded-2xl bg-emerald-600 px-5 py-3 font-black text-white"><RefreshCw className={loading ? 'animate-spin' : ''}/></button></header>
+    <header className="flex flex-wrap items-center justify-between gap-3 rounded-[2rem] border bg-white p-5 shadow-sm"><div><p className="text-xs font-black text-[#008E92]">الرئيسية</p><h1 className="mt-1 text-2xl font-black">ملخص الإدارة</h1><p className="mt-1 text-xs font-bold text-slate-400">الدورة {period.start} → {period.end}</p></div><button onClick={load} disabled={loading} className="rounded-2xl bg-emerald-600 px-5 py-3 font-black text-white"><RefreshCw className={loading ? 'animate-spin' : ''}/></button></header>
 
     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
       <Card label="إجمالي أوردرات الدورة" value={loading ? '—' : summary.total} sub={`${rows.length} دليفري`} icon={<ClipboardCheck/>} onClick={() => navigate(reconciliationUrl({ from: period.start, to: period.end }))}/>
