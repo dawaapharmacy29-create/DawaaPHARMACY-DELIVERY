@@ -11,6 +11,7 @@ import { getCurrentSession, getRiderSession, getUserProfile, logout } from '../.
 import { getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
 import { formatMinutes, minutesBetween } from '../../lib/orderTimeline'
 import type { DeliveryOrder, InternalTrip, Rider } from '../../lib/types'
+import ReportsAdminTabs from '../../components/ReportsAdminTabs'
 
 type Profile = { id: string; display_name: string; role: string; branch_id: string | null }
 type ReviewModal = { type: 'reassign' | 'delete' | 'penalty' | 'reward' | 'order_to_trip' | 'trip_to_order' | 'edit_invoice'; row: any } | null
@@ -263,6 +264,7 @@ export default function BranchManagerDashboard() {
       </div>
     </header>
     <main className="mx-auto max-w-7xl space-y-5 p-4">
+      <ReportsAdminTabs />
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-5 xl:grid-cols-10">
         <Card title="أوردرات الدورة" value={kpi.orders} icon={<Package/>}/>
         <Card title="تم التسليم" value={kpi.delivered} icon={<CheckCircle2/>} tone="emerald"/>
