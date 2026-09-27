@@ -5,6 +5,7 @@ import OperationsAdminTabs from '../../components/OperationsAdminTabs'
 import CycleSelector from '../../components/CycleSelector'
 import { getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
+import { useAdminAccess } from '../../hooks/useAdminAccess'
 
 type Counts = {
   pendingOrders: number
@@ -32,6 +33,7 @@ function QueueCard({ title, text, value, to, icon, tone = 'amber' }: { title: st
 
 export default function OperationsReviewCenter() {
   const navigate = useNavigate()
+  const { ready: accessReady, canAccess } = useAdminAccess()
   const [searchParams, setSearchParams] = useSearchParams()
   const period = useMemo(() => getOperationalPeriod(), [])
   const selectedFrom = searchParams.get('from') || period.start
@@ -85,7 +87,9 @@ export default function OperationsReviewCenter() {
     return `${path}${separator}from=${encodeURIComponent(selectedFrom)}&to=${encodeURIComponent(selectedTo)}`
   }
 
-  const decisionTotal = counts.pendingOrders + counts.pendingTrips
+  const decisionTotal =
+    (canAccess('reconciliation') ? counts.pendingOrders : 0) +
+    (canAccess('trips') ? counts.pendingTrips : 0)
   return <div className="space-y-5" dir="rtl">
     <OperationsAdminTabs />
     <CycleSelector from={selectedFrom} to={selectedTo} onApply={applyCycle} />
@@ -100,16 +104,16 @@ export default function OperationsReviewCenter() {
     </section>
 
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <QueueCard title="مطابقة تحتاج قرار" text="الحالات المعلقة داخل مطابقة الأوردرات." value={loading?'—':counts.pendingOrders} to={withCycle('/admin/reconciliation?filter=pending')} icon={<GitCompareArrows size={19}/>} />
-      <QueueCard title="مكرر يحتاج قرار" text="المكرر الذي لم يُعتمد أو يُرفض بعد." value={loading?'—':counts.duplicatePending} to={withCycle('/admin/reconciliation?filter=duplicate&review_status=pending')} icon={<CopyCheck size={19}/>} tone="amber" />
-      <QueueCard title="مشاوير تنتظر" text="مشاوير لم يصدر عليها قرار نهائي." value={loading?'—':counts.pendingTrips} to={withCycle('/admin/trips')} icon={<Route size={19}/>} tone="amber" />
-      <QueueCard title="غير موجود في المبيعات" text="أوردرات تحتاج إثبات أو استبعاد إداري." value={loading?'—':counts.notFound} to={withCycle('/admin/reconciliation?filter=not_found')} icon={<FileQuestion size={19}/>} tone="rose" />
+      {accessReady && canAccess('reconciliation') && <QueueCard title="مطابقة تحتاج قرار" text="الحالات المعلقة داخل مطابقة الأوردرات." value={loading?'—':counts.pendingOrders} to={withCycle('/admin/reconciliation?filter=pending')} icon={<GitCompareArrows size={19}/>} />}
+      {accessReady && canAccess('duplicate_invoices') && <QueueCard title="مكرر يحتاج قرار" text="المكرر الذي لم يُعتمد أو يُرفض بعد." value={loading?'—':counts.duplicatePending} to={withCycle('/admin/reconciliation?filter=duplicate&review_status=pending')} icon={<CopyCheck size={19}/>} tone="amber" />}
+      {accessReady && canAccess('trips') && <QueueCard title="مشاوير تنتظر" text="مشاوير لم يصدر عليها قرار نهائي." value={loading?'—':counts.pendingTrips} to={withCycle('/admin/trips')} icon={<Route size={19}/>} tone="amber" />}
+      {accessReady && canAccess('reconciliation') && <QueueCard title="غير موجود في المبيعات" text="أوردرات تحتاج إثبات أو استبعاد إداري." value={loading?'—':counts.notFound} to={withCycle('/admin/reconciliation?filter=not_found')} icon={<FileQuestion size={19}/>} tone="rose" />}
     </section>
 
     <section className="grid gap-3 md:grid-cols-3">
-      <QueueCard title="فاشل ومستبعد" text="للمراجعة لو الملاحظة تشير لمندوب آخر أو إعادة توصيل." value={loading?'—':counts.failed} to={withCycle('/admin/reconciliation?filter=failed')} icon={<AlertTriangle size={19}/>} tone="slate" />
-      <QueueCard title="مكرر مستبعد" text="مراجعة نهائية للحالات المستبعدة بالفعل." value={loading?'—':counts.duplicateExcluded} to={withCycle('/admin/reconciliation?filter=duplicate&countable=false')} icon={<ShieldCheck size={19}/>} tone="slate" />
-      <QueueCard title="مشاوير بدون فاتورة" text="مسار مراجعة مستقل للمشاوير التي بلا مرجع فاتورة." value={loading?'—':counts.tripsWithoutInvoice} to={withCycle('/admin/trips-without-invoice')} icon={<FileQuestion size={19}/>} tone="slate" />
+      {accessReady && canAccess('reconciliation') && <QueueCard title="فاشل ومستبعد" text="للمراجعة لو الملاحظة تشير لمندوب آخر أو إعادة توصيل." value={loading?'—':counts.failed} to={withCycle('/admin/reconciliation?filter=failed')} icon={<AlertTriangle size={19}/>} tone="slate" />}
+      {accessReady && canAccess('duplicate_invoices') && <QueueCard title="مكرر مستبعد" text="مراجعة نهائية للحالات المستبعدة بالفعل." value={loading?'—':counts.duplicateExcluded} to={withCycle('/admin/reconciliation?filter=duplicate&countable=false')} icon={<ShieldCheck size={19}/>} tone="slate" />}
+      {accessReady && canAccess('trips_without_invoice') && <QueueCard title="مشاوير بدون فاتورة" text="مسار مراجعة مستقل للمشاوير التي بلا مرجع فاتورة." value={loading?'—':counts.tripsWithoutInvoice} to={withCycle('/admin/trips-without-invoice')} icon={<FileQuestion size={19}/>} tone="slate" />}
     </section>
 
     <section className="rounded-[1.8rem] border border-teal-100 bg-teal-50 p-5">
