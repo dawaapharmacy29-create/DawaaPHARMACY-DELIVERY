@@ -9,6 +9,7 @@ function replaceOnce(before, after, label) {
   source = source.replace(before, after)
 }
 
+if (!source.includes('function exportRiderCycleApprovalXlsx()') && !source.includes('async function exportRiderCycleApprovalXlsx()')) {
 replaceOnce(
 `  function printMonthlyReport() {`,
 `  function exportRiderCycleApprovalXlsx() {
@@ -354,6 +355,7 @@ replaceOnce(
   function printMonthlyReport() {`,
 'cycle rider Excel export function',
 )
+}
 
 replaceOnce(
 `          <button onClick={printMonthlyReport} className="flex items-center gap-2 rounded-2xl bg-[#061827] px-5 py-3 font-black text-white shadow-sm hover:bg-[#0b2a42]">
