@@ -3,6 +3,7 @@ import { ArrowRight, Bell, Printer, RefreshCw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
+import ReportsAdminTabs from '../../components/ReportsAdminTabs'
 
 type Row = Record<string, any>
 type AdjustmentType = 'reward' | 'penalty'
@@ -173,6 +174,7 @@ export default function RiderMonthlyReports() {
 
   return (
     <div className="space-y-5 text-right" dir="rtl">
+      <div className="print:hidden"><ReportsAdminTabs /></div>
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-white bg-white p-4 shadow-sm print:hidden">
         <div>
           <button onClick={() => navigate('/admin')} className="mb-3 inline-flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-2 text-sm font-black text-slate-600"><ArrowRight size={16}/> رجوع</button>
