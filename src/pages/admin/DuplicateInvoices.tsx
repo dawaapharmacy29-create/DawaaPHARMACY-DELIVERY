@@ -9,6 +9,7 @@ import { supabase } from '../../lib/supabase'
 import CycleSelector from '../../components/CycleSelector'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
 
+// Unified note read model: delivery_order_note_summary_v1 is the single UI source for order notes.
 function normalizeInvoice(order: any) {
   return String(order.invoice_number || order.invoice_no || '').trim()
 }
