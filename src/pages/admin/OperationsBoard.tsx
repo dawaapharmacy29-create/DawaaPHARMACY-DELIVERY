@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, Columns as Columns3, RefreshCcw, Search, ShieldAlert } from 'lucide-react'
 import AdminModuleShell from '../../components/AdminModuleShell'
+import OperationsAdminTabs from '../../components/OperationsAdminTabs'
 import { getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
 
@@ -51,7 +52,8 @@ export default function OperationsBoard(){
 
   const openInReconciliation=(order:any)=>navigate(`/admin/reconciliation?invoice_number=${encodeURIComponent(invoiceOf(order))}`)
 
-  return <AdminModuleShell title="مركز العمليات الحي · Fast" subtitle={`الدورة ${period.start} إلى ${period.end} · تحديث تلقائي كل دقيقة بدون تحميل كل الدورة`} icon={<Columns3/>} loading={loading&&rows.length===0} onRefresh={()=>load()}>
+  return <AdminModuleShell title="متابعة التشغيل الحي" subtitle={`الدورة ${period.start} إلى ${period.end} · تحديث تلقائي كل دقيقة`} icon={<Columns3/>} loading={loading&&rows.length===0} onRefresh={()=>load()}>
+    <div className="mb-4"><OperationsAdminTabs /></div>
     {error&&<div className="mb-4 flex items-center justify-between rounded-2xl border border-rose-200 bg-rose-50 p-4 font-black text-rose-700"><span>{error}</span><button type="button" onClick={()=>load()}><RefreshCcw size={18}/></button></div>}
     <section className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6"><Metric label="أوردرات الدورة" value={Number(summary.cycle_orders||0)} note="عداد من السيرفر"/><Metric label="أوردرات اليوم" value={Number(summary.today_orders||0)} note={`${summary.today_delivered||0} تم · ${summary.today_failed||0} فشل`}/><Metric label="مفتوحة حية" value={Number(summary.live||0)} note="آخر 24 ساعة"/><Metric label="متأخرة +60د" value={Number(summary.overdue||0)} danger={Number(summary.overdue||0)>0} note="تحتاج متابعة"/><Metric label="خطر +120د" value={Number(summary.danger||0)} danger={Number(summary.danger||0)>0} note="تدخل فوري"/><Metric label="قديمة مفتوحة" value={Number(summary.stale||0)} note="منفصلة عن التشغيل الحي"/></section>
     <section className="mb-4 grid gap-3 lg:grid-cols-[1fr_auto]"><div className="relative"><Search className="absolute right-4 top-3.5 text-slate-400" size={18}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="بحث بالفاتورة أو العميل أو الكود أو المندوب" className="w-full rounded-2xl border bg-white py-3 pr-11 font-bold outline-none"/></div><div className="flex flex-wrap gap-2">{filters.map(([key,label,count])=><button type="button" key={key} onClick={()=>setFilter(key)} className={`rounded-xl px-3 py-2 text-xs font-black ${filter===key?'bg-[#0b2d33] text-white':'bg-white text-slate-600'}`}>{label} {count}</button>)}</div></section>
