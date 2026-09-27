@@ -2,6 +2,8 @@ import { lazy, Suspense, useState } from 'react'
 import { AlertTriangle, BarChart3, CheckCircle2, ClipboardCheck, FileText, Gauge, PackageSearch, ShieldAlert, Truck, Users, WalletCards } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import AdminDashboardFast from './AdminDashboardFast'
+import { useAdminAccess } from '../../hooks/useAdminAccess'
+import type { PageKey } from '../../lib/permissions'
 
 const LiveRiderLeaderboardPanel = lazy(() => import('../../components/LiveRiderLeaderboardPanel'))
 const RiderOperationsHealth = lazy(() => import('../../components/RiderOperationsHealth'))
@@ -13,6 +15,7 @@ type ActionCardProps = {
   title: string
   text: string
   to: string
+  pageKey: PageKey
   icon: JSX.Element
   tone?: 'teal' | 'amber' | 'rose' | 'slate'
 }
@@ -42,7 +45,9 @@ function PanelSkeleton() {
 }
 
 export default function AdminManagerDashboardV2() {
+  const { role, ready, canAccess } = useAdminAccess()
   const [showMore, setShowMore] = useState(false)
+  const topLevelManagement = ['admin', 'general_manager', 'operations_manager', 'branches_manager'].includes(String(role || ''))
 
   return (
     <div className="space-y-6" dir="rtl">
@@ -56,10 +61,10 @@ export default function AdminManagerDashboardV2() {
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <ActionCard title="مركز مراجعة الدورة" text="ابدأ من قائمة القرارات المعلقة ثم انتقل للمطابقة والمشاوير والإغلاق." to="/admin/review-center" icon={<PackageSearch size={20}/>} tone="amber" />
-          <ActionCard title="مراجعة المشاوير" text="المشاوير المعلقة والمرفوضة وإثباتات الحركة." to="/admin/trips" icon={<Truck size={20}/>} tone="teal" />
-          <ActionCard title="جاهزية إغلاق الدورة" text="تأكد من أن كل البنود المالية والتشغيلية جاهزة للقفل." to="/admin/cycle-closing" icon={<ClipboardCheck size={20}/>} tone="rose" />
-          <ActionCard title="مستحقات الدليفري" text="الأوردرات والمشاوير والأسعار والخصومات والمكافآت." to="/admin/rider-compensation" icon={<WalletCards size={20}/>} tone="slate" />
+          {ready && canAccess('dashboard') && <ActionCard title="مركز مراجعة الدورة" text="ابدأ من قائمة القرارات المعلقة ثم انتقل للمطابقة والمشاوير والإغلاق." to="/admin/review-center" pageKey="dashboard" icon={<PackageSearch size={20}/>} tone="amber" />}
+          {ready && canAccess('trips') && <ActionCard title="مراجعة المشاوير" text="المشاوير المعلقة والمرفوضة وإثباتات الحركة." to="/admin/trips" pageKey="trips" icon={<Truck size={20}/>} tone="teal" />}
+          {ready && canAccess('dashboard') && <ActionCard title="جاهزية إغلاق الدورة" text="تأكد من أن كل البنود المالية والتشغيلية جاهزة للقفل." to="/admin/cycle-closing" pageKey="dashboard" icon={<ClipboardCheck size={20}/>} tone="rose" />}
+          {ready && canAccess('performance') && <ActionCard title="مستحقات الدليفري" text="الأوردرات والمشاوير والأسعار والخصومات والمكافآت." to="/admin/rider-compensation" pageKey="performance" icon={<WalletCards size={20}/>} tone="slate" />}
         </div>
       </section>
 
@@ -71,20 +76,20 @@ export default function AdminManagerDashboardV2() {
             <p className="mt-1 text-xs font-bold text-slate-400">ملخص سريع لأهم أرقام الدورة والحركة اليومية.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <ActionCard title="ملخص الإدارة" text="صورة موحدة عن أداء المناديب والحالات." to="/admin/executive" icon={<Gauge size={18}/>} tone="slate" />
+            {ready && canAccess('dashboard') && <ActionCard title="ملخص الإدارة" text="صورة موحدة عن أداء المناديب والحالات." to="/admin/executive" pageKey="dashboard" icon={<Gauge size={18}/>} tone="slate" />}
           </div>
         </div>
         <AdminDashboardFast embedded />
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <ActionCard title="فريق الدليفري" text="بيانات الفريق والمواعيد والحسابات والأجهزة." to="/admin/riders" icon={<Users size={20}/>} />
-        <ActionCard title="أداء الدليفري" text="تحليل الأداء والفروقات على مستوى الدورة." to="/admin/performance" icon={<BarChart3 size={20}/>} />
-        <ActionCard title="طلبات وقرارات الدليفري" text="الملاحظات والخصومات والمكافآت التي تحتاج مراجعة أو اعتماد." to="/admin/rider-actions" icon={<FileText size={20}/>} tone="amber" />
-        <ActionCard title="مراجعة الحالات غير الطبيعية" text="التكرار، التأخير، البيانات الناقصة، والحالات غير المعتادة." to="/admin/fraud-alerts" icon={<ShieldAlert size={20}/>} tone="rose" />
+        {ready && canAccess('riders') && <ActionCard title="فريق الدليفري" text="بيانات الفريق والمواعيد والحسابات والأجهزة." to="/admin/riders" pageKey="riders" icon={<Users size={20}/>} />}
+        {ready && canAccess('performance') && <ActionCard title="أداء الدليفري" text="تحليل الأداء والفروقات على مستوى الدورة." to="/admin/performance" pageKey="performance" icon={<BarChart3 size={20}/>} />}
+        {ready && canAccess('rider_actions') && <ActionCard title="طلبات وقرارات الدليفري" text="الملاحظات والخصومات والمكافآت التي تحتاج مراجعة أو اعتماد." to="/admin/rider-actions" pageKey="rider_actions" icon={<FileText size={20}/>} tone="amber" />}
+        {ready && canAccess('dashboard') && <ActionCard title="مراجعة الحالات غير الطبيعية" text="التكرار، التأخير، البيانات الناقصة، والحالات غير المعتادة." to="/admin/fraud-alerts" pageKey="dashboard" icon={<ShieldAlert size={20}/>} tone="rose" />}
       </section>
 
-      <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+      {topLevelManagement && <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-black text-[#061827]">تحليلات إضافية</h2>
@@ -106,12 +111,12 @@ export default function AdminManagerDashboardV2() {
             </div>
           </Suspense>
         )}
-      </section>
+      </section>}
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <ActionCard title="العملاء والمناطق" text="تحليل العملاء وتحديث البيانات وتنظيم المناطق من مركز واحد." to="/admin/customer-center" icon={<CheckCircle2 size={20}/>} tone="slate" />
-        <ActionCard title="التقارير والإدارة" text="تقارير الدورة والأرشيف والرقابة والمستحقات." to="/admin/reports-center" icon={<FileText size={20}/>} tone="slate" />
-        <ActionCard title="تنبيهات تحتاج مراجعة" text="افتح مركز الحالات غير الطبيعية لو فيه أي إشارة تستحق قرار." to="/admin/fraud-alerts" icon={<AlertTriangle size={20}/>} tone="amber" />
+        {ready && canAccess('customer_analytics') && <ActionCard title="العملاء والمناطق" text="تحليل العملاء وتحديث البيانات وتنظيم المناطق من مركز واحد." to="/admin/customer-center" pageKey="customer_analytics" icon={<CheckCircle2 size={20}/>} tone="slate" />}
+        {ready && canAccess('dashboard') && <ActionCard title="التقارير والإدارة" text="تقارير الدورة والأرشيف والرقابة والمستحقات." to="/admin/reports-center" pageKey="dashboard" icon={<FileText size={20}/>} tone="slate" />}
+        {ready && canAccess('dashboard') && <ActionCard title="تنبيهات تحتاج مراجعة" text="افتح مركز الحالات غير الطبيعية لو فيه أي إشارة تستحق قرار." to="/admin/fraud-alerts" pageKey="dashboard" icon={<AlertTriangle size={20}/>} tone="amber" />}
       </section>
     </div>
   )
