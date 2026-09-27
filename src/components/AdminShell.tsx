@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useMemo, useState } from 'react'
-import { getCurrentSession, getUserProfile } from '../lib/auth'
+import { getCurrentSession, getUserProfile, restoreRiderSession } from '../lib/auth'
 import { canAccessPage, type PageKey } from '../lib/permissions'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -97,8 +97,6 @@ const groups: AdminNavGroup[] = [
   },
 ]
 
-const allLinks = groups.flatMap(group => group.links)
-
 export default function AdminShell({ children }: AdminShellProps) {
   const location = useLocation()
   const navigate = useNavigate()
@@ -108,6 +106,14 @@ export default function AdminShell({ children }: AdminShellProps) {
   useEffect(() => {
     let alive = true
     void (async () => {
+      const local = restoreRiderSession()
+      if (local?.role && local.role !== 'rider') {
+        if (!alive) return
+        setRole(local.role)
+        setPermissionsReady(true)
+        return
+      }
+
       const session = await getCurrentSession()
       const profile = session?.user?.id ? await getUserProfile(session.user.id) : null
       if (!alive) return
@@ -118,7 +124,7 @@ export default function AdminShell({ children }: AdminShellProps) {
   }, [])
 
   const visibleGroups = useMemo(() => {
-    if (!permissionsReady) return groups
+    if (!permissionsReady) return []
     return visibleGroups
       .map(group => ({ ...group, links: group.links.filter(link => canAccessPage(role, link.pageKey)) }))
       .filter(group => group.links.length > 0)
@@ -215,7 +221,9 @@ export default function AdminShell({ children }: AdminShellProps) {
       </div>
 
       <nav className="mt-3 space-y-2 pb-16">
-        {filteredGroups.length === 0 ? (
+        {!permissionsReady ? (
+          <div className="rounded-3xl border border-slate-100 bg-slate-50 p-5 text-center text-sm font-black text-slate-400">جاري تحميل صلاحيات الحساب...</div>
+        ) : filteredGroups.length === 0 ? (
           <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-5 text-center">
             <Search className="mx-auto text-slate-300" size={24} />
             <p className="mt-2 text-sm font-black text-slate-500">لا توجد صفحة بهذا الاسم</p>
