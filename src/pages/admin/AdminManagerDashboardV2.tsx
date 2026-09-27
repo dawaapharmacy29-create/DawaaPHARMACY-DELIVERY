@@ -74,7 +74,7 @@ export default function AdminManagerDashboardV2() {
             <ActionCard title="ملخص الإدارة" text="صورة موحدة عن أداء المناديب والحالات." to="/admin/executive" icon={<Gauge size={18}/>} tone="slate" />
           </div>
         </div>
-        <AdminDashboardFast />
+        <AdminDashboardFast embedded />
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
