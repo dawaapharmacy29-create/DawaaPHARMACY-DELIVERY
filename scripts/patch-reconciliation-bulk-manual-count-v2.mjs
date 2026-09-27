@@ -99,7 +99,11 @@ const toolbar = [
   '        )}',
   '',
 ].join('\n')
-replaceOnce('        {filteredOrders.length === 0 ? (', toolbar + '        {filteredOrders.length === 0 ? (', 'toolbar')
+if (source.includes('        {displayedOrders.length === 0 ? (')) {
+  replaceOnce('        {displayedOrders.length === 0 ? (', toolbar + '        {displayedOrders.length === 0 ? (', 'toolbar')
+} else {
+  replaceOnce('        {filteredOrders.length === 0 ? (', toolbar + '        {filteredOrders.length === 0 ? (', 'toolbar')
+}
 
 replaceOnce(
   '                <div key={order.id} className="rounded-2xl bg-white p-4 shadow-sm">',
