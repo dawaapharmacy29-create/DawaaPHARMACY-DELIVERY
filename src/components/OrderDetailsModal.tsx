@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import { CheckCircle2, Pencil, X, XCircle } from 'lucide-react'
 import { formatMoney } from '../lib/helpers'
+import { supabase } from '../lib/supabase'
 
 type OrderDetailsModalProps = {
   order: any
@@ -36,6 +38,34 @@ function Detail({ label, value, danger = false }: { label: string; value: string
   )
 }
 
+type UnifiedOrderNote = {
+  note_key: string
+  note_kind: string
+  source: string
+  note_text: string
+  note_at?: string | null
+  actor_name?: string | null
+}
+
+function noteKindLabel(kind: string) {
+  const labels: Record<string, string> = {
+    order_note: 'ملاحظة الأوردر',
+    duplicate_note: 'ملاحظة التكرار',
+    duplicate_reason: 'سبب التكرار',
+    multiplier_reason: 'سبب المعامل',
+    review_note: 'مراجعة',
+    dispatch_note: 'الخروج',
+    pickup_note: 'الاستلام',
+    receipt_note: 'الفاتورة/الريسيت',
+    reconciliation_note: 'المطابقة',
+    audit_note: 'سجل النظام',
+    edit_note: 'تعديل أوردر',
+    invoice_edit_note: 'تعديل الفاتورة',
+    timeline_note: 'الخط الزمني',
+  }
+  return labels[kind] || kind
+}
+
 export default function OrderDetailsModal({
   order,
   riderName,
@@ -46,6 +76,38 @@ export default function OrderDetailsModal({
   onReject,
   onReassign,
 }: OrderDetailsModalProps) {
+  const [unifiedNotes, setUnifiedNotes] = useState<UnifiedOrderNote[]>([])
+  const [notesLoading, setNotesLoading] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const orderId = String(order?.id || '')
+    if (!orderId) {
+      setUnifiedNotes([])
+      return
+    }
+
+    setNotesLoading(true)
+    void supabase
+      .from('delivery_order_note_feed_v1')
+      .select('note_key,note_kind,source,note_text,note_at,actor_name')
+      .eq('order_id', orderId)
+      .order('source_priority', { ascending: true })
+      .order('note_at', { ascending: true })
+      .then(({ data, error }) => {
+        if (cancelled) return
+        if (error) {
+          console.error('Failed to load unified order notes', error)
+          setUnifiedNotes([])
+        } else {
+          setUnifiedNotes((data || []) as UnifiedOrderNote[])
+        }
+        setNotesLoading(false)
+      })
+
+    return () => { cancelled = true }
+  }, [order?.id])
+
   if (!order) return null
   const finalStatus = valueOf(order, 'final_count_status')
   const countable = order.is_countable === true ? 'نعم' : 'لا'
@@ -93,23 +155,32 @@ export default function OrderDetailsModal({
             <Detail label="سبب التحويل" value={valueOf(order, 'reassignment_reason')} />
           </div>
 
-          <div className="mt-3 grid gap-3 lg:grid-cols-2">
-            <div className="rounded-2xl border border-teal-100 bg-teal-50 p-4">
-              <p className="text-xs font-black text-teal-700">ملاحظات الأوردر</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{valueOf(order, 'notes')}</p>
+          <div className="mt-3 rounded-2xl border border-teal-100 bg-teal-50 p-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-black text-teal-800">سجل الملاحظات الموحد</p>
+                <p className="text-xs font-bold text-teal-700/70">كل ملاحظات الأوردر من مكان واحد بدون تكرار</p>
+              </div>
+              <span className="rounded-full bg-white px-2 py-1 text-xs font-black text-teal-700">{unifiedNotes.length} ملاحظة</span>
             </div>
-            <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
-              <p className="text-xs font-black text-amber-700">تفاصيل الفاتورة المكررة</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{valueOf(order, 'duplicate_note')}</p>
-            </div>
-            <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
-              <p className="text-xs font-black text-sky-700">ملاحظات المطابقة</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{valueOf(order, 'reconciliation_notes')}</p>
-            </div>
-            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-              <p className="text-xs font-black text-slate-500">ملاحظات الخروج / الريسيت</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{valueOf(order, 'dispatch_notes', 'receipt_ocr_note')}</p>
-            </div>
+            {notesLoading ? (
+              <p className="text-sm font-bold text-slate-500">جاري تحميل الملاحظات…</p>
+            ) : unifiedNotes.length === 0 ? (
+              <p className="text-sm font-bold text-slate-500">لا توجد ملاحظات مسجلة</p>
+            ) : (
+              <div className="space-y-2">
+                {unifiedNotes.map(note => (
+                  <div key={note.note_key} className="rounded-xl border border-white/80 bg-white p-3 shadow-sm">
+                    <div className="mb-1 flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-teal-100 px-2 py-1 text-[11px] font-black text-teal-800">{noteKindLabel(note.note_kind)}</span>
+                      {note.actor_name && <span className="text-[11px] font-bold text-slate-500">{note.actor_name}</span>}
+                      {note.note_at && <span className="text-[11px] font-bold text-slate-400">{dateValue(note.note_at)}</span>}
+                    </div>
+                    <p className="whitespace-pre-wrap text-sm font-bold text-slate-700">{note.note_text}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="mt-5 flex flex-wrap gap-2">
