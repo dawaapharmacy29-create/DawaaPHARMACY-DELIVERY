@@ -48,6 +48,7 @@ const groups: AdminNavGroup[] = [
     hint: 'الأوردرات والمشاوير والحالات المعلقة',
     icon: PackageSearch,
     links: [
+      { to: '/admin/review-center', label: 'مركز مراجعة الدورة' },
       { to: '/admin/reconciliation', label: 'مطابقة الأوردرات' },
       { to: '/admin/trips', label: 'مراجعة المشاوير' },
       { to: '/admin/duplicate-invoices', label: 'الأوردرات المكررة' },
