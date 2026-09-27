@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowRight, Bell, Printer, RefreshCw } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { Bell, Printer, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import ReportsAdminTabs from '../../components/ReportsAdminTabs'
@@ -36,7 +35,6 @@ function rowDate(row: Row, fallbackKey: string) {
 }
 
 export default function RiderMonthlyReports() {
-  const navigate = useNavigate()
   const cycle = currentCycleRange()
   const [riders, setRiders] = useState<Row[]>([])
   const [riderId, setRiderId] = useState('')
@@ -177,9 +175,9 @@ export default function RiderMonthlyReports() {
       <div className="print:hidden"><ReportsAdminTabs /></div>
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-white bg-white p-4 shadow-sm print:hidden">
         <div>
-          <button onClick={() => navigate('/admin')} className="mb-3 inline-flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-2 text-sm font-black text-slate-600"><ArrowRight size={16}/> رجوع</button>
-          <h1 className="text-3xl font-black text-[#061827]">تقارير وحوافز الدليفري</h1>
-          <p className="mt-1 text-sm font-bold text-slate-500">تسجيل خصم أو مكافأة مع تنبيه فوري، وتجهيز تقرير شهري للحفظ PDF.</p>
+          <p className="text-xs font-black text-[#008E92]">التقارير والإدارة</p>
+          <h1 className="mt-1 text-2xl font-black text-[#061827]">تقرير الدليفري للدورة</h1>
+          <p className="mt-1 text-sm font-bold text-slate-500">تقرير فردي بالأوردرات والمشاوير والتعديلات المالية، جاهز للطباعة أو الحفظ PDF.</p>
         </div>
         <button onClick={printPdf} className="inline-flex items-center gap-2 rounded-3xl bg-[#008E92] px-5 py-3 font-black text-white"><Printer size={18}/> طباعة / حفظ PDF</button>
       </div>
@@ -204,7 +202,7 @@ export default function RiderMonthlyReports() {
         </section>
 
         <section className="rounded-3xl border bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-lg font-black text-[#061827]">تسجيل خصم / مكافأة</h2>
+          <h2 className="mb-3 text-lg font-black text-[#061827]">تسجيل تعديل مالي</h2>
           <div className="grid gap-3 md:grid-cols-2">
             <select value={adjustmentType} onChange={event => setAdjustmentType(event.target.value as AdjustmentType)} className="rounded-2xl border bg-slate-50 px-3 py-3 text-sm font-black"><option value="penalty">خصم</option><option value="reward">مكافأة</option></select>
             <input value={amount} onChange={event => setAmount(event.target.value)} type="number" min="0" placeholder="القيمة" className="rounded-2xl border bg-slate-50 px-3 py-3 text-sm font-black" />
