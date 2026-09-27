@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { CheckCircle2, Eye, Search, XCircle, CopyCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { DeliveryOrder, Rider } from '../../lib/types'
@@ -31,7 +31,6 @@ type UnifiedNoteSummary = {
 }
 
 export default function DuplicateInvoices() {
-  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const period = useMemo(() => getOperationalPeriod(), [])
   const [orders, setOrders] = useState<DeliveryOrder[]>([])
