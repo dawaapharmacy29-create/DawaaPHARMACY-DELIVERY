@@ -76,6 +76,7 @@ const groups: AdminNavGroup[] = [
     hint: 'العملاء والمناطق والتحليل',
     icon: MapPinned,
     links: [
+      { to: '/admin/customer-center', label: 'مركز العملاء والمناطق' },
       { to: '/admin/customer-analytics', label: 'تحليل العملاء' },
       { to: '/admin/customer-import', label: 'تحديث بيانات العملاء' },
       { to: '/admin/route-planner', label: 'تحليل المناطق والمسارات' },
@@ -86,6 +87,7 @@ const groups: AdminNavGroup[] = [
     hint: 'التقارير والرقابة والماليات',
     icon: BarChart3,
     links: [
+      { to: '/admin/reports-center', label: 'مركز التقارير والإدارة' },
       { to: '/admin/reports', label: 'تقارير الدورة' },
       { to: '/admin/cycles', label: 'أرشيف الدورات' },
       { to: '/admin/fraud-alerts', label: 'مراجعة الحالات غير الطبيعية' },
