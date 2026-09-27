@@ -31,7 +31,6 @@ export function cycleForDate(date = new Date()): DeliveryCycleRange {
   const start = date.getDate() >= 26
     ? new Date(date.getFullYear(), date.getMonth(), 26, 12)
     : new Date(date.getFullYear(), date.getMonth() - 1, 26, 12)
-  const end = new Date(start.getFullYear(), start.getMonth() + 1, 25, 12)
   return cycleFromStart(start, date)
 }
 
