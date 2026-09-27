@@ -47,7 +47,7 @@ const newBlock = `      const session = await getCurrentSession()
           role: localManagerSession.role || 'branch_manager',
           branch_id: localManagerSession.branch_id || undefined,
           status: 'active',
-        } as UserProfile)
+        } as unknown as UserProfile)
       }`
 
 if (source.includes(oldBlock)) {
