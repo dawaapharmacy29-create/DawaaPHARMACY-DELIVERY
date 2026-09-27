@@ -186,7 +186,7 @@ export default function PenaltyIncentiveManagement() {
       setProfile(userProfile as UserProfile)
 
       // Get all active staff from staff_accounts_full_view
-      const { data: staffData, error: staffError } = await supabase
+      const { data: staffData } = await supabase
         .from('staff_accounts_full_view')
         .select('account_id, rider_id, person_name, display_name, username, role, branch_id, branch_name, account_status, rider_status')
         .eq('account_status', 'active')
