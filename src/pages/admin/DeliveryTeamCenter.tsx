@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { getRiders } from '../../lib/delivery'
 import { supabase } from '../../lib/supabase'
 import TeamAdminTabs from '../../components/TeamAdminTabs'
+import { useAdminAccess } from '../../hooks/useAdminAccess'
 
 type TeamStats = {
   total: number
@@ -37,6 +38,7 @@ function HubCard({ title, text, to, icon, badge, tone = 'teal' }: { title: strin
 }
 
 export default function DeliveryTeamCenter() {
+  const { ready: accessReady, canAccess } = useAdminAccess()
   const [stats, setStats] = useState<TeamStats>({ total: 0, active: 0, inactive: 0, missingRate: 0, missingAccount: 0, lockedAccounts: 0 })
   const [loading, setLoading] = useState(true)
   const [warning, setWarning] = useState('')
@@ -47,9 +49,12 @@ export default function DeliveryTeamCenter() {
       setLoading(true)
       try {
         setWarning('')
+        const accountAccess = accessReady && canAccess('rider_accounts')
         const [ridersResult, accountsResult] = await Promise.allSettled([
           getRiders(),
-          supabase.from('staff_accounts_full_view').select('rider_id,account_id,account_status,locked_until,account_scope'),
+          accountAccess
+            ? supabase.from('staff_accounts_full_view').select('rider_id,account_id,account_status,locked_until,account_scope')
+            : Promise.resolve({ data: [], error: null }),
         ])
         if (!alive) return
         const riders = ridersResult.status === 'fulfilled' ? ridersResult.value : []
@@ -76,7 +81,7 @@ export default function DeliveryTeamCenter() {
     }
     void load()
     return () => { alive = false }
-  }, [])
+  }, [accessReady, canAccess])
 
   const attention = useMemo(() => stats.missingRate + stats.missingAccount + stats.lockedAccounts, [stats])
 
@@ -108,7 +113,7 @@ export default function DeliveryTeamCenter() {
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <HubCard title="بيانات فريق الدليفري" text="الأسماء، الفروع، الأسعار الأساسية، الحالة، والإجازة الأسبوعية." to="/admin/riders/manage" icon={<Users size={20}/>} badge={stats.total} />
         <HubCard title="الجداول والمواعيد" text="إدارة واستيراد جداول العمل ومراجعة التحذيرات قبل الاعتماد." to="/admin/rider-schedules" icon={<CalendarDays size={20}/>} tone="violet" />
-        <HubCard title="الحسابات والأجهزة" text="حسابات الدخول، PIN، حالة الحساب، والقفل أو إعادة التعيين." to="/admin/rider-accounts" icon={<KeyRound size={20}/>} badge={stats.missingAccount ? `${stats.missingAccount} بدون حساب` : 'مكتمل'} tone={stats.missingAccount ? 'amber' : 'teal'} />
+        {accessReady && canAccess('rider_accounts') && <HubCard title="الحسابات والأجهزة" text="حسابات الدخول، PIN، حالة الحساب، والقفل أو إعادة التعيين." to="/admin/rider-accounts" icon={<KeyRound size={20}/>} badge={stats.missingAccount ? `${stats.missingAccount} بدون حساب` : 'مكتمل'} tone={stats.missingAccount ? 'amber' : 'teal'} />}
         <HubCard title="أداء الدليفري" text="الأوردرات، المشاوير، نسب النجاح، والمقارنة على مستوى الدورة." to="/admin/performance" icon={<Clock3 size={20}/>} tone="slate" />
         <HubCard title="قرارات وملاحظات" text="الملاحظات الإدارية، الخصومات، المكافآت، واعتماد الإجراءات." to="/admin/rider-actions" icon={<ShieldCheck size={20}/>} tone="amber" />
         <HubCard title="مستحقات الدليفري" text="الحساب النهائي للأوردرات والمشاوير والخصومات والمكافآت." to="/admin/rider-compensation" icon={<WalletCards size={20}/>} badge={stats.missingRate ? `${stats.missingRate} سعر ناقص` : undefined} tone={stats.missingRate ? 'rose' : 'teal'} />
@@ -119,8 +124,8 @@ export default function DeliveryTeamCenter() {
           <h2 className="font-black text-amber-900">قبل قفل أي دورة</h2>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <div className="rounded-2xl bg-white/80 p-3"><b className="text-rose-700">{stats.missingRate}</b><p className="mt-1 text-xs font-bold text-slate-600">مندوب نشط عنده سعر أوردر أو مشوار ناقص</p></div>
-            <div className="rounded-2xl bg-white/80 p-3"><b className="text-amber-700">{stats.missingAccount}</b><p className="mt-1 text-xs font-bold text-slate-600">مندوب نشط بدون حساب دخول</p></div>
-            <div className="rounded-2xl bg-white/80 p-3"><b className="text-amber-700">{stats.lockedAccounts}</b><p className="mt-1 text-xs font-bold text-slate-600">حساب دليفري مقفول حاليًا</p></div>
+            {accessReady && canAccess('rider_accounts') && <div className="rounded-2xl bg-white/80 p-3"><b className="text-amber-700">{stats.missingAccount}</b><p className="mt-1 text-xs font-bold text-slate-600">مندوب نشط بدون حساب دخول</p></div>}
+            {accessReady && canAccess('rider_accounts') && <div className="rounded-2xl bg-white/80 p-3"><b className="text-amber-700">{stats.lockedAccounts}</b><p className="mt-1 text-xs font-bold text-slate-600">حساب دليفري مقفول حاليًا</p></div>}
           </div>
         </section>
       )}
