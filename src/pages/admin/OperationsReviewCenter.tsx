@@ -43,14 +43,21 @@ export default function OperationsReviewCenter() {
   const [error,setError] = useState('')
 
   useEffect(() => {
+    if (!accessReady) return
     let alive=true
     async function load(){
       setLoading(true)
       try{
         setError('')
+        const canReadOrders = canAccess('reconciliation') || canAccess('duplicate_invoices')
+        const canReadTrips = canAccess('trips') || canAccess('trips_without_invoice')
         const [ordersRes,tripsRes] = await Promise.all([
-          supabase.from('delivery_orders').select('final_count_status,status,is_countable,is_duplicate_invoice,deleted_at').gte('delivery_date',selectedFrom).lte('delivery_date',selectedTo).is('deleted_at',null),
-          supabase.from('internal_trips').select('status,review_status,has_invoice_reference,related_invoice_number,duplicate_of').gte('trip_date',selectedFrom).lte('trip_date',selectedTo),
+          canReadOrders
+            ? supabase.from('delivery_orders').select('final_count_status,status,is_countable,is_duplicate_invoice,deleted_at').gte('delivery_date',selectedFrom).lte('delivery_date',selectedTo).is('deleted_at',null)
+            : Promise.resolve({ data: [], error: null }),
+          canReadTrips
+            ? supabase.from('internal_trips').select('status,review_status,has_invoice_reference,related_invoice_number,duplicate_of').gte('trip_date',selectedFrom).lte('trip_date',selectedTo)
+            : Promise.resolve({ data: [], error: null }),
         ])
         if(!alive)return
         if (ordersRes.error) throw ordersRes.error
@@ -73,7 +80,7 @@ export default function OperationsReviewCenter() {
     }
     void load()
     return()=>{alive=false}
-  },[selectedFrom,selectedTo])
+  },[accessReady, canAccess, selectedFrom,selectedTo])
 
   function applyCycle(from: string, to: string) {
     const next = new URLSearchParams(searchParams)
