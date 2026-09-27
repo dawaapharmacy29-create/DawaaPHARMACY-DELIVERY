@@ -148,7 +148,7 @@ replaceOnce(
 )
 
 if (source.includes('function exportMonthlyReport()') && !source.includes('void exportMonthlyReport')) {
-  const renderIndex = source.lastIndexOf('\n  return (')
+  const renderIndex = source.lastIndexOf('\n  return <div')
   if (renderIndex < 0) throw new Error('Rider report export UX anchor not found: component render')
   source = source.slice(0, renderIndex) + '\n  void exportMonthlyReport\n  void exportMonthlyReportLegacy\n' + source.slice(renderIndex)
 }
