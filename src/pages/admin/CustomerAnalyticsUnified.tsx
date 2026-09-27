@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowRight, ExternalLink, RefreshCw, Search, Star, TrendingUp, Users, X } from 'lucide-react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { ExternalLink, RefreshCw, Search, Star, TrendingUp, Users, X } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import CycleSelector from '../../components/CycleSelector'
 import { displayBranchName } from '../../lib/branchUtils'
 import { fetchAllRows } from '../../lib/fetchAllRows'
+import CustomerAdminTabs from '../../components/CustomerAdminTabs'
 
 type OrderRow = Record<string, any>
 type RangeMode = 'cycle' | 'quarter' | 'all'
@@ -78,7 +79,6 @@ function mergeRows(groups: OrderRow[][]) {
 }
 
 export default function CustomerAnalyticsUnified() {
-  const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const initial = currentCycle()
   const [mode, setMode] = useState<RangeMode>((params.get('mode') as RangeMode) || 'cycle')
@@ -207,8 +207,9 @@ export default function CustomerAnalyticsUnified() {
   }
 
   return <div className="space-y-5 text-right" dir="rtl">
+    <CustomerAdminTabs />
     <section className="flex flex-wrap items-center justify-between gap-3 rounded-[30px] bg-white p-5 shadow-sm">
-      <div><button onClick={() => navigate('/admin')} className="mb-3 inline-flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-2 font-black text-slate-600"><ArrowRight size={16}/> رجوع</button><h1 className="text-3xl font-black">تحليل العملاء</h1><p className="mt-1 font-bold text-slate-500">تحليل كامل من جميع فواتير التوصيل بدون حد 1000 سجل.</p></div>
+      <div><p className="text-xs font-black text-[#008E92]">العملاء والمناطق</p><h1 className="mt-1 text-2xl font-black">تحليل العملاء</h1><p className="mt-1 font-bold text-slate-500">تحليل كامل من جميع فواتير التوصيل بدون حد 1000 سجل.</p></div>
       <div className="flex flex-wrap gap-2">
         <button onClick={() => applyMode('cycle')} className={`rounded-2xl px-4 py-3 font-black ${mode === 'cycle' ? 'bg-[#008E92] text-white' : 'bg-slate-50'}`}>دورة واحدة</button>
         <button onClick={() => applyMode('quarter')} className={`rounded-2xl px-4 py-3 font-black ${mode === 'quarter' ? 'bg-[#008E92] text-white' : 'bg-slate-50'}`}>آخر 3 دورات</button>
