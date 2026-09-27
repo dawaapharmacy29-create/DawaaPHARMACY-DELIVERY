@@ -1,9 +1,9 @@
 import { ChangeEvent, useMemo, useState, type ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ArrowRight, CheckCircle2, FileSpreadsheet, Loader2, UploadCloud, XCircle } from 'lucide-react'
+import { CheckCircle2, FileSpreadsheet, Loader2, UploadCloud, XCircle } from 'lucide-react'
 import { read, utils } from 'xlsx'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
+import CustomerAdminTabs from '../../components/CustomerAdminTabs'
 
 type RawRow = Record<string, any>
 type ImportRow = {
@@ -136,7 +136,6 @@ function mapRow(row: RawRow, index: number): ImportRow {
 }
 
 export default function CustomerImport() {
-  const navigate = useNavigate()
   const [fileName, setFileName] = useState('')
   const [rows, setRows] = useState<ImportRow[]>([])
   const [saving, setSaving] = useState(false)
@@ -270,10 +269,11 @@ export default function CustomerImport() {
   return (
     <div className="text-right" dir="rtl">
       <div className="space-y-5">
+        <CustomerAdminTabs />
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-white bg-white p-4 shadow-sm">
           <div>
-            <button onClick={() => navigate('/admin')} className="mb-3 inline-flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-2 text-sm font-black text-slate-600"><ArrowRight size={16}/> رجوع</button>
-            <h1 className="text-3xl font-black text-[#061827]">استيراد وتحديث العملاء</h1>
+            <p className="text-xs font-black text-[#008E92]">العملاء والمناطق</p>
+            <h1 className="mt-1 text-2xl font-black text-[#061827]">تحديث بيانات العملاء</h1>
             <p className="mt-1 text-sm font-bold text-slate-500">اقرأ Excel/CSV، ثم احفظ البيانات على أجزاء. العميل القديم يتم تحديثه والجديد يتم إضافته تلقائيًا.</p>
           </div>
           <label className="flex cursor-pointer items-center gap-3 rounded-3xl bg-[#008E92] px-5 py-4 font-black text-white shadow-lg">
