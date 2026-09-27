@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, CheckCircle2, Eye, Search, XCircle } from 'lucide-react'
+import { CheckCircle2, Eye, Search, XCircle, CopyCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { DeliveryOrder, Rider } from '../../lib/types'
 import { approveDuplicateInvoice, getRiders, rejectDuplicateInvoice } from '../../lib/delivery'
@@ -8,8 +8,8 @@ import { formatTime, getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
 import CycleSelector from '../../components/CycleSelector'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
+import OperationsAdminTabs from '../../components/OperationsAdminTabs'
 
-// Unified note read model: delivery_order_note_summary_v1 is the single UI source for order notes.
 function normalizeInvoice(order: any) {
   return String(order.invoice_number || order.invoice_no || '').trim()
 }
@@ -174,19 +174,18 @@ export default function DuplicateInvoices() {
 
   return (
     <div className="min-h-screen bg-[#F3F7F8] pb-12" dir="rtl">
-      <header className="bg-gradient-to-l from-[#061827] to-[#008E92] p-4 text-white">
-        <div className="flex items-center gap-4">
-          <button onClick={() => navigate('/admin')} className="rounded-full bg-white/20 p-2 hover:bg-white/30">
-            <ArrowLeft size={24} />
-          </button>
-          <div>
-            <h1 className="text-2xl font-black">إدارة الفواتير المكررة</h1>
-            <p className="text-sm text-white/80">كل الفواتير التي تكررت داخل الدورة المختارة، مع سبب التكرار واسم الدكتور إن سجله الدليفري</p>
-          </div>
-        </div>
-      </header>
-
       <main className="mx-auto max-w-7xl space-y-4 p-4">
+        <OperationsAdminTabs />
+        <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-start gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-50 text-amber-700"><CopyCheck size={20}/></span>
+            <div>
+              <p className="text-xs font-black text-[#008E92]">التشغيل والمراجعة</p>
+              <h1 className="mt-1 text-xl font-black text-[#061827]">مراجعة الأوردرات المكررة</h1>
+              <p className="mt-1 text-sm font-bold text-slate-500">راجع سبب التكرار والتسجيلات المرتبطة قبل الاعتماد أو الرفض.</p>
+            </div>
+          </div>
+        </section>
         <CycleSelector from={selectedFrom} to={selectedTo} onApply={applyCycle} />
 
         <div className="rounded-3xl border border-amber-100 bg-amber-50 p-4 text-sm font-bold text-amber-800">
