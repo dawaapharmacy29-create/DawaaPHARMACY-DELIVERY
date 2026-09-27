@@ -13,7 +13,6 @@ import {
   ShieldCheck,
   Truck,
   Users,
-  WalletCards,
   X,
 } from 'lucide-react'
 
@@ -35,70 +34,63 @@ type AdminNavGroup = {
 
 const groups: AdminNavGroup[] = [
   {
-    title: 'مركز القيادة',
-    hint: 'الصفحات الرئيسية والمتابعة العامة',
+    title: 'الرئيسية',
+    hint: 'القرار السريع وملخص الدورة',
     icon: LayoutDashboard,
     links: [
-      { to: '/admin', label: 'داشبورد التشغيل' },
-      { to: '/admin/executive', label: 'لوحة الإدارة العليا' },
-      { to: '/admin/ops', label: 'غرفة العمليات' },
-      { to: '/admin/reports', label: 'مركز التقارير' },
-      { to: '/admin/cycles', label: 'أرشيف الدورات' },
+      { to: '/admin', label: 'لوحة الإدارة' },
+      { to: '/admin/executive', label: 'ملخص الإدارة' },
+      { to: '/admin/ops', label: 'متابعة التشغيل' },
+      { to: '/admin/cycle-closing', label: 'إغلاق الدورة' },
     ],
   },
   {
-    title: 'الموارد البشرية والمناديب',
-    hint: 'البيانات والمواعيد والحسابات',
-    icon: Users,
-    links: [
-      { to: '/admin/riders', label: 'بيانات المناديب' },
-      { to: '/admin/rider-compensation', label: 'تقرير ومستحقات الدليفري' },
-      { to: '/admin/rider-schedules', label: 'مواعيد المناديب' },
-      { to: '/admin/rider-accounts', label: 'حسابات وأجهزة الدخول' },
-      { to: '/admin/penalty-incentive', label: 'خصم / مكافأة سريع' },
-      { to: '/admin/performance', label: 'تحليل أداء المناديب' },
-      { to: '/admin/hourly-analytics', label: 'تحليل الدليفري بالساعات' },
-      { to: '/admin/rider-monthly-reports', label: 'التقرير الشهري القديم' },
-      { to: '/admin/rider-actions', label: 'إجراءات وملاحظات' },
-    ],
-  },
-  {
-    title: 'الأوردرات والمطابقة',
-    hint: 'الفواتير والمراجعة المالية',
+    title: 'التشغيل والمراجعة',
+    hint: 'الأوردرات والمشاوير والحالات المعلقة',
     icon: PackageSearch,
     links: [
-      { to: '/admin/reconciliation', label: 'مطابقة الفواتير' },
-      { to: '/admin/duplicate-invoices', label: 'الفواتير المكررة' },
-      { to: '/admin/invoice-notebook', label: 'دفتر الفواتير' },
+      { to: '/admin/reconciliation', label: 'مطابقة الأوردرات' },
+      { to: '/admin/trips', label: 'مراجعة المشاوير' },
+      { to: '/admin/duplicate-invoices', label: 'الأوردرات المكررة' },
+      { to: '/admin/trips-without-invoice', label: 'حالات بدون فاتورة' },
+      { to: '/admin/invoice-notebook', label: 'سجل الفواتير' },
     ],
   },
   {
-    title: 'المشاوير والتشغيل',
-    hint: 'مراجعة المشاوير والتحرك اليومي',
-    icon: Truck,
+    title: 'الفريق والأداء',
+    hint: 'الفريق والجداول والحسابات والمستحقات',
+    icon: Users,
     links: [
-      { to: '/admin/trips', label: 'المشاوير' },
-      { to: '/admin/trips-without-invoice', label: 'مشاوير بدون فاتورة' },
+      { to: '/admin/riders', label: 'فريق الدليفري' },
+      { to: '/admin/rider-schedules', label: 'الجداول والمواعيد' },
+      { to: '/admin/rider-accounts', label: 'الحسابات والأجهزة' },
+      { to: '/admin/performance', label: 'أداء الدليفري' },
+      { to: '/admin/hourly-analytics', label: 'الأداء حسب الساعة' },
+      { to: '/admin/rider-actions', label: 'قرارات وملاحظات' },
+      { to: '/admin/penalty-incentive', label: 'خصم أو مكافأة' },
+      { to: '/admin/rider-compensation', label: 'مستحقات الدليفري' },
+    ],
+  },
+  {
+    title: 'العملاء والمناطق',
+    hint: 'العملاء والمناطق والتحليل',
+    icon: MapPinned,
+    links: [
+      { to: '/admin/customer-analytics', label: 'تحليل العملاء' },
+      { to: '/admin/customer-import', label: 'تحديث بيانات العملاء' },
       { to: '/admin/route-planner', label: 'تحليل المناطق والمسارات' },
     ],
   },
   {
-    title: 'العملاء والتحليل',
-    hint: 'العملاء والمتابعة والتحديث',
+    title: 'التقارير والإدارة',
+    hint: 'التقارير والرقابة والماليات',
     icon: BarChart3,
     links: [
-      { to: '/admin/customer-analytics', label: 'تحليل العملاء الشهري' },
-      { to: '/admin/customer-import', label: 'استيراد وتحديث العملاء' },
-    ],
-  },
-  {
-    title: 'الرقابة والماليات',
-    hint: 'التلاعب والكاش والإدارة',
-    icon: ShieldCheck,
-    links: [
-      { to: '/admin/fraud-alerts', label: 'تنبيهات التلاعب' },
-      { to: '/admin/cash-flow', label: 'التدفق النقدي الشهري' },
-      { to: '/admin/branch', label: 'مدير الفرع' },
+      { to: '/admin/reports', label: 'تقارير الدورة' },
+      { to: '/admin/cycles', label: 'أرشيف الدورات' },
+      { to: '/admin/fraud-alerts', label: 'مراجعة الحالات غير الطبيعية' },
+      { to: '/admin/cash-flow', label: 'ملخص مستحقات الدورة' },
+      { to: '/admin/branch', label: 'لوحة مدير الفرع' },
     ],
   },
 ]
@@ -115,10 +107,10 @@ export default function AdminShell({ children }: AdminShellProps) {
     return parent?.to || '/admin'
   }, [location.pathname])
   const activeGroupTitle = useMemo(() => {
-    return groups.find(group => group.links.some(link => link.to === currentPath))?.title || 'مركز القيادة'
+    return groups.find(group => group.links.some(link => link.to === currentPath))?.title || 'الرئيسية'
   }, [currentPath])
 
-  const [openGroups, setOpenGroups] = useState<string[]>(() => ['مركز القيادة'])
+  const [openGroups, setOpenGroups] = useState<string[]>(() => ['الرئيسية', 'التشغيل والمراجعة'])
   const [searchQuery, setSearchQuery] = useState('')
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
@@ -165,8 +157,8 @@ export default function AdminShell({ children }: AdminShellProps) {
             <div className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-[11px] font-black text-[#008E92] shadow-sm">
               <Truck size={13} /> Dawaa Delivery
             </div>
-            <h2 className="mt-3 text-2xl font-black text-[#061827]">لوحة الإدارة</h2>
-            <p className="mt-1 text-xs font-bold leading-5 text-slate-500">تشغيل ومتابعة وتحليل الدليفري من مكان واحد.</p>
+            <h2 className="mt-3 text-2xl font-black text-[#061827]">إدارة الدليفري</h2>
+            <p className="mt-1 text-xs font-bold leading-5 text-slate-500">قرار سريع، تشغيل واضح، وتقارير منظمة بدون تكدس.</p>
           </div>
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#008E92] text-white shadow-lg shadow-[#008E92]/20">
             <ClipboardList size={22} />
