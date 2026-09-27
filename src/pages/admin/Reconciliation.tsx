@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ChangeEvent, ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Upload, CheckCircle2, XCircle, Search, AlertTriangle, FileSpreadsheet, RotateCcw, Printer, Download, Eye } from 'lucide-react'
+import { ArrowLeft, Upload, CheckCircle2, XCircle, Search, AlertTriangle, FileSpreadsheet, Trash2, RotateCcw, Printer, Download, Pencil, Eye } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
