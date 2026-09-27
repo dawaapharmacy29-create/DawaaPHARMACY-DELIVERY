@@ -3,7 +3,7 @@ import { Archive, BarChart3, Building2, FileText, ShieldAlert, WalletCards } fro
 
 const items = [
   { to: '/admin/reports-center', label: 'مركز التقارير والإدارة', icon: BarChart3, end: true },
-  { to: '/admin/reports', label: 'تقارير الدورة', icon: FileText },
+  { to: '/admin/reports', label: 'تقرير الدليفري للدورة', icon: FileText },
   { to: '/admin/cycles', label: 'أرشيف الدورات', icon: Archive },
   { to: '/admin/fraud-alerts', label: 'مراجعة الحالات غير الطبيعية', icon: ShieldAlert },
   { to: '/admin/cash-flow', label: 'ملخص مستحقات الدورة', icon: WalletCards },
