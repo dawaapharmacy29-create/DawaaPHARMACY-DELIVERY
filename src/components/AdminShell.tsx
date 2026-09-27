@@ -10,7 +10,6 @@ import {
   Menu,
   PackageSearch,
   Search,
-  ShieldCheck,
   Truck,
   Users,
   X,
@@ -109,6 +108,8 @@ export default function AdminShell({ children }: AdminShellProps) {
   const activeGroupTitle = useMemo(() => {
     return groups.find(group => group.links.some(link => link.to === currentPath))?.title || 'الرئيسية'
   }, [currentPath])
+  const currentLink = useMemo(() => allLinks.find(link => link.to === currentPath), [currentPath])
+  const currentGroup = useMemo(() => groups.find(group => group.links.some(link => link.to === currentPath)), [currentPath])
 
   const [openGroups, setOpenGroups] = useState<string[]>(() => ['الرئيسية', 'التشغيل والمراجعة'])
   const [searchQuery, setSearchQuery] = useState('')
@@ -279,6 +280,20 @@ export default function AdminShell({ children }: AdminShellProps) {
             <p className="truncate text-sm font-black text-[#061827]">{activeGroupTitle}</p>
           </div>
         </div>
+
+        <header className="mb-4 hidden items-center justify-between gap-4 rounded-[1.8rem] border border-slate-200 bg-white px-5 py-4 shadow-sm lg:flex">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-[#E7F7F7] px-3 py-1 text-[11px] font-black text-[#007C80]">{currentGroup?.title || 'الإدارة'}</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black text-slate-500">واجهة الإدارة التجريبية</span>
+            </div>
+            <h1 className="mt-2 truncate text-xl font-black text-[#061827]">{currentLink?.label || 'لوحة الإدارة'}</h1>
+            <p className="mt-1 text-xs font-bold text-slate-400">{currentGroup?.hint || 'متابعة وتشغيل الدليفري'}</p>
+          </div>
+          <button type="button" onClick={() => navigate('/admin')} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-black text-slate-600 transition hover:border-[#008E92]/30 hover:text-[#008E92]">
+            الرئيسية
+          </button>
+        </header>
 
         <main className="min-w-0 overflow-x-hidden">{children}</main>
       </div>
