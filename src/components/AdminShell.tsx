@@ -39,8 +39,6 @@ const groups: AdminNavGroup[] = [
     links: [
       { to: '/admin', label: 'لوحة الإدارة' },
       { to: '/admin/executive', label: 'ملخص الإدارة' },
-      { to: '/admin/ops', label: 'متابعة التشغيل' },
-      { to: '/admin/cycle-closing', label: 'إغلاق الدورة' },
     ],
   },
   {
@@ -53,7 +51,6 @@ const groups: AdminNavGroup[] = [
       { to: '/admin/trips', label: 'مراجعة المشاوير' },
       { to: '/admin/duplicate-invoices', label: 'الأوردرات المكررة' },
       { to: '/admin/trips-without-invoice', label: 'حالات بدون فاتورة' },
-      { to: '/admin/invoice-notebook', label: 'سجل الفواتير' },
     ],
   },
   {
@@ -79,7 +76,7 @@ const groups: AdminNavGroup[] = [
       { to: '/admin/customer-center', label: 'مركز العملاء والمناطق' },
       { to: '/admin/customer-analytics', label: 'تحليل العملاء' },
       { to: '/admin/customer-import', label: 'تحديث بيانات العملاء' },
-      { to: '/admin/route-planner', label: 'تحليل المناطق والمسارات' },
+      { to: '/admin/route-planner', label: 'المناطق والمسارات' },
     ],
   },
   {
