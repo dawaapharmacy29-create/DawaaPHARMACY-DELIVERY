@@ -83,7 +83,7 @@ export default function DeliveryTeamCenter() {
           <div>
             <p className="text-xs font-black text-[#008E92]">الفريق والأداء</p>
             <h1 className="mt-1 text-2xl font-black text-[#061827]">مركز فريق الدليفري</h1>
-            <p className="mt-2 max-w-2xl text-sm font-bold leading-7 text-slate-500">بدل صفحة واحدة ضخمة لكل شيء، قسمت إدارة الفريق إلى مسارات واضحة: بيانات الفريق، الجداول، الحسابات، الأداء، والقرارات المالية.</p>
+            <p className="mt-2 max-w-2xl text-sm font-bold leading-7 text-slate-500">تابع بيانات الفريق والجداول والحسابات والأداء والمستحقات من مسارات واضحة ومترابطة.</p>
           </div>
           <div className={`rounded-2xl px-4 py-3 text-center ${attention ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>
             <p className="text-2xl font-black">{loading ? '—' : attention}</p>
@@ -96,7 +96,7 @@ export default function DeliveryTeamCenter() {
         <div className="rounded-[1.5rem] border border-slate-100 bg-white p-4 shadow-sm"><p className="text-xs font-black text-slate-400">إجمالي الفريق</p><p className="mt-2 text-3xl font-black">{loading ? '—' : stats.total}</p></div>
         <div className="rounded-[1.5rem] border border-emerald-100 bg-emerald-50 p-4 shadow-sm"><p className="text-xs font-black text-emerald-700">نشط</p><p className="mt-2 text-3xl font-black text-emerald-900">{loading ? '—' : stats.active}</p></div>
         <div className="rounded-[1.5rem] border border-slate-100 bg-slate-50 p-4 shadow-sm"><p className="text-xs font-black text-slate-500">غير نشط</p><p className="mt-2 text-3xl font-black text-slate-800">{loading ? '—' : stats.inactive}</p></div>
-        <div className="rounded-[1.5rem] border border-amber-100 bg-amber-50 p-4 shadow-sm"><p className="text-xs font-black text-amber-700">مشاكل إعداد</p><p className="mt-2 text-3xl font-black text-amber-900">{loading ? '—' : attention}</p></div>
+        <div className="rounded-[1.5rem] border border-amber-100 bg-amber-50 p-4 shadow-sm"><p className="text-xs font-black text-amber-700">تحتاج مراجعة</p><p className="mt-2 text-3xl font-black text-amber-900">{loading ? '—' : attention}</p></div>
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
