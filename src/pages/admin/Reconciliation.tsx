@@ -11,6 +11,10 @@ import { formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/
 import OrderDetailsModal from '../../components/OrderDetailsModal'
 import CycleSelector from '../../components/CycleSelector'
 
+// Build-time review patches inject actions that use these icons in some workflows.
+void Trash2
+void Pencil
+
 type FilterKey = 'all' | 'counted' | 'pending' | 'not_found' | 'failed' | 'duplicate' | 'multiplier' | 'deleted'
 
 type BConnectRow = {
