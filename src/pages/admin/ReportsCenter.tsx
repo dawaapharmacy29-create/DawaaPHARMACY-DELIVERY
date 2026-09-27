@@ -16,7 +16,7 @@ export default function ReportsCenter(){
     <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
       <p className="text-xs font-black text-[#008E92]">التقارير والإدارة</p>
       <h1 className="mt-1 text-2xl font-black text-[#061827]">مركز التقارير والإدارة</h1>
-      <p className="mt-2 max-w-2xl text-sm font-bold leading-7 text-slate-500">التقارير الدورية، الأرشيف، الرقابة، والمستحقات في منطقة واحدة بدل توزيعها بين مسميات متشابهة.</p>
+      <p className="mt-2 max-w-2xl text-sm font-bold leading-7 text-slate-500">التقارير الدورية والأرشيف والرقابة وملخصات المستحقات في مكان واحد للرجوع السريع.</p>
     </section>
     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       <Card title="تقارير الدورة" text="تقارير الدليفري والدورة الحالية وملخصات الأداء." to="/admin/reports" icon={<FileText size={20}/>}/>
