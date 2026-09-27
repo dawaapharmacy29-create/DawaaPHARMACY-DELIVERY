@@ -53,9 +53,6 @@ function money(value: number) {
   return Number(value || 0).toLocaleString('ar-EG', { maximumFractionDigits: 2 })
 }
 
-function rowDate(row: Row) {
-  return String(row.work_date || row.delivery_date || row.registered_at || row.created_at || '').slice(0, 10)
-}
 
 function status(row: Row) {
   return String(row.status || '').toLowerCase()
