@@ -8,6 +8,7 @@ import { getRiders, getBranches } from '../../lib/delivery'
 import { getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
 import { toast } from 'sonner'
+import TeamAdminTabs from '../../components/TeamAdminTabs'
 
 type ActionForm = {
   action_type: 'notice' | 'deduction_request' | 'reward_request' | 'shift_note'
@@ -570,6 +571,7 @@ export default function Riders() {
   return (
     <div className="min-h-screen bg-[#F3F7F8] pb-12">
       <main className="space-y-4 p-4">
+        <TeamAdminTabs />
         <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-start gap-3">
