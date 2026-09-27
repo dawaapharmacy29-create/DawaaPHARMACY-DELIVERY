@@ -14,7 +14,7 @@ const SafeAdmin = lazy(() => import('./pages/SafeAdmin'))
 const RiderDashboard = lazy(() => import('./pages/rider/RiderDashboardV3'))
 const RiderDashboardLegacy = lazy(() => import('./pages/rider/RiderDashboard'))
 
-const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboardWithTripAudit'))
+const AdminDashboard = lazy(() => import('./pages/admin/AdminManagerDashboardV2'))
 const ExecutiveDashboard = lazy(() => import('./pages/admin/ExecutiveDashboardUnified'))
 const RiderSchedules = lazy(() => import('./pages/admin/RiderSchedules'))
 const Riders = lazy(() => import('./pages/admin/Riders'))
