@@ -109,8 +109,8 @@ export default function AdminManagerDashboardV2() {
       </section>
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <ActionCard title="العملاء والمناطق" text="تحليل العملاء وتحديث البيانات وربطها بالمناطق." to="/admin/customer-analytics" icon={<CheckCircle2 size={20}/>} tone="slate" />
-        <ActionCard title="تقارير وأرشيف الدورات" text="الرجوع لدورات سابقة وتقارير الإدارة." to="/admin/reports" icon={<FileText size={20}/>} tone="slate" />
+        <ActionCard title="العملاء والمناطق" text="تحليل العملاء وتحديث البيانات وتنظيم المناطق من مركز واحد." to="/admin/customer-center" icon={<CheckCircle2 size={20}/>} tone="slate" />
+        <ActionCard title="التقارير والإدارة" text="تقارير الدورة والأرشيف والرقابة والمستحقات." to="/admin/reports-center" icon={<FileText size={20}/>} tone="slate" />
         <ActionCard title="تنبيهات تحتاج مراجعة" text="افتح مركز الحالات غير الطبيعية لو فيه أي إشارة تستحق قرار." to="/admin/fraud-alerts" icon={<AlertTriangle size={20}/>} tone="amber" />
       </section>
     </div>
