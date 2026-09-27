@@ -336,6 +336,8 @@ export default function Reconciliation() {
         supabase
           .from('reconciliation_upload_history')
           .select('*')
+          .eq('period_start', selectedFrom)
+          .eq('period_end', selectedTo)
           .order('uploaded_at', { ascending: false })
           .limit(1)
           .maybeSingle(),
