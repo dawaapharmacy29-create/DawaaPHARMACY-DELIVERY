@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
-  ArrowLeft, RefreshCw, Search, Download, Eye, EyeOff,
+  RefreshCw, Search, Download, Eye, EyeOff,
   UserPlus, Edit3, Key, ToggleLeft, ToggleRight, ShieldCheck,
   Users, UserCheck, UserX, LockKeyhole
 } from 'lucide-react'
@@ -98,8 +97,6 @@ function downloadCsv(fileName: string, rows: Array<Record<string, unknown>>) {
 }
 
 export default function RiderAccounts() {
-  const navigate = useNavigate()
-
   const [rows, setRows] = useState<StaffAccountRow[]>([])
   const [branches, setBranches] = useState<BranchOption[]>([])
   const [loading, setLoading] = useState(true)
@@ -347,23 +344,19 @@ export default function RiderAccounts() {
 
   return (
     <div className="min-h-screen bg-[#F3F7F8]" dir="rtl">
-      <header className="bg-gradient-to-l from-[#061827] to-[#008E92] p-4 text-white">
-        <div className="mx-auto flex max-w-7xl items-center gap-3">
-          <button onClick={() => navigate('/admin')} className="rounded-xl bg-white/10 p-2 hover:bg-white/20">
-            <ArrowLeft size={20} />
-          </button>
-          <img src="/logo.png" className="h-10 w-10 rounded-xl bg-white object-contain p-1" alt="دواء" />
-          <div className="flex-1">
-            <h1 className="text-xl font-black">كل حسابات الفريق</h1>
-            <p className="text-xs text-teal-100">الدليفري · مدير الفرع · مدير التشغيل · مدير الفروع · المدير العام · الأدمن</p>
-          </div>
-          <button onClick={() => void loadAll()} disabled={loading} className="rounded-xl bg-white/10 p-2 hover:bg-white/20 disabled:opacity-50">
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          </button>
-        </div>
-      </header>
-
       <main className="mx-auto max-w-7xl space-y-4 p-4">
+        <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-black text-[#008E92]">الفريق والأداء</p>
+              <h1 className="mt-1 text-xl font-black text-[#061827]">الحسابات والأجهزة</h1>
+              <p className="mt-1 text-sm font-bold text-slate-500">إدارة حسابات الدخول وPIN وحالة الحساب من مكان واحد، بدون خلطها مع بيانات الأداء أو الجداول.</p>
+            </div>
+            <button onClick={() => void loadAll()} disabled={loading} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-black text-slate-600 hover:text-[#008E92] disabled:opacity-50">
+              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> تحديث
+            </button>
+          </div>
+        </section>
         <section className="grid grid-cols-2 gap-2 lg:grid-cols-6">
           {[
             { label: 'إجمالي الأشخاص', val: stats.totalPeople, icon: <Users size={18}/>, tone: 'text-[#008E92]' },
