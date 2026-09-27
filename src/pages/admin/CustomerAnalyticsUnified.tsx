@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ExternalLink, RefreshCw, Search, Star, TrendingUp, Users, X } from 'lucide-react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import CycleSelector from '../../components/CycleSelector'
 import { displayBranchName } from '../../lib/branchUtils'
@@ -79,7 +79,6 @@ function mergeRows(groups: OrderRow[][]) {
 }
 
 export default function CustomerAnalyticsUnified() {
-  const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const initial = currentCycle()
   const [mode, setMode] = useState<RangeMode>((params.get('mode') as RangeMode) || 'cycle')
