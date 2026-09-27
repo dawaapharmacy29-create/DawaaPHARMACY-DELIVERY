@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises'
 
+let failed = false
+
 const files = [
   'src/pages/admin/Reconciliation.tsx',
   'src/pages/admin/RiderCompensationCenter.tsx',
@@ -18,4 +20,9 @@ for (const path of files) {
     duplicateFunctions: duplicates,
     replaceAllCount,
   }))
+  if (duplicates.length > 0 || replaceAllCount > 0) failed = true
+}
+
+if (failed) {
+  throw new Error('Patched admin source QA failed')
 }
