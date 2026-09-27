@@ -25,6 +25,7 @@ replaceOnce(
       failed: 'الفاشلة',
       duplicate: 'المكررة',
       multiplier: 'مضاعف_1.5',
+      customer_mismatch: 'اختلاف_اسم_العميل',
       deleted: 'المحذوفة',
     }
 
