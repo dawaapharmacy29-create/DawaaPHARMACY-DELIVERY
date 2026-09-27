@@ -5,6 +5,7 @@ import { formatMoney, getOperationalPeriod } from '../../lib/helpers'
 import CycleSelector from '../../components/CycleSelector'
 import { aggregateCanonicalRiders, loadCanonicalDeliveryData, type CanonicalDeliveryData } from '../../lib/canonicalDeliveryData'
 import { isDelivered, isFailed, isMultiplier, num } from '../../lib/deliveryAnalytics'
+import ReportsAdminTabs from '../../components/ReportsAdminTabs'
 
 type CycleSummary = {
   orders: number
@@ -70,6 +71,7 @@ export default function CycleArchiveLite() {
   return (
     <div className="min-h-screen bg-[#F3F7F8] p-4" dir="rtl">
       <div className="mx-auto max-w-7xl space-y-4">
+        <ReportsAdminTabs />
         <div className="rounded-[32px] border border-slate-100 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
