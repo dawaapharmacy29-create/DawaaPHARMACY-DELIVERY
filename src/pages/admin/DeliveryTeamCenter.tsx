@@ -65,8 +65,8 @@ export default function DeliveryTeamCenter() {
         const riderAccountMap = new Map(accountRows.filter(row => row.account_scope === 'rider' && row.rider_id).map(row => [row.rider_id, row]))
         const active = riders.filter((r: any) => r.status === 'active').length
         const missingRate = riders.filter((r: any) => r.status === 'active' && (Number(r.order_rate || 0) <= 0 || Number(r.trip_rate || 0) <= 0)).length
-        const missingAccount = riders.filter((r: any) => r.status === 'active' && !riderAccountMap.get(r.id)?.account_id).length
-        const lockedAccounts = accountRows.filter(row => row.account_scope === 'rider' && row.locked_until && new Date(row.locked_until).getTime() > Date.now()).length
+        const missingAccount = accountAccess ? riders.filter((r: any) => r.status === 'active' && !riderAccountMap.get(r.id)?.account_id).length : 0
+        const lockedAccounts = accountAccess ? accountRows.filter(row => row.account_scope === 'rider' && row.locked_until && new Date(row.locked_until).getTime() > Date.now()).length : 0
         setStats({
           total: riders.length,
           active,
@@ -83,7 +83,10 @@ export default function DeliveryTeamCenter() {
     return () => { alive = false }
   }, [accessReady, canAccess])
 
-  const attention = useMemo(() => stats.missingRate + stats.missingAccount + stats.lockedAccounts, [stats])
+  const attention = useMemo(
+    () => stats.missingRate + (canAccess('rider_accounts') ? stats.missingAccount + stats.lockedAccounts : 0),
+    [canAccess, stats]
+  )
 
   return (
     <div className="space-y-5" dir="rtl">
@@ -112,14 +115,14 @@ export default function DeliveryTeamCenter() {
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <HubCard title="بيانات فريق الدليفري" text="الأسماء، الفروع، الأسعار الأساسية، الحالة، والإجازة الأسبوعية." to="/admin/riders/manage" icon={<Users size={20}/>} badge={stats.total} />
-        <HubCard title="الجداول والمواعيد" text="إدارة واستيراد جداول العمل ومراجعة التحذيرات قبل الاعتماد." to="/admin/rider-schedules" icon={<CalendarDays size={20}/>} tone="violet" />
+        {accessReady && canAccess('rider_schedules') && <HubCard title="الجداول والمواعيد" text="إدارة واستيراد جداول العمل ومراجعة التحذيرات قبل الاعتماد." to="/admin/rider-schedules" icon={<CalendarDays size={20}/>} tone="violet" />}
         {accessReady && canAccess('rider_accounts') && <HubCard title="الحسابات والأجهزة" text="حسابات الدخول، PIN، حالة الحساب، والقفل أو إعادة التعيين." to="/admin/rider-accounts" icon={<KeyRound size={20}/>} badge={stats.missingAccount ? `${stats.missingAccount} بدون حساب` : 'مكتمل'} tone={stats.missingAccount ? 'amber' : 'teal'} />}
-        <HubCard title="أداء الدليفري" text="الأوردرات، المشاوير، نسب النجاح، والمقارنة على مستوى الدورة." to="/admin/performance" icon={<Clock3 size={20}/>} tone="slate" />
-        <HubCard title="قرارات وملاحظات" text="الملاحظات الإدارية، الخصومات، المكافآت، واعتماد الإجراءات." to="/admin/rider-actions" icon={<ShieldCheck size={20}/>} tone="amber" />
-        <HubCard title="مستحقات الدليفري" text="الحساب النهائي للأوردرات والمشاوير والخصومات والمكافآت." to="/admin/rider-compensation" icon={<WalletCards size={20}/>} badge={stats.missingRate ? `${stats.missingRate} سعر ناقص` : undefined} tone={stats.missingRate ? 'rose' : 'teal'} />
+        {accessReady && canAccess('performance') && <HubCard title="أداء الدليفري" text="الأوردرات، المشاوير، نسب النجاح، والمقارنة على مستوى الدورة." to="/admin/performance" icon={<Clock3 size={20}/>} tone="slate" />}
+        {accessReady && canAccess('rider_actions') && <HubCard title="قرارات وملاحظات" text="الملاحظات الإدارية، الخصومات، المكافآت، واعتماد الإجراءات." to="/admin/rider-actions" icon={<ShieldCheck size={20}/>} tone="amber" />}
+        {accessReady && canAccess('performance') && <HubCard title="مستحقات الدليفري" text="الحساب النهائي للأوردرات والمشاوير والخصومات والمكافآت." to="/admin/rider-compensation" icon={<WalletCards size={20}/>} badge={stats.missingRate ? `${stats.missingRate} سعر ناقص` : undefined} tone={stats.missingRate ? 'rose' : 'teal'} />}
       </section>
 
-      {(stats.missingRate > 0 || stats.missingAccount > 0 || stats.lockedAccounts > 0) && (
+      {(stats.missingRate > 0 || (canAccess('rider_accounts') && (stats.missingAccount > 0 || stats.lockedAccounts > 0))) && (
         <section className="rounded-[1.8rem] border border-amber-200 bg-amber-50 p-5">
           <h2 className="font-black text-amber-900">قبل قفل أي دورة</h2>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
