@@ -48,10 +48,10 @@ export default function AdminManagerDashboardV2() {
     <div className="space-y-6" dir="rtl">
       <section className="overflow-hidden rounded-[2.4rem] border border-[#0b6468]/10 bg-gradient-to-l from-[#072f36] via-[#07565d] to-[#008e92] p-6 text-white shadow-xl">
         <div className="max-w-3xl">
-          <p className="text-xs font-black text-teal-200">لوحة الإدارة · النسخة التجريبية</p>
+          <p className="text-xs font-black text-teal-200">لوحة الإدارة</p>
           <h1 className="mt-2 text-3xl font-black">ماذا يحتاج قرارك الآن؟</h1>
           <p className="mt-2 text-sm font-bold leading-7 text-white/75">
-            الواجهة الجديدة تفصل بين القرار الإداري، متابعة التشغيل، والتحليل. كل وظائف الدليفري الحالية تظل كما هي بدون تغيير.
+            ابدأ بالحالات التي تحتاج قرارًا، ثم تابع التشغيل والمستحقات والتقارير من مسارات واضحة ومباشرة.
           </p>
         </div>
 
@@ -68,7 +68,7 @@ export default function AdminManagerDashboardV2() {
           <div>
             <p className="text-xs font-black text-[#008E92]">التشغيل الحالي</p>
             <h2 className="mt-1 text-xl font-black text-[#061827]">ملخص الدورة والحركة اليومية</h2>
-            <p className="mt-1 text-xs font-bold text-slate-400">الأرقام الأساسية كما هي من الداشبورد الحالي؛ التغيير هنا في التنظيم فقط.</p>
+            <p className="mt-1 text-xs font-bold text-slate-400">ملخص سريع لأهم أرقام الدورة والحركة اليومية.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <ActionCard title="ملخص الإدارة" text="صورة موحدة عن أداء المناديب والحالات." to="/admin/executive" icon={<Gauge size={18}/>} tone="slate" />
@@ -80,7 +80,7 @@ export default function AdminManagerDashboardV2() {
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <ActionCard title="فريق الدليفري" text="بيانات الفريق والمواعيد والحسابات والأجهزة." to="/admin/riders" icon={<Users size={20}/>} />
         <ActionCard title="أداء الدليفري" text="تحليل الأداء والفروقات على مستوى الدورة." to="/admin/performance" icon={<BarChart3 size={20}/>} />
-        <ActionCard title="قرارات وملاحظات" text="الخصومات والمكافآت والملاحظات الإدارية." to="/admin/rider-actions" icon={<FileText size={20}/>} tone="amber" />
+        <ActionCard title="طلبات وقرارات الدليفري" text="الملاحظات والخصومات والمكافآت التي تحتاج مراجعة أو اعتماد." to="/admin/rider-actions" icon={<FileText size={20}/>} tone="amber" />
         <ActionCard title="مراجعة الحالات غير الطبيعية" text="التكرار، التأخير، البيانات الناقصة، والحالات غير المعتادة." to="/admin/fraud-alerts" icon={<ShieldAlert size={20}/>} tone="rose" />
       </section>
 
