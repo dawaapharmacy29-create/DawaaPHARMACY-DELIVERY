@@ -285,7 +285,7 @@ export default function AdminShell({ children }: AdminShellProps) {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-[#E7F7F7] px-3 py-1 text-[11px] font-black text-[#007C80]">{currentGroup?.title || 'الإدارة'}</span>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black text-slate-500">واجهة الإدارة التجريبية</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black text-slate-500">إدارة الدليفري</span>
             </div>
             <h1 className="mt-2 truncate text-xl font-black text-[#061827]">{currentLink?.label || 'لوحة الإدارة'}</h1>
             <p className="mt-1 text-xs font-bold text-slate-400">{currentGroup?.hint || 'متابعة وتشغيل الدليفري'}</p>
