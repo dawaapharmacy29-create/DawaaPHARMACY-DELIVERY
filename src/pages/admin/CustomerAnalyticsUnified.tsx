@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ExternalLink, RefreshCw, Search, Star, TrendingUp, Users, X } from 'lucide-react'
+import { ExternalLink, RefreshCw, Search, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import CycleSelector from '../../components/CycleSelector'
