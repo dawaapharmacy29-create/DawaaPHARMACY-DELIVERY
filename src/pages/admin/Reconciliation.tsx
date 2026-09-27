@@ -283,6 +283,19 @@ export default function Reconciliation() {
     setSearchParams({}, { replace: true })
   }
 
+  function openDuplicateQueue(mode: 'pending' | 'excluded' | 'all') {
+    const next = new URLSearchParams(searchParams)
+    next.set('filter', 'duplicate')
+    next.delete('status')
+    next.delete('countable')
+    next.delete('issue')
+    if (mode === 'pending') next.set('review_status', 'pending')
+    else next.delete('review_status')
+    if (mode === 'excluded') next.set('countable', 'false')
+    setFilter('duplicate')
+    setSearchParams(next, { replace: true })
+  }
+
   function applyScopeFilter(key: 'branch' | 'rider_id', value: string) {
     const next = new URLSearchParams(searchParams)
     if (value === 'all') next.delete(key)
@@ -1343,7 +1356,7 @@ export default function Reconciliation() {
             <span className="rounded-full bg-slate-100 px-4 py-2 text-xs font-black text-slate-600">الأولوية: المعلق ← غير الموجود ← الفاشل ← المستبعد</span>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <button type="button" onClick={() => applyMainFilter('duplicate')} className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-right transition hover:-translate-y-0.5 hover:shadow-md">
+            <button type="button" onClick={() => openDuplicateQueue('pending')} className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-right transition hover:-translate-y-0.5 hover:shadow-md">
               <p className="text-3xl font-black text-amber-700">{duplicatePendingTotal}</p>
               <p className="mt-1 font-black text-amber-900">مكرر يحتاج قرار الآن</p>
               <p className="mt-1 text-xs font-bold text-amber-700">يظهر أولًا داخل فلتر المكرر مع مقارنة التسجيلات.</p>
@@ -1358,7 +1371,7 @@ export default function Reconciliation() {
               <p className="mt-1 font-black text-slate-900">فاشل ومستبعد</p>
               <p className="mt-1 text-xs font-bold text-slate-600">راجع فقط الحالات التي تشير الملاحظة فيها إلى أن مندوبًا آخر نفذها.</p>
             </button>
-            <button type="button" onClick={() => applyMainFilter('duplicate')} className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-right transition hover:-translate-y-0.5 hover:shadow-md">
+            <button type="button" onClick={() => openDuplicateQueue('excluded')} className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-right transition hover:-translate-y-0.5 hover:shadow-md">
               <p className="text-3xl font-black text-blue-700">{duplicateExcludedTotal}</p>
               <p className="mt-1 font-black text-blue-900">مكرر مستبعد بالفعل</p>
               <p className="mt-1 text-xs font-bold text-blue-700">للمراجعة النهائية فقط قبل قفل الدورة.</p>
@@ -1409,9 +1422,10 @@ export default function Reconciliation() {
           <div className="flex flex-wrap gap-2">
             <FilterButton active={filter === 'all'} onClick={() => applyMainFilter('all')}>الكل ({scopedOrders.length})</FilterButton>
             <FilterButton active={filter === 'counted'} onClick={() => applyMainFilter('counted')}>محتسبة ({countedTotal})</FilterButton>
+            <FilterButton active={filter === 'pending'} onClick={() => applyMainFilter('pending')}>تحتاج قرار ({pendingTotal})</FilterButton>
             <FilterButton active={filter === 'failed'} onClick={() => applyMainFilter('failed')}>فاشلة ({failedTotal})</FilterButton>
             <FilterButton active={filter === 'not_found'} onClick={() => applyMainFilter('not_found')}>غير موجودة ({notFoundTotal})</FilterButton>
-            <FilterButton active={filter === 'duplicate'} onClick={() => applyMainFilter('duplicate')}>مكررة ({duplicateTotal})</FilterButton>
+            <FilterButton active={filter === 'duplicate'} onClick={() => openDuplicateQueue('all')}>مكررة — الكل ({duplicateTotal})</FilterButton>
             <FilterButton active={filter === 'multiplier'} onClick={() => applyMainFilter('multiplier')}>×1.5 ({multiplierTotal})</FilterButton>
             <FilterButton active={filter === 'deleted'} onClick={() => applyMainFilter('deleted')}>محذوفة ({deletedTotal})</FilterButton>
           </div>
