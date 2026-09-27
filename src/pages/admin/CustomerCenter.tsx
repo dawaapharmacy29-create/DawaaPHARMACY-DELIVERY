@@ -1,6 +1,7 @@
 import { BarChart3, MapPinned, UploadCloud, UsersRound } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import CustomerAdminTabs from '../../components/CustomerAdminTabs'
+import { useAdminAccess } from '../../hooks/useAdminAccess'
 
 function Card({title,text,to,icon}:{title:string;text:string;to:string;icon:JSX.Element}){
   const navigate=useNavigate()
@@ -11,6 +12,7 @@ function Card({title,text,to,icon}:{title:string;text:string;to:string;icon:JSX.
   </button>
 }
 export default function CustomerCenter(){
+  const { ready, canAccess } = useAdminAccess()
   return <div className="space-y-5" dir="rtl">
     <CustomerAdminTabs/>
     <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
@@ -20,8 +22,8 @@ export default function CustomerCenter(){
     </section>
     <section className="grid gap-4 md:grid-cols-3">
       <Card title="تحليل العملاء" text="العملاء المتكررين، المهمين، عدد الفواتير، المبيعات، وآخر تعامل." to="/admin/customer-analytics" icon={<BarChart3 size={20}/>}/>
-      <Card title="تحديث بيانات العملاء" text="رفع ملفات العملاء ومراجعة الصفوف قبل الحفظ في قاعدة البيانات." to="/admin/customer-import" icon={<UploadCloud size={20}/>}/>
-      <Card title="المناطق والمسارات" text="ترتيب الأوردرات حسب المنطقة وربطها بالمندوب المناسب." to="/admin/route-planner" icon={<MapPinned size={20}/>}/>
+      {ready && canAccess('customer_import') && <Card title="تحديث بيانات العملاء" text="رفع ملفات العملاء ومراجعة الصفوف قبل الحفظ في قاعدة البيانات." to="/admin/customer-import" icon={<UploadCloud size={20}/>} />}
+      {ready && canAccess('dashboard') && <Card title="المناطق والمسارات" text="ترتيب الأوردرات حسب المنطقة وربطها بالمندوب المناسب." to="/admin/route-planner" icon={<MapPinned size={20}/>} />}
     </section>
     <section className="rounded-[1.8rem] border border-teal-100 bg-teal-50 p-5">
       <div className="flex items-start gap-3"><UsersRound className="mt-0.5 text-teal-700"/><div><h2 className="font-black text-teal-900">طريقة الاستخدام</h2><p className="mt-1 text-sm font-bold leading-7 text-teal-800">استخدم التحليل لاتخاذ القرار، وتحديث البيانات للاستيراد والمراجعة، والمناطق والمسارات للتوزيع والتشغيل.</p></div></div>
