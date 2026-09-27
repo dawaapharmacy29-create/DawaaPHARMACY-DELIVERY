@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CalendarDays, ChevronLeft, Clock3, KeyRound, ShieldCheck, UserCog, Users, WalletCards } from 'lucide-react'
+import { CalendarDays, ChevronLeft, Clock3, KeyRound, ShieldCheck, Users, WalletCards } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { getRiders } from '../../lib/delivery'
 import { supabase } from '../../lib/supabase'
