@@ -5,11 +5,11 @@ const items = [
   { to: '/admin/riders', label: 'مركز الفريق', icon: Users, end: true },
   { to: '/admin/riders/manage', label: 'بيانات الفريق', icon: Users },
   { to: '/admin/rider-schedules', label: 'الجداول', icon: CalendarDays },
-  { to: '/admin/rider-accounts', label: 'الحسابات', icon: KeyRound },
-  { to: '/admin/performance', label: 'الأداء', icon: BarChart3 },
-  { to: '/admin/rider-actions', label: 'القرارات', icon: ClipboardCheck },
-  { to: '/admin/penalty-incentive', label: 'الخصومات والمكافآت', icon: Gift },
-  { to: '/admin/rider-compensation', label: 'المستحقات', icon: WalletCards },
+  { to: '/admin/rider-accounts', label: 'الحسابات والأجهزة', icon: KeyRound },
+  { to: '/admin/performance', label: 'أداء الدليفري', icon: BarChart3 },
+  { to: '/admin/rider-actions', label: 'طلبات وقرارات الدليفري', icon: ClipboardCheck },
+  { to: '/admin/penalty-incentive', label: 'سجل الخصومات والمكافآت', icon: Gift },
+  { to: '/admin/rider-compensation', label: 'مستحقات الدليفري', icon: WalletCards },
 ]
 
 export default function TeamAdminTabs() {
