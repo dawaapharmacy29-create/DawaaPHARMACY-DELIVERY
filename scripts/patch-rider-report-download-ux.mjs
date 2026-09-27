@@ -147,5 +147,9 @@ replaceOnce(
   'summary-only help text',
 )
 
+if (source.includes('function exportMonthlyReport()') && !source.includes('void exportMonthlyReport')) {
+  source = source.replace('  return (', '  void exportMonthlyReport\n  void exportMonthlyReportLegacy\n\n  return (')
+}
+
 await writeFile(file, source, 'utf8')
 console.log('Rider summary PDF downloads directly and includes approved adjustments')
