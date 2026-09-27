@@ -2,12 +2,12 @@ import { NavLink } from 'react-router-dom'
 import { Archive, BarChart3, Building2, FileText, ShieldAlert, WalletCards } from 'lucide-react'
 
 const items = [
-  { to: '/admin/reports-center', label: 'مركز التقارير', icon: BarChart3, end: true },
+  { to: '/admin/reports-center', label: 'مركز التقارير والإدارة', icon: BarChart3, end: true },
   { to: '/admin/reports', label: 'تقارير الدورة', icon: FileText },
   { to: '/admin/cycles', label: 'أرشيف الدورات', icon: Archive },
-  { to: '/admin/fraud-alerts', label: 'الحالات غير الطبيعية', icon: ShieldAlert },
-  { to: '/admin/cash-flow', label: 'ملخص المستحقات', icon: WalletCards },
-  { to: '/admin/branch', label: 'مدير الفرع', icon: Building2 },
+  { to: '/admin/fraud-alerts', label: 'مراجعة الحالات غير الطبيعية', icon: ShieldAlert },
+  { to: '/admin/cash-flow', label: 'ملخص مستحقات الدورة', icon: WalletCards },
+  { to: '/admin/branch', label: 'لوحة مدير الفرع', icon: Building2 },
 ]
 
 export default function ReportsAdminTabs() {
