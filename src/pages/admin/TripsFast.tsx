@@ -116,7 +116,7 @@ export default function TripsFast(){
   function removeIfOutsideStatusFilter(id:string,status:string){
     if(statusFilter==='all'||statusFilter===status)return
     setRows(prev=>prev.filter(row=>row.id!==id));setTotalFiltered(prev=>Math.max(0,prev-1))
-    setSelected(prev=>{const next=new Set(prev);next.delete(id);return next});setDetails(current=>current?.id===id?null:current)
+    setSelected(prev=>{const next=new Set(prev);next.delete(id);return next});setDetails((current: any)=>current?.id===id?null:current)
   }
 
   async function changeStatus(trip:any,status:'approved'|'rejected'|'pending_approval',reason?:string){
