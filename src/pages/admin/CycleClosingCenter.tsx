@@ -6,6 +6,7 @@ import { loadCanonicalDeliveryData } from '../../lib/canonicalDeliveryData'
 import { isDelivered, isFailed, isMultiplier, num } from '../../lib/deliveryAnalytics'
 import { cycleForDate, CYCLE_STATUS_LABELS, type DeliveryCycleStatus } from '../../lib/deliveryCycles'
 import { supabase } from '../../lib/supabase'
+import OperationsAdminTabs from '../../components/OperationsAdminTabs'
 
 type CycleDbRow = {
   id: string
@@ -200,6 +201,7 @@ export default function CycleClosingCenter() {
   }
 
   return <div className="space-y-5 p-1 text-right" dir="rtl">
+    <OperationsAdminTabs />
     <section className="rounded-[32px] bg-gradient-to-l from-[#061827] to-[#008E92] p-6 text-white shadow-xl">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
