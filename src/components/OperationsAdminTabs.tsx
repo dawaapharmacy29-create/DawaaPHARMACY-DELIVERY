@@ -1,20 +1,23 @@
 import { NavLink } from 'react-router-dom'
+import { useAdminAccess } from '../hooks/useAdminAccess'
 import { ClipboardCheck, CopyCheck, FileQuestion, Gauge, GitCompareArrows, Route, ShieldCheck } from 'lucide-react'
 
 const items = [
-  { to: '/admin/review-center', label: 'مركز مراجعة الدورة', icon: Gauge, end: true },
-  { to: '/admin/reconciliation', label: 'مطابقة الأوردرات', icon: GitCompareArrows },
-  { to: '/admin/trips', label: 'مراجعة المشاوير', icon: Route },
-  { to: '/admin/duplicate-invoices', label: 'الأوردرات المكررة', icon: CopyCheck },
-  { to: '/admin/trips-without-invoice', label: 'مشاوير بدون فاتورة', icon: FileQuestion },
-  { to: '/admin/cycle-closing', label: 'إغلاق الدورة', icon: ClipboardCheck },
-  { to: '/admin/ops', label: 'متابعة التشغيل الحي', icon: ShieldCheck },
+  { to: '/admin/review-center', label: 'مركز مراجعة الدورة', icon: Gauge, pageKey: 'dashboard', end: true },
+  { to: '/admin/reconciliation', label: 'مطابقة الأوردرات', icon: GitCompareArrows, pageKey: 'reconciliation' },
+  { to: '/admin/trips', label: 'مراجعة المشاوير', icon: Route, pageKey: 'trips' },
+  { to: '/admin/duplicate-invoices', label: 'الأوردرات المكررة', icon: CopyCheck, pageKey: 'duplicate_invoices' },
+  { to: '/admin/trips-without-invoice', label: 'مشاوير بدون فاتورة', icon: FileQuestion, pageKey: 'trips_without_invoice' },
+  { to: '/admin/cycle-closing', label: 'إغلاق الدورة', icon: ClipboardCheck, pageKey: 'dashboard' },
+  { to: '/admin/ops', label: 'متابعة التشغيل الحي', icon: ShieldCheck, pageKey: 'dashboard' },
 ]
 
 export default function OperationsAdminTabs() {
+  const { ready, canAccess } = useAdminAccess()
+  const visibleItems = ready ? items.filter(item => canAccess(item.pageKey as any)) : []
   return (
     <nav className="flex gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm" dir="rtl">
-      {items.map(item => {
+      {visibleItems.map(item => {
         const Icon = item.icon
         return (
           <NavLink
