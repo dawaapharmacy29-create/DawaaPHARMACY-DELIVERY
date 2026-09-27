@@ -56,7 +56,7 @@ export default function AdminManagerDashboardV2() {
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <ActionCard title="مطابقة الأوردرات" text="راجع المعلق، غير الموجود، والمكرر قبل إغلاق الدورة." to="/admin/reconciliation" icon={<PackageSearch size={20}/>} tone="amber" />
+          <ActionCard title="مركز مراجعة الدورة" text="ابدأ من قائمة القرارات المعلقة ثم انتقل للمطابقة والمشاوير والإغلاق." to="/admin/review-center" icon={<PackageSearch size={20}/>} tone="amber" />
           <ActionCard title="مراجعة المشاوير" text="المشاوير المعلقة والمرفوضة وإثباتات الحركة." to="/admin/trips" icon={<Truck size={20}/>} tone="teal" />
           <ActionCard title="جاهزية إغلاق الدورة" text="تأكد من أن كل البنود المالية والتشغيلية جاهزة للقفل." to="/admin/cycle-closing" icon={<ClipboardCheck size={20}/>} tone="rose" />
           <ActionCard title="مستحقات الدليفري" text="الأوردرات والمشاوير والأسعار والخصومات والمكافآت." to="/admin/rider-compensation" icon={<WalletCards size={20}/>} tone="slate" />
