@@ -86,7 +86,7 @@ export default function OperationsReviewCenter() {
     <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
       <p className="text-xs font-black text-[#008E92]">التشغيل والمراجعة</p>
       <div className="mt-1 flex flex-wrap items-start justify-between gap-4">
-        <div><h1 className="text-2xl font-black text-[#061827]">مركز مراجعة الدورة</h1><p className="mt-2 max-w-2xl text-sm font-bold leading-7 text-slate-500">صفحة واحدة تحدد ما يحتاج قرارًا قبل الإغلاق. لا تغيّر أي أوردر أو مشوار بنفسها؛ هي فقط توجهك لصفحة القرار المناسبة.</p></div>
+        <div><h1 className="text-2xl font-black text-[#061827]">مركز مراجعة الدورة</h1><p className="mt-2 max-w-2xl text-sm font-bold leading-7 text-slate-500">اعرف ما يحتاج قرارًا قبل الإغلاق، ثم انتقل مباشرة لصفحة المطابقة أو المشاوير أو الإغلاق المناسبة.</p></div>
         <div className={`rounded-2xl px-5 py-3 text-center ${decisionTotal ? 'bg-amber-50 text-amber-900':'bg-emerald-50 text-emerald-900'}`}><p className="text-3xl font-black">{loading?'—':decisionTotal}</p><p className="text-[11px] font-black">قرارات معلقة</p></div>
       </div>
       <p className="mt-3 text-xs font-bold text-slate-400">الدورة {selectedFrom} → {selectedTo}</p>
