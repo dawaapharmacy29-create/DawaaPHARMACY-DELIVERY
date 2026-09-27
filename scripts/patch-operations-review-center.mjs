@@ -18,7 +18,10 @@ async function patchFile(path, transforms) {
   if (changed) await writeFile(file, source, 'utf8')
 }
 
-await patchFile('../src/pages/admin/Reconciliation.tsx', [
+const reconciliationFile = new URL('../src/pages/admin/Reconciliation.tsx', import.meta.url)
+const reconciliationSource = await readFile(reconciliationFile, 'utf8')
+if (!reconciliationSource.includes('مركز قرار الدورة')) {
+  await patchFile('../src/pages/admin/Reconciliation.tsx', [
   {
     label: 'reconciliation decision center',
     before: `        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">`,
@@ -60,7 +63,10 @@ await patchFile('../src/pages/admin/Reconciliation.tsx', [
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">`,
   },
-])
+  ])
+} else {
+  console.log('Reconciliation already has the newer cycle decision center; legacy review-center patch skipped')
+}
 
 await patchFile('../src/pages/admin/TripsEnhanced.tsx', [
   {
