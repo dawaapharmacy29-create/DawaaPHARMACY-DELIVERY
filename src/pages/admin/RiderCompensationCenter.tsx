@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowRight, Printer, RefreshCw, Save } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { Printer, RefreshCw, Save, WalletCards } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
+import TeamAdminTabs from '../../components/TeamAdminTabs'
 
 type Row = Record<string, any>
 type BonusType = 'monthly' | 'quarterly'
@@ -53,16 +53,12 @@ function money(value: number) {
   return Number(value || 0).toLocaleString('ar-EG', { maximumFractionDigits: 2 })
 }
 
-function rowDate(row: Row) {
-  return String(row.work_date || row.delivery_date || row.registered_at || row.created_at || '').slice(0, 10)
-}
 
 function status(row: Row) {
   return String(row.status || '').toLowerCase()
 }
 
 export default function RiderCompensationCenter() {
-  const navigate = useNavigate()
   const current = cycleRange()
   const previous = cycleRange(new Date(), -1)
   const [riders, setRiders] = useState<Row[]>([])
@@ -250,15 +246,19 @@ export default function RiderCompensationCenter() {
 
   return (
     <div className="space-y-5 text-right" dir="rtl">
-      <header className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border bg-white p-4 shadow-sm print:hidden">
-        <div>
-          <button onClick={() => navigate('/admin/riders')} className="mb-2 inline-flex items-center gap-2 rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700"><ArrowRight size={16}/> رجوع</button>
-          <h1 className="text-3xl font-black text-[#061827]">تقرير ومستحقات الدليفري</h1>
-          <p className="mt-1 text-sm font-bold text-slate-500">الأوردرات والمشاوير والحوافز والخصومات في تقرير واحد قابل للحفظ PDF.</p>
+      <div className="print:hidden"><TeamAdminTabs /></div>
+      <header className="flex flex-wrap items-center justify-between gap-4 rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm print:hidden">
+        <div className="flex items-start gap-3">
+          <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-50 text-violet-700"><WalletCards size={20}/></span>
+          <div>
+            <p className="text-xs font-black text-[#008E92]">الفريق والأداء</p>
+            <h1 className="mt-1 text-2xl font-black text-[#061827]">مستحقات الدليفري</h1>
+            <p className="mt-1 text-sm font-bold text-slate-500">الحساب المالي النهائي: الأوردرات والمشاوير والأسعار والحوافز والخصومات في تقرير واحد.</p>
+          </div>
         </div>
         <div className="flex gap-2">
-          <button onClick={loadReport} disabled={loading} className="inline-flex items-center gap-2 rounded-2xl border px-4 py-3 font-black text-slate-700"><RefreshCw size={17} className={loading ? 'animate-spin' : ''}/> تحديث</button>
-          <button onClick={printPdf} className="inline-flex items-center gap-2 rounded-2xl bg-[#008E92] px-5 py-3 font-black text-white"><Printer size={18}/> حفظ التقرير PDF</button>
+          <button onClick={loadReport} disabled={loading} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-black text-slate-700"><RefreshCw size={17} className={loading ? 'animate-spin' : ''}/> تحديث</button>
+          <button onClick={printPdf} className="inline-flex items-center gap-2 rounded-xl bg-[#008E92] px-4 py-2.5 text-xs font-black text-white"><Printer size={17}/> حفظ PDF</button>
         </div>
       </header>
 

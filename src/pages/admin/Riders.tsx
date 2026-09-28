@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Search, Edit, Eye, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Save, PlusCircle } from 'lucide-react'
+import { Search, Edit, Eye, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Save, PlusCircle, Users, WalletCards } from 'lucide-react'
 import LeavePermissionModal from '../../components/LeavePermissionModal'
 import Modal from '../../components/Modal'
 import { Rider, Branch } from '../../lib/types'
@@ -8,6 +8,7 @@ import { getRiders, getBranches } from '../../lib/delivery'
 import { getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
 import { toast } from 'sonner'
+import TeamAdminTabs from '../../components/TeamAdminTabs'
 
 type ActionForm = {
   action_type: 'notice' | 'deduction_request' | 'reward_request' | 'shift_note'
@@ -569,30 +570,35 @@ export default function Riders() {
 
   return (
     <div className="min-h-screen bg-[#F3F7F8] pb-12">
-      <header className="bg-gradient-to-l from-[#061827] to-[#008E92] p-4 text-white">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <button onClick={() => navigate('/admin')} className="rounded-full bg-white/20 p-2 hover:bg-white/30">
-              <ArrowLeft size={24} />
-            </button>
-            <div>
-              <h1 className="text-2xl font-black">إدارة الدليفري</h1>
-              <p className="text-sm text-white/80">عرض وإدارة بيانات الدليفري</p>
+      <main className="space-y-4 p-4">
+        <TeamAdminTabs />
+        <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-teal-50 text-teal-700"><Users size={20}/></span>
+              <div>
+                <h1 className="text-xl font-black text-[#061827]">بيانات فريق الدليفري</h1>
+                <p className="mt-1 text-sm font-bold text-slate-500">البيانات الأساسية والأسعار والحالة والإجازة الأسبوعية. الجداول والحسابات ليها صفحات مستقلة.</p>
+              </div>
             </div>
+            <button onClick={() => navigate('/admin/rider-actions')} className="inline-flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-2 text-xs font-black text-amber-800 hover:bg-amber-100">
+              <ShieldAlert size={16}/> قرارات وملاحظات
+            </button>
           </div>
-          <button onClick={() => navigate('/admin/rider-actions')} className="rounded-xl bg-white/15 px-3 py-2 text-sm font-black hover:bg-white/25">
-            مراجعة الخصومات والمكافآت
-          </button>
-        </div>
-      </header>
+          <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+            <div className="rounded-2xl bg-slate-50 p-3"><p className="text-xs font-black text-slate-400">إجمالي الفريق</p><p className="mt-1 text-2xl font-black">{riders.length}</p></div>
+            <div className="rounded-2xl bg-emerald-50 p-3"><p className="text-xs font-black text-emerald-700">نشط</p><p className="mt-1 text-2xl font-black text-emerald-900">{riders.filter(r => r.status === 'active').length}</p></div>
+            <div className="rounded-2xl bg-rose-50 p-3"><p className="text-xs font-black text-rose-700">أسعار ناقصة</p><p className="mt-1 text-2xl font-black text-rose-900">{riders.filter(r => r.status === 'active' && (Number(r.order_rate || 0) <= 0 || Number(r.trip_rate || 0) <= 0)).length}</p></div>
+            <button onClick={() => navigate('/admin/rider-compensation')} className="rounded-2xl bg-violet-50 p-3 text-right text-violet-800 transition hover:bg-violet-100"><p className="text-xs font-black">المستحقات</p><p className="mt-1 flex items-center gap-2 text-sm font-black"><WalletCards size={17}/> فتح مركز المستحقات</p></button>
+          </div>
+        </section>
 
-      <main className="p-4">
-        <div className="mb-4">
+        <div>
           <div className="relative">
             <Search className="absolute right-3 top-3 text-slate-400" size={20} />
             <input
               className="dawaa-input pr-10"
-              placeholder="بحث بالاسم أو Username أو الفرع"
+              placeholder="بحث بالاسم أو اسم الدخول أو الفرع"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -616,7 +622,7 @@ export default function Riders() {
               <div className="grid grid-cols-2 gap-2 text-sm mb-3">
                 <div className="bg-slate-50 rounded-lg p-2">
                   <p className="text-slate-500">المستوى</p>
-                  <p className="font-bold">{rider.level}</p>
+                  <p className="font-bold">{rider.level === 'senior' ? 'Senior' : rider.level === 'mid' ? 'Mid' : rider.level === 'junior' ? 'Junior' : 'Normal'}</p>
                 </div>
                 <div className="bg-slate-50 rounded-lg p-2">
                   <p className="text-slate-500">إجازة أسبوعية</p>

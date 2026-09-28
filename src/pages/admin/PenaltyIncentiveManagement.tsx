@@ -13,6 +13,7 @@ import type { BadgeTone } from '../../components/ui/Badge'
 import EmptyState from '../../components/ui/EmptyState'
 import SearchInput from '../../components/ui/SearchInput'
 import ConfirmDialog from '../../components/ui/ConfirmDialog'
+import TeamAdminTabs from '../../components/TeamAdminTabs'
 
 type Staff = {
   id: string
@@ -185,7 +186,7 @@ export default function PenaltyIncentiveManagement() {
       setProfile(userProfile as UserProfile)
 
       // Get all active staff from staff_accounts_full_view
-      const { data: staffData, error: staffError } = await supabase
+      const { data: staffData } = await supabase
         .from('staff_accounts_full_view')
         .select('account_id, rider_id, person_name, display_name, username, role, branch_id, branch_name, account_status, rider_status')
         .eq('account_status', 'active')
@@ -465,8 +466,8 @@ export default function PenaltyIncentiveManagement() {
 
   return (
     <AdminModuleShell
-      title="إدارة الخصومات والمكافآت"
-      subtitle='كل سجل يُسجل بوضعية "معلّق" حتى يتخذ قرار من الإدارة'
+      title="سجل الخصومات والمكافآت"
+      subtitle='السجل المالي للقرارات بعد المراجعة: معلّق، معتمد، مؤجل أو ملغي'
       icon={<Gift size={22} />}
       loading={loading}
       onRefresh={() => void loadData()}
@@ -480,6 +481,7 @@ export default function PenaltyIncentiveManagement() {
       }
     >
       <div className="space-y-5">
+        <TeamAdminTabs />
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <StatCard label="معلّق" value={summary.pending} tone="amber" icon={<Clock size={18} />} loading={loading} />
           <StatCard label="معتمد" value={summary.approved} tone="emerald" icon={<CheckCircle2 size={18} />} loading={loading} />

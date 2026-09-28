@@ -6,6 +6,7 @@ import { formatMoney, getOperationalPeriod } from '../../lib/helpers'
 import { isDelivered, isMultiplier, orderAmount } from '../../lib/deliveryAnalytics'
 import { loadCanonicalDeliveryData } from '../../lib/canonicalDeliveryData'
 import type { DeliveryOrder, InternalTrip, Rider } from '../../lib/types'
+import ReportsAdminTabs from '../../components/ReportsAdminTabs'
 
 type CashRow = {
   rider: Rider
@@ -97,7 +98,8 @@ export default function CashFlowDashboard() {
     missingRates: rows.filter(row => row.missingRates).length,
   }), [rows])
 
-  return <AdminModuleShell title="التدفق النقدي الشهري" subtitle={`كشف الدورة من ${cycle.start} إلى ${cycle.end}: الأوردرات المسلمة، المشاوير المعتمدة، النقدي، والمستحقات`} icon={<Banknote/>} loading={loading} onRefresh={load}>
+  return <AdminModuleShell title="ملخص مستحقات الدورة" subtitle={`كشف الدورة من ${cycle.start} إلى ${cycle.end}: الأوردرات المسلمة، المشاوير المعتمدة، النقدي، والمستحقات`} icon={<Banknote/>} loading={loading} onRefresh={load}>
+    <div className="mb-4"><ReportsAdminTabs /></div>
     {error && <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 font-black text-rose-700">تعذر تحديث البيانات: {error}</div>}
 
     <section className="grid grid-cols-2 gap-3 lg:grid-cols-7">

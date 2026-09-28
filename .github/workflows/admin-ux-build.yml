@@ -1,0 +1,45 @@
+name: Admin UX build smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/pages/admin/**'
+      - 'src/components/**'
+      - 'src/hooks/**'
+      - 'src/lib/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/admin-ux-build.yml'
+
+jobs:
+  build:
+    name: Patched Vite build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build patched app
+        run: pnpm run build
+
+      - name: Inspect patched admin source
+        run: node scripts/qa-admin-patched-source.mjs
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}

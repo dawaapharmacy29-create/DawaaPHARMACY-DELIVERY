@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Award, CheckCircle2, Clock, Filter, RefreshCw, Search, ShieldAlert, XCircle } from 'lucide-react'
+import { Award, CheckCircle2, Clock, Filter, RefreshCw, Search, ShieldAlert, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import Modal from '../../components/Modal'
 import { supabase } from '../../lib/supabase'
 import { getOperationalPeriod } from '../../lib/helpers'
+import TeamAdminTabs from '../../components/TeamAdminTabs'
 
 type RiderAction = {
   id: string
@@ -69,7 +69,6 @@ function statusClass(status: string) {
 }
 
 export default function RiderActions() {
-  const navigate = useNavigate()
   const period = useMemo(() => getOperationalPeriod(), [])
   const [items, setItems] = useState<RiderAction[]>([])
   const [loading, setLoading] = useState(true)
@@ -185,24 +184,23 @@ export default function RiderActions() {
 
   return (
     <div className="min-h-screen bg-[#F3F7F8] pb-12">
-      <header className="bg-gradient-to-l from-[#061827] to-[#008E92] p-4 text-white">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <button onClick={() => navigate('/admin')} className="rounded-full bg-white/20 p-2 hover:bg-white/30">
-              <ArrowLeft size={24} />
-            </button>
-            <div>
-              <h1 className="text-2xl font-black">لفت النظر والخصومات والمكافآت</h1>
-              <p className="text-sm text-white/80">كل موقف يتسجل باسم المسئول ويظل تحت مراجعة المدير العام</p>
-            </div>
-          </div>
-          <button onClick={loadItems} className="rounded-xl bg-white/15 px-3 py-2 text-sm font-bold hover:bg-white/25">
-            <RefreshCw className="inline" size={16} /> تحديث
-          </button>
-        </div>
-      </header>
-
       <main className="space-y-4 p-4">
+        <TeamAdminTabs />
+        <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-50 text-amber-700"><ShieldAlert size={20}/></span>
+              <div>
+                <p className="text-xs font-black text-[#008E92]">الفريق والأداء</p>
+                <h1 className="mt-1 text-xl font-black text-[#061827]">قرارات وملاحظات الدليفري</h1>
+                <p className="mt-1 text-sm font-bold text-slate-500">طلبات الخصم والمكافأة ولفت النظر تظل منفصلة عن الحساب المالي النهائي لحين اعتماد الإدارة.</p>
+              </div>
+            </div>
+            <button onClick={loadItems} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-black text-slate-600">
+              <RefreshCw size={16} /> تحديث
+            </button>
+          </div>
+        </section>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
           <Stat title="تحت المراجعة" value={stats.pending} icon={<Clock size={20} />} color="bg-amber-50 text-amber-700" />
           <Stat title="معتمدة" value={stats.approved} icon={<CheckCircle2 size={20} />} color="bg-emerald-50 text-emerald-700" />

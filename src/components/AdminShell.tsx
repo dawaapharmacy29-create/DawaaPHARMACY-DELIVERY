@@ -1,4 +1,6 @@
 import { ReactNode, useEffect, useMemo, useState } from 'react'
+import { getCurrentSession, getUserProfile, restoreRiderSession } from '../lib/auth'
+import { canAccessPage, type PageKey } from '../lib/permissions'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   BarChart3,
@@ -10,10 +12,8 @@ import {
   Menu,
   PackageSearch,
   Search,
-  ShieldCheck,
   Truck,
   Users,
-  WalletCards,
   X,
 } from 'lucide-react'
 
@@ -24,6 +24,7 @@ type AdminShellProps = {
 type AdminNavLink = {
   to: string
   label: string
+  pageKey: PageKey
 }
 
 type AdminNavGroup = {
@@ -35,90 +36,115 @@ type AdminNavGroup = {
 
 const groups: AdminNavGroup[] = [
   {
-    title: 'مركز القيادة',
-    hint: 'الصفحات الرئيسية والمتابعة العامة',
+    title: 'الرئيسية',
+    hint: 'القرار السريع وملخص الدورة',
     icon: LayoutDashboard,
     links: [
-      { to: '/admin', label: 'داشبورد التشغيل' },
-      { to: '/admin/executive', label: 'لوحة الإدارة العليا' },
-      { to: '/admin/ops', label: 'غرفة العمليات' },
-      { to: '/admin/reports', label: 'مركز التقارير' },
-      { to: '/admin/cycles', label: 'أرشيف الدورات' },
+      { to: '/admin', label: 'لوحة الإدارة', pageKey: 'dashboard' },
+      { to: '/admin/executive', label: 'ملخص الإدارة', pageKey: 'dashboard' },
     ],
   },
   {
-    title: 'الموارد البشرية والمناديب',
-    hint: 'البيانات والمواعيد والحسابات',
-    icon: Users,
-    links: [
-      { to: '/admin/riders', label: 'بيانات المناديب' },
-      { to: '/admin/rider-compensation', label: 'تقرير ومستحقات الدليفري' },
-      { to: '/admin/rider-schedules', label: 'مواعيد المناديب' },
-      { to: '/admin/rider-accounts', label: 'حسابات وأجهزة الدخول' },
-      { to: '/admin/penalty-incentive', label: 'خصم / مكافأة سريع' },
-      { to: '/admin/performance', label: 'تحليل أداء المناديب' },
-      { to: '/admin/hourly-analytics', label: 'تحليل الدليفري بالساعات' },
-      { to: '/admin/rider-monthly-reports', label: 'التقرير الشهري القديم' },
-      { to: '/admin/rider-actions', label: 'إجراءات وملاحظات' },
-    ],
-  },
-  {
-    title: 'الأوردرات والمطابقة',
-    hint: 'الفواتير والمراجعة المالية',
+    title: 'التشغيل والمراجعة',
+    hint: 'الأوردرات والمشاوير والحالات المعلقة',
     icon: PackageSearch,
     links: [
-      { to: '/admin/reconciliation', label: 'مطابقة الفواتير' },
-      { to: '/admin/duplicate-invoices', label: 'الفواتير المكررة' },
-      { to: '/admin/invoice-notebook', label: 'دفتر الفواتير' },
+      { to: '/admin/review-center', label: 'مركز مراجعة الدورة', pageKey: 'dashboard' },
+      { to: '/admin/reconciliation', label: 'مطابقة الأوردرات', pageKey: 'reconciliation' },
+      { to: '/admin/trips', label: 'مراجعة المشاوير', pageKey: 'trips' },
+      { to: '/admin/duplicate-invoices', label: 'الأوردرات المكررة', pageKey: 'duplicate_invoices' },
+      { to: '/admin/trips-without-invoice', label: 'حالات بدون فاتورة', pageKey: 'trips_without_invoice' },
     ],
   },
   {
-    title: 'المشاوير والتشغيل',
-    hint: 'مراجعة المشاوير والتحرك اليومي',
-    icon: Truck,
+    title: 'الفريق والأداء',
+    hint: 'الفريق والجداول والحسابات والمستحقات',
+    icon: Users,
     links: [
-      { to: '/admin/trips', label: 'المشاوير' },
-      { to: '/admin/trips-without-invoice', label: 'مشاوير بدون فاتورة' },
-      { to: '/admin/route-planner', label: 'تحليل المناطق والمسارات' },
+      { to: '/admin/riders', label: 'فريق الدليفري', pageKey: 'riders' },
+      { to: '/admin/rider-schedules', label: 'الجداول والمواعيد', pageKey: 'rider_schedules' },
+      { to: '/admin/rider-accounts', label: 'الحسابات والأجهزة', pageKey: 'rider_accounts' },
+      { to: '/admin/performance', label: 'أداء الدليفري', pageKey: 'performance' },
+      { to: '/admin/hourly-analytics', label: 'الأداء حسب الساعة', pageKey: 'performance' },
+      { to: '/admin/rider-actions', label: 'طلبات وقرارات الدليفري', pageKey: 'rider_actions' },
+      { to: '/admin/penalty-incentive', label: 'سجل الخصومات والمكافآت', pageKey: 'dashboard' },
+      { to: '/admin/rider-compensation', label: 'مستحقات الدليفري', pageKey: 'performance' },
     ],
   },
   {
-    title: 'العملاء والتحليل',
-    hint: 'العملاء والمتابعة والتحديث',
+    title: 'العملاء والمناطق',
+    hint: 'العملاء والمناطق والتحليل',
+    icon: MapPinned,
+    links: [
+      { to: '/admin/customer-center', label: 'مركز العملاء والمناطق', pageKey: 'customer_analytics' },
+      { to: '/admin/customer-analytics', label: 'تحليل العملاء', pageKey: 'customer_analytics' },
+      { to: '/admin/customer-import', label: 'تحديث بيانات العملاء', pageKey: 'customer_import' },
+      { to: '/admin/route-planner', label: 'المناطق والمسارات', pageKey: 'dashboard' },
+    ],
+  },
+  {
+    title: 'التقارير والإدارة',
+    hint: 'التقارير والرقابة والماليات',
     icon: BarChart3,
     links: [
-      { to: '/admin/customer-analytics', label: 'تحليل العملاء الشهري' },
-      { to: '/admin/customer-import', label: 'استيراد وتحديث العملاء' },
-    ],
-  },
-  {
-    title: 'الرقابة والماليات',
-    hint: 'التلاعب والكاش والإدارة',
-    icon: ShieldCheck,
-    links: [
-      { to: '/admin/fraud-alerts', label: 'تنبيهات التلاعب' },
-      { to: '/admin/cash-flow', label: 'التدفق النقدي الشهري' },
-      { to: '/admin/branch', label: 'مدير الفرع' },
+      { to: '/admin/reports-center', label: 'مركز التقارير والإدارة', pageKey: 'dashboard' },
+      { to: '/admin/reports', label: 'تقرير الدليفري للدورة', pageKey: 'dashboard' },
+      { to: '/admin/cycles', label: 'أرشيف الدورات', pageKey: 'dashboard' },
+      { to: '/admin/fraud-alerts', label: 'مراجعة الحالات غير الطبيعية', pageKey: 'dashboard' },
+      { to: '/admin/cash-flow', label: 'ملخص مستحقات الدورة', pageKey: 'dashboard' },
+      { to: '/admin/branch', label: 'لوحة مدير الفرع', pageKey: 'branch_dashboard' },
     ],
   },
 ]
 
-const allLinks = groups.flatMap(group => group.links)
-
 export default function AdminShell({ children }: AdminShellProps) {
   const location = useLocation()
   const navigate = useNavigate()
-  const currentPath = useMemo(() => {
-    const exact = allLinks.find(link => link.to === location.pathname)
-    if (exact) return exact.to
-    const parent = allLinks.find(link => location.pathname.startsWith(`${link.to}/`))
-    return parent?.to || '/admin'
-  }, [location.pathname])
-  const activeGroupTitle = useMemo(() => {
-    return groups.find(group => group.links.some(link => link.to === currentPath))?.title || 'مركز القيادة'
-  }, [currentPath])
+  const [role, setRole] = useState<string | null>(null)
+  const [permissionsReady, setPermissionsReady] = useState(false)
 
-  const [openGroups, setOpenGroups] = useState<string[]>(() => ['مركز القيادة'])
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const local = restoreRiderSession()
+      if (local?.role && local.role !== 'rider') {
+        if (!alive) return
+        setRole(local.role)
+        setPermissionsReady(true)
+        return
+      }
+
+      const session = await getCurrentSession()
+      const profile = session?.user?.id ? await getUserProfile(session.user.id) : null
+      if (!alive) return
+      setRole(profile?.role || null)
+      setPermissionsReady(true)
+    })()
+    return () => { alive = false }
+  }, [])
+
+  const visibleGroups = useMemo(() => {
+    if (!permissionsReady) return []
+    return groups
+      .map(group => ({ ...group, links: group.links.filter(link => canAccessPage(role, link.pageKey)) }))
+      .filter(group => group.links.length > 0)
+  }, [permissionsReady, role])
+
+  const visibleLinks = useMemo(() => visibleGroups.flatMap(group => group.links), [visibleGroups])
+
+  const currentPath = useMemo(() => {
+    const exact = visibleLinks.find(link => link.to === location.pathname)
+    if (exact) return exact.to
+    const parent = visibleLinks.find(link => location.pathname.startsWith(`${link.to}/`))
+    return parent?.to || '/admin'
+  }, [location.pathname, visibleLinks])
+  const activeGroupTitle = useMemo(() => {
+    return visibleGroups.find(group => group.links.some(link => link.to === currentPath))?.title || 'الرئيسية'
+  }, [currentPath, visibleGroups])
+  const currentLink = useMemo(() => visibleLinks.find(link => link.to === currentPath), [currentPath, visibleLinks])
+  const currentGroup = useMemo(() => visibleGroups.find(group => group.links.some(link => link.to === currentPath)), [currentPath, visibleGroups])
+
+  const [openGroups, setOpenGroups] = useState<string[]>(() => ['الرئيسية', 'التشغيل والمراجعة'])
   const [searchQuery, setSearchQuery] = useState('')
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
@@ -132,14 +158,14 @@ export default function AdminShell({ children }: AdminShellProps) {
 
   const filteredGroups = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
-    if (!query) return groups
-    return groups
+    if (!query) return visibleGroups
+    return visibleGroups
       .map(group => ({
         ...group,
         links: group.links.filter(link => `${link.label} ${group.title} ${group.hint}`.toLowerCase().includes(query)),
       }))
       .filter(group => group.links.length > 0)
-  }, [searchQuery])
+  }, [searchQuery, visibleGroups])
 
   useEffect(() => {
     if (searchQuery.trim()) setOpenGroups(filteredGroups.map(group => group.title))
@@ -153,7 +179,7 @@ export default function AdminShell({ children }: AdminShellProps) {
   }
 
   function toggleAllGroups() {
-    setOpenGroups(current => current.length === groups.length ? [activeGroupTitle] : groups.map(group => group.title))
+    setOpenGroups(current => current.length === visibleGroups.length ? [activeGroupTitle] : visibleGroups.map(group => group.title))
   }
 
   const sidebarContent = (
@@ -165,8 +191,8 @@ export default function AdminShell({ children }: AdminShellProps) {
             <div className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-[11px] font-black text-[#008E92] shadow-sm">
               <Truck size={13} /> Dawaa Delivery
             </div>
-            <h2 className="mt-3 text-2xl font-black text-[#061827]">لوحة الإدارة</h2>
-            <p className="mt-1 text-xs font-bold leading-5 text-slate-500">تشغيل ومتابعة وتحليل الدليفري من مكان واحد.</p>
+            <h2 className="mt-3 text-2xl font-black text-[#061827]">إدارة الدليفري</h2>
+            <p className="mt-1 text-xs font-bold leading-5 text-slate-500">قرار سريع، تشغيل واضح، وتقارير منظمة بدون تكدس.</p>
           </div>
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#008E92] text-white shadow-lg shadow-[#008E92]/20">
             <ClipboardList size={22} />
@@ -195,7 +221,9 @@ export default function AdminShell({ children }: AdminShellProps) {
       </div>
 
       <nav className="mt-3 space-y-2 pb-16">
-        {filteredGroups.length === 0 ? (
+        {!permissionsReady ? (
+          <div className="rounded-3xl border border-slate-100 bg-slate-50 p-5 text-center text-sm font-black text-slate-400">جاري تحميل صلاحيات الحساب...</div>
+        ) : filteredGroups.length === 0 ? (
           <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-5 text-center">
             <Search className="mx-auto text-slate-300" size={24} />
             <p className="mt-2 text-sm font-black text-slate-500">لا توجد صفحة بهذا الاسم</p>
@@ -251,7 +279,7 @@ export default function AdminShell({ children }: AdminShellProps) {
       </nav>
 
       <div className="pointer-events-none sticky bottom-0 -mx-4 bg-gradient-to-t from-white via-white/95 to-transparent px-4 pb-2 pt-8 text-center text-[11px] font-black text-slate-400">
-        {allLinks.length} صفحة إدارة منظمة داخل {groups.length} أقسام
+        {visibleLinks.length} صفحة متاحة داخل {visibleGroups.length} أقسام
       </div>
     </>
   )
@@ -287,6 +315,20 @@ export default function AdminShell({ children }: AdminShellProps) {
             <p className="truncate text-sm font-black text-[#061827]">{activeGroupTitle}</p>
           </div>
         </div>
+
+        <header className="mb-4 hidden items-center justify-between gap-4 rounded-[1.8rem] border border-slate-200 bg-white px-5 py-4 shadow-sm lg:flex">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-[#E7F7F7] px-3 py-1 text-[11px] font-black text-[#007C80]">{currentGroup?.title || 'الإدارة'}</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black text-slate-500">إدارة الدليفري</span>
+            </div>
+            <h1 className="mt-2 truncate text-xl font-black text-[#061827]">{currentLink?.label || 'لوحة الإدارة'}</h1>
+            <p className="mt-1 text-xs font-bold text-slate-400">{currentGroup?.hint || 'متابعة وتشغيل الدليفري'}</p>
+          </div>
+          <button type="button" onClick={() => navigate('/admin')} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-black text-slate-600 transition hover:border-[#008E92]/30 hover:text-[#008E92]">
+            الرئيسية
+          </button>
+        </header>
 
         <main className="min-w-0 overflow-x-hidden">{children}</main>
       </div>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, CheckCircle2, XCircle, Search, Clock, MapPin, Eye, Camera, AlertTriangle, X, Square, CheckSquare, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Search, Clock, MapPin, Eye, Camera, X, Square, CheckSquare, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import type { InternalTrip, Rider } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Camera, CheckSquare, ChevronLeft, ChevronRight, Eye, ImageOff, RotateCcw, Search, Square, X, ZoomIn, ZoomOut } from 'lucide-react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Camera, CheckSquare, ChevronLeft, ChevronRight, Eye, ImageOff, RotateCcw, Search, Square, X, ZoomIn, ZoomOut, Route } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { getRiders } from '../../lib/delivery'
 import { getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
 import type { Rider } from '../../lib/types'
 import CycleSelector from '../../components/CycleSelector'
+import OperationsAdminTabs from '../../components/OperationsAdminTabs'
 
 type StatusFilter = 'all' | 'pending_approval' | 'approved' | 'rejected'
 type ProofFilter = 'all' | 'with_photo' | 'without_photo'
@@ -35,7 +36,6 @@ function Stat({label,value,tone='slate',onClick}:{label:string;value:number;tone
 }
 
 export default function TripsFast(){
-  const navigate=useNavigate()
   const [searchParams,setSearchParams]=useSearchParams()
   const period=useMemo(()=>getOperationalPeriod(),[])
   const selectedFrom=searchParams.get('from')||period.start
@@ -116,7 +116,7 @@ export default function TripsFast(){
   function removeIfOutsideStatusFilter(id:string,status:string){
     if(statusFilter==='all'||statusFilter===status)return
     setRows(prev=>prev.filter(row=>row.id!==id));setTotalFiltered(prev=>Math.max(0,prev-1))
-    setSelected(prev=>{const next=new Set(prev);next.delete(id);return next});setDetails(current=>current?.id===id?null:current)
+    setSelected(prev=>{const next=new Set(prev);next.delete(id);return next});setDetails((current: any)=>current?.id===id?null:current)
   }
 
   async function changeStatus(trip:any,status:'approved'|'rejected'|'pending_approval',reason?:string){
@@ -159,8 +159,17 @@ export default function TripsFast(){
 
   const pages=Math.max(1,Math.ceil(totalFiltered/pageSize))
   return <div className="min-h-screen bg-[#F3F7F8]" dir="rtl">
-    <header className="bg-gradient-to-l from-[#061827] to-[#008E92] p-4 text-white"><div className="mx-auto flex max-w-7xl items-center justify-between gap-4"><button onClick={()=>navigate('/admin')} className="flex items-center gap-3 text-right"><span className="rounded-xl bg-white/10 p-2"><ArrowLeft size={22}/></span><div><h1 className="text-xl font-black">إدارة ورقابة المشاوير · Fast</h1><p className="text-xs text-teal-100">الدورة المحددة: {selectedFrom} إلى {selectedTo} · تحميل على دفعات للتحليل والمراجعة</p></div></button><button onClick={()=>void load()} className="rounded-xl bg-white/10 px-4 py-2 text-xs font-black">تحديث</button></div></header>
     <main className="mx-auto max-w-7xl space-y-4 p-4">
+      <OperationsAdminTabs />
+      <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-teal-50 text-teal-700"><Route size={20}/></span>
+            <div><p className="text-xs font-black text-[#008E92]">التشغيل والمراجعة</p><h1 className="mt-1 text-xl font-black text-[#061827]">مراجعة المشاوير</h1><p className="mt-1 text-sm font-bold text-slate-500">اعتماد أو رفض المشاوير ومراجعة الإثباتات داخل الدورة المختارة.</p></div>
+          </div>
+          <button onClick={()=>void load()} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-black text-slate-600">تحديث</button>
+        </div>
+      </section>
       <CycleSelector from={selectedFrom} to={selectedTo} onApply={handleCycleApply} />
       <section className="rounded-3xl border border-teal-100 bg-teal-50 px-4 py-3 text-sm font-bold text-teal-900">تحليل المشاوير للفترة <span dir="ltr" className="font-black">{selectedFrom} → {selectedTo}</span> · الأرقام التالية تخص الدورة/الفترة المختارة فقط.</section>
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6"><Stat label="كل المشاوير" value={summary.all||0} onClick={()=>{setStatusFilter('all');setProofFilter('all')}}/><Stat label="بصورة" value={summary.with_photo||0} tone="green" onClick={()=>setProofFilter('with_photo')}/><Stat label="بدون صورة" value={summary.without_photo||0} tone="red" onClick={()=>setProofFilter('without_photo')}/><Stat label="مستني اعتماد" value={summary.pending||0} tone="amber" onClick={()=>setStatusFilter('pending_approval')}/><Stat label="معتمد" value={summary.approved||0} tone="green" onClick={()=>setStatusFilter('approved')}/><Stat label="مرفوض" value={summary.rejected||0} tone="red" onClick={()=>setStatusFilter('rejected')}/></section>

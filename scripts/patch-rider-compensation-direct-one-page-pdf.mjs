@@ -126,11 +126,18 @@ replaceOnce(
   'direct one page PDF function',
 )
 
-replaceOnce(
-  `<button onClick={printPdf} className="inline-flex items-center gap-2 rounded-2xl bg-[#008E92] px-5 py-3 font-black text-white"><Printer size={18}/> حفظ التقرير PDF</button>`,
-  `<button onClick={downloadPdf} disabled={pdfDownloading} className="inline-flex items-center gap-2 rounded-2xl bg-[#008E92] px-5 py-3 font-black text-white disabled:cursor-wait disabled:opacity-60"><Printer size={18}/>{pdfDownloading ? ' جاري تجهيز PDF...' : ' تحميل التقرير PDF'}</button>`,
-  'download button',
-)
+const legacyPdfButton = `<button onClick={printPdf} className="inline-flex items-center gap-2 rounded-2xl bg-[#008E92] px-5 py-3 font-black text-white"><Printer size={18}/> حفظ التقرير PDF</button>`
+const currentPdfButton = `<button onClick={printPdf} className="inline-flex items-center gap-2 rounded-xl bg-[#008E92] px-4 py-2.5 text-xs font-black text-white"><Printer size={17}/> حفظ PDF</button>`
+const directPdfButton = `<button onClick={downloadPdf} disabled={pdfDownloading} className="inline-flex items-center gap-2 rounded-xl bg-[#008E92] px-4 py-2.5 text-xs font-black text-white disabled:cursor-wait disabled:opacity-60"><Printer size={17}/>{pdfDownloading ? ' جاري تجهيز PDF...' : ' تحميل PDF'}</button>`
+
+if (!source.includes('onClick={downloadPdf}')) {
+  if (source.includes(currentPdfButton)) source = source.replace(currentPdfButton, directPdfButton)
+  else if (source.includes(legacyPdfButton)) source = source.replace(
+    legacyPdfButton,
+    `<button onClick={downloadPdf} disabled={pdfDownloading} className="inline-flex items-center gap-2 rounded-2xl bg-[#008E92] px-5 py-3 font-black text-white disabled:cursor-wait disabled:opacity-60"><Printer size={18}/>{pdfDownloading ? ' جاري تجهيز PDF...' : ' تحميل التقرير PDF'}</button>`,
+  )
+  else throw new Error('Rider direct PDF patch anchor not found: download button')
+}
 
 await writeFile(file, source, 'utf8')
 console.log('Rider compensation direct one-page PDF download enabled')

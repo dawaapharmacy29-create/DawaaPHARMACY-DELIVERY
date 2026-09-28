@@ -147,5 +147,11 @@ replaceOnce(
   'summary-only help text',
 )
 
+if (source.includes('function exportMonthlyReport()') && !source.includes('void exportMonthlyReport')) {
+  const renderIndex = source.lastIndexOf('\n  return <div')
+  if (renderIndex < 0) throw new Error('Rider report export UX anchor not found: component render')
+  source = source.slice(0, renderIndex) + '\n  void exportMonthlyReport\n  void exportMonthlyReportLegacy\n' + source.slice(renderIndex)
+}
+
 await writeFile(file, source, 'utf8')
 console.log('Rider summary PDF downloads directly and includes approved adjustments')

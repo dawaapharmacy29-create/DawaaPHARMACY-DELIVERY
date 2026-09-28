@@ -13,7 +13,9 @@ function replaceOnce(before, after, label) {
 }
 
 replaceOnce(
-  `function normalizeOrderInvoice(order: DeliveryOrder): string {`,
+  `void parseAllInvoiceRows
+
+function normalizeOrderInvoice(order: DeliveryOrder): string {`,
   `function parseAllInvoiceRows(rows: Record<string, unknown>[]): BConnectRow[] {
   const out: BConnectRow[] = []
   const seen = new Set<string>()
@@ -105,7 +107,7 @@ replaceOnce(
 replaceOnce(
   `                        {(order as any).deleted_at && <span className="rounded-full bg-slate-200 px-2 py-1 text-xs font-black text-slate-700">محذوف محفوظ</span>}`,
   `                        {(order as any).deleted_at && <span className="rounded-full bg-slate-200 px-2 py-1 text-xs font-black text-slate-700">محذوف محفوظ</span>}
-                        {order.bconnect_match_status === 'invoice_found_non_delivery_type' && <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-700">رقم موجود — نوع الفاتورة يحتاج مراجعة</span>}`,
+                        {String(order.bconnect_match_status || '') === 'invoice_found_non_delivery_type' && <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-700">رقم موجود — نوع الفاتورة يحتاج مراجعة</span>}`,
   'invoice type review badge',
 )
 
@@ -132,7 +134,7 @@ if (source.includes(usageMarker)) {
     const canUseAllInvoiceMap = /const\s+allInvoiceMap\s*=/.test(beforeUsage)
     const declaration = canUseAllInvoiceMap
       ? `${indent}const exactInvoiceAnyType: BConnectRow | null = inv ? allInvoiceMap.get(inv) ?? null : null`
-      : `${indent}const exactInvoiceAnyType: BConnectRow | null = null`
+      : `${indent}const exactInvoiceAnyType: BConnectRow | null = null as BConnectRow | null`
 
     source = `${source.slice(0, insertionPoint)}\n${declaration}${source.slice(insertionPoint)}`
   }

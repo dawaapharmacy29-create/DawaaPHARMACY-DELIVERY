@@ -145,8 +145,12 @@ auth = auth.replace(/\blocalStorage\./g, 'safeStorage.')
 deviceBinding = addSafeStorageImport(deviceBinding, "import { safeStorage } from './safeStorage'")
 deviceBinding = deviceBinding.replace(/\blocalStorage\./g, 'safeStorage.')
 
-login = addSafeStorageImport(login, "import { safeStorage } from '../lib/safeStorage'")
-login = login.replace(/\blocalStorage\./g, 'safeStorage.')
+if (login.includes('localStorage.')) {
+  login = addSafeStorageImport(login, "import { safeStorage } from '../lib/safeStorage'")
+  login = login.replace(/\blocalStorage\./g, 'safeStorage.')
+} else {
+  login = login.replace("import { safeStorage } from '../lib/safeStorage'\n", '')
+}
 
 await writeFile(loginFile, login, 'utf8')
 await writeFile(authFile, auth, 'utf8')

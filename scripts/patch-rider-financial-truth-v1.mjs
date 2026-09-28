@@ -150,6 +150,14 @@ await patchFile('src/pages/admin/RiderCompensationCenter.tsx', source => {
     source = replaceRequired(source, sectionAnchor, readinessPanel + sectionAnchor, 'compensation readiness panel')
   }
 
+  source = source.replace(/\.replaceAll\('-', ''\)/g, ".replace(/-/g, '')")
+  if ((source.match(/\browDate\(/g) || []).length === 1) {
+    source = source.replace(/\nfunction rowDate\(row: Row\) \{[\s\S]*?\n\}\n/, '\n')
+  }
+  if ((source.match(/\bstatus\(/g) || []).length === 1) {
+    source = source.replace(/\nfunction status\(row: Row\) \{[\s\S]*?\n\}\n/, '\n')
+  }
+
   return source
 })
 
@@ -213,6 +221,9 @@ await patchFile('src/pages/admin/RiderMonthlyReports.tsx', source => {
   }
 
   source = source.replace(/await loadReport\(\)/g, 'await Promise.all([loadReport(), loadFinancialTruth()])')
+  if ((source.match(/\bstatusOf\(/g) || []).length === 1) {
+    source = source.replace(/\nfunction statusOf\(row: Row\) \{[\s\S]*?\n\}\n/, '\n')
+  }
 
   return source
 })
