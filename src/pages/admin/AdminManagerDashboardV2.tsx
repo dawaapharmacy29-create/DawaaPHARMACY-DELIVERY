@@ -45,6 +45,7 @@ function PanelSkeleton() {
 }
 
 export default function AdminManagerDashboardV2() {
+  const navigate = useNavigate()
   const { role, ready, canAccess } = useAdminAccess()
   const [showMore, setShowMore] = useState(false)
   const topLevelManagement = ['admin', 'general_manager', 'operations_manager', 'branches_manager'].includes(String(role || ''))
@@ -75,7 +76,7 @@ export default function AdminManagerDashboardV2() {
             <h2 className="mt-1 text-xl font-black text-[#061827]">ملخص الدورة والحركة اليومية</h2>
             <p className="mt-1 text-xs font-bold text-slate-400">ملخص سريع لأهم أرقام الدورة والحركة اليومية.</p>
           </div>
-          {ready && canAccess('dashboard') && <button type="button" onClick={() => window.location.assign('/admin/executive')} className="inline-flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-200"><Gauge size={16}/> فتح ملخص الإدارة</button>}
+          {ready && canAccess('dashboard') && <button type="button" onClick={() => navigate('/admin/executive')} className="inline-flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-200"><Gauge size={16}/> فتح ملخص الإدارة</button>}
         </div>
         <AdminDashboardFast embedded />
       </section>
