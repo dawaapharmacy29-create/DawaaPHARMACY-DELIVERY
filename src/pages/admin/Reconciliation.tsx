@@ -9,7 +9,7 @@ import { fetchAllRows } from '../../lib/fetchAllRows'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
 import { formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
-import { isConfirmedAdminExclusion, preserveHumanDecision, selectVerifiedSystemInvoice } from '../../lib/reconciliationDecision'
+import { findInvoiceEvidenceConflicts, isConfirmedAdminExclusion, preserveHumanDecision, selectVerifiedSystemInvoice } from '../../lib/reconciliationDecision'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
 import CycleSelector from '../../components/CycleSelector'
 
@@ -611,6 +611,36 @@ export default function Reconciliation() {
         return
       }
 
+      // Read the entire cycle before creating a batch. A changed source invoice
+      // is a correction proposal, never a silent replacement on re-upload.
+      const existingInvoices = await fetchAllRows<{
+        invoice_number: string
+        branch_name: string
+        customer_code: string | null
+        net_total: number | null
+        gross_total: number | null
+      }>({
+        table: 'monthly_system_invoices',
+        select: 'id,invoice_number,branch_name,customer_code,net_total,gross_total',
+        filters: [
+          { column: 'period_start', operator: 'eq', value: selectedFrom },
+          { column: 'period_end', operator: 'eq', value: selectedTo },
+        ],
+        orderColumn: 'id',
+      })
+      const conflicts = findInvoiceEvidenceConflicts(uploadedInvoices, existingInvoices, normalizeBranchName)
+      if (conflicts.length) {
+        downloadCsv(`bconnect-invoice-conflicts-${selectedFrom}-${selectedTo}.csv`, conflicts.map(conflict => ({
+          'رقم الفاتورة': conflict.invoiceNumber,
+          'الفرع': conflict.branch,
+          'سبب التعارض': conflict.reasons.join('، '),
+          'القيمة المسجلة': conflict.previousAmount ?? '',
+          'القيمة المرفوعة': conflict.incomingAmount ?? '',
+        })))
+        toast.error(`تم إيقاف الرفع: ${conflicts.length} فاتورة تتعارض مع بيانات مسجلة. نزلنا تقريرًا بالمراجعات المطلوبة؛ لم تُحفظ دفعة جديدة.`)
+        return
+      }
+
       console.info('Reconciliation import sample invoices', uploadedInvoices.slice(0, 10).map(r => r.invoice_number))
 
       const { data: batchData, error: batchError } = await supabase.rpc('save_monthly_invoice_import_batch', {
@@ -650,12 +680,14 @@ export default function Reconciliation() {
         if (invoiceInsertError) throw invoiceInsertError
       }
 
-      const { data: accumulatedRows, error: accumulatedError } = await supabase
-        .from('monthly_system_invoices')
-        .select('*')
-        .eq('period_start', selectedFrom)
-        .eq('period_end', selectedTo)
-      if (accumulatedError) throw accumulatedError
+      const accumulatedRows = await fetchAllRows<any>({
+        table: 'monthly_system_invoices',
+        filters: [
+          { column: 'period_start', operator: 'eq', value: selectedFrom },
+          { column: 'period_end', operator: 'eq', value: selectedTo },
+        ],
+        orderColumn: 'id',
+      })
 
       const bconnect: BConnectRow[] = (accumulatedRows || []).map((row: any) => ({
         invoice_number: normalizeInvoice(row.invoice_number),
