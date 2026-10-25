@@ -179,7 +179,7 @@ function downloadCsv(fileName: string, rows: Array<Record<string, unknown>>) {
 
 function parseBConnectRows(rows: Record<string, unknown>[]): BConnectRow[] {
   const out: BConnectRow[] = []
-  const seen = new Set<string>()
+  const seen = new Map<string, BConnectRow>()
 
   for (const row of rows) {
     const invoiceType = first(row, TYPE_KEYS)
@@ -189,13 +189,12 @@ function parseBConnectRows(rows: Record<string, unknown>[]): BConnectRow[] {
     const invoice = normalizeInvoice(first(row, INVOICE_KEYS))
     const branchName = first(row, BRANCH_KEYS)
     const dedupeKey = systemInvoiceKey(invoice, branchName)
-    if (!invoice || seen.has(dedupeKey)) continue
-    seen.add(dedupeKey)
+    if (!invoice) continue
 
     const gross = toNumber(first(row, GROSS_AMOUNT_KEYS))
     const net = toNumber(first(row, NET_AMOUNT_KEYS)) || gross
 
-    out.push({
+    const parsed: BConnectRow = {
       invoice_number: invoice,
       invoice_type: invoiceType,
       branch_name: branchName,
@@ -210,7 +209,17 @@ function parseBConnectRows(rows: Record<string, unknown>[]): BConnectRow[] {
       system_user: first(row, SYSTEM_USER_KEYS),
       close_time: first(row, CLOSE_TIME_KEYS),
       raw: row,
-    })
+    }
+    const previous = seen.get(dedupeKey)
+    if (previous) {
+      const conflicts = findInvoiceEvidenceConflicts([parsed], [previous], normalizeBranchName)
+      if (conflicts.length) {
+        throw new Error(`الملف يحتوي فاتورة مكررة ببيانات متعارضة: ${invoice} (${branchName || 'فرع غير محدد'}). راجع كود العميل وقيمة الفاتورة داخل الملف قبل رفعه.`)
+      }
+      continue // Exact/compatible repeats are one invoice, not extra sales.
+    }
+    seen.set(dedupeKey, parsed)
+    out.push(parsed)
   }
 
   return out
