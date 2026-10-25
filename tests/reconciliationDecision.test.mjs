@@ -116,7 +116,7 @@ test('conflicting re-uploaded invoice is blocked before the batch is saved', () 
   }])
 
   const page = readFileSync(new URL('../src/pages/admin/Reconciliation.tsx', import.meta.url), 'utf8')
-  assert.ok(page.indexOf('findInvoiceEvidenceConflicts(uploadedInvoices, existingInvoices') < page.indexOf("supabase.rpc('save_monthly_invoice_import_batch'"))
+  assert.ok(page.indexOf('findInvoiceEvidenceConflicts(uploadedInvoices, existingInvoices') < page.indexOf("supabase.rpc('save_monthly_invoice_import_batch_v2'"))
 })
 
 test('duplicate invoices inside a single source file cannot silently discard a conflict', () => {
