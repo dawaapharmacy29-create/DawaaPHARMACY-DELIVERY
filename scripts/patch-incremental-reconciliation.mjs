@@ -152,7 +152,11 @@ replaceRegex(
             reconciliation_notes: nameMismatch ? \`الفاتورة تحتسب لأن الرقم مطابق، مع اختلاف اسم العميل: التطبيق (${'${(order as any).customer_name || order.customer_name_snapshot || \'—\'}'}) / السيستم (${'${match.customer_name || \'—\'}'})\` : (isMultiplier ? 'مطابقة ومحتاجة مراجعة قيمة ×1.5' : 'مطابقة مع ملف السيستم وتحتسب'),`,
   'countable mismatch patch',
 )
-replaceText("          needs_review: !Boolean((patch as any).is_countable),", "          needs_review: nameMismatch || !Boolean((patch as any).is_countable),", 'mismatch review flag')
+replaceText(
+  "          needs_review: adminExcluded ? false : manuallyApproved ? false : !Boolean((patch as any).is_countable),",
+  "          needs_review: adminExcluded ? false : manuallyApproved ? false : nameMismatch || !Boolean((patch as any).is_countable),",
+  'mismatch review flag',
+)
 replaceRegex(
   /if \(batchId && resultRows\.length\) \{\s+const \{ error: resultInsertError \} = await supabase\.from\('monthly_invoice_reconciliation_results'\)\.insert\(resultRows\)/,
   `if (batchId && resultRows.length) {
