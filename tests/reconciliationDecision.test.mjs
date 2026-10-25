@@ -89,3 +89,11 @@ test('missing system invoice is a report observation and never writes an order p
   assert.match(missingBranch, /patch = \\{\\}/)
   assert.doesNotMatch(missingBranch, /final_count_status:|is_countable:|count_exclusion_reason:|order_earning:/)
 })
+
+test('re-uploading invoices cannot overwrite existing source evidence', () => {
+  const safeWrapper = readFileSync(new URL('../src/pages/admin/ReconciliationSafe.tsx', import.meta.url), 'utf8')
+  const systemInvoices = safeWrapper.split("if (tableName === 'monthly_system_invoices') {")[1]?.split('return Promise.resolve(mode ===')[0]
+  assert.ok(systemInvoices, 'system invoice write path must exist')
+  assert.match(systemInvoices, /onConflict: 'invoice_cycle_key'/)
+  assert.match(systemInvoices, /ignoreDuplicates: true/)
+})
