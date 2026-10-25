@@ -118,3 +118,13 @@ test('conflicting re-uploaded invoice is blocked before the batch is saved', () 
   const page = readFileSync(new URL('../src/pages/admin/Reconciliation.tsx', import.meta.url), 'utf8')
   assert.ok(page.indexOf('findInvoiceEvidenceConflicts(uploadedInvoices, existingInvoices') < page.indexOf("supabase.rpc('save_monthly_invoice_import_batch'"))
 })
+
+test('duplicate invoices inside a single source file cannot silently discard a conflict', () => {
+  const page = readFileSync(new URL('../src/pages/admin/Reconciliation.tsx', import.meta.url), 'utf8')
+  const parser = page.split('function parseBConnectRows(')[1]?.split('function normalizeOrderInvoice(')[0]
+  assert.ok(parser)
+  assert.match(parser, /const seen = new Map<string, BConnectRow>\\(\\)/)
+  assert.match(parser, /findInvoiceEvidenceConflicts\\(\\[parsed\\], \\[previous\\], normalizeBranchName\\)/)
+  assert.match(parser, /throw new Error\\(`الملف يحتوي فاتورة مكررة ببيانات متعارضة/)
+  assert.doesNotMatch(parser, /if \\(\\!invoice \\|\\| seen\\.has\\(dedupeKey\\)\\) continue/)
+})
