@@ -3,6 +3,7 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import {
   classifyMissingSystemInvoice,
+  findInvoiceEvidenceConflicts,
   hasUnambiguousInvoiceSource,
   isConfirmedAdminExclusion,
   preserveHumanDecision,
@@ -96,4 +97,24 @@ test('re-uploading invoices cannot overwrite existing source evidence', () => {
   assert.ok(systemInvoices, 'system invoice write path must exist')
   assert.match(systemInvoices, /onConflict: 'invoice_cycle_key'/)
   assert.match(systemInvoices, /ignoreDuplicates: true/)
+})
+
+test('conflicting re-uploaded invoice is blocked before the batch is saved', () => {
+  const normalize = value => value.trim().toLowerCase()
+  const existing = [
+    { invoice_number: '73006', branch_name: 'Shokry', customer_code: '17777', net_total: 675 },
+    { invoice_number: '73006', branch_name: 'Shamy', customer_code: '99999', net_total: 675 },
+  ]
+  assert.deepEqual(findInvoiceEvidenceConflicts([
+    { invoice_number: '73006', branch_name: 'Shokry', customer_code: '17777', invoice_amount: 675 },
+    { invoice_number: '73006', branch_name: 'Shamy', customer_code: '12345', invoice_amount: 700 },
+    { invoice_number: '74000', branch_name: 'Shamy', customer_code: '17777', invoice_amount: 100 },
+  ], existing, normalize), [{
+    invoiceNumber: '73006', branch: 'shamy',
+    reasons: ['كود العميل مختلف', 'قيمة الفاتورة مختلفة'],
+    previousAmount: 675, incomingAmount: 700,
+  }])
+
+  const page = readFileSync(new URL('../src/pages/admin/Reconciliation.tsx', import.meta.url), 'utf8')
+  assert.ok(page.indexOf('findInvoiceEvidenceConflicts(uploadedInvoices, existingInvoices') < page.indexOf("supabase.rpc('save_monthly_invoice_import_batch'"))
 })
