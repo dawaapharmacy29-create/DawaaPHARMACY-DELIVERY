@@ -5,6 +5,7 @@ import { ArrowLeft, Upload, CheckCircle2, XCircle, Search, AlertTriangle, FileSp
 import * as XLSX from 'xlsx'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
+import { getRiderSession } from '../../lib/auth'
 import { fetchAllRows } from '../../lib/fetchAllRows'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
@@ -652,7 +653,8 @@ export default function Reconciliation() {
 
       console.info('Reconciliation import sample invoices', uploadedInvoices.slice(0, 10).map(r => r.invoice_number))
 
-      const { data: batchData, error: batchError } = await supabase.rpc('save_monthly_invoice_import_batch', {
+      const { data: batchData, error: batchError } = await supabase.rpc('save_monthly_invoice_import_batch_v2', {
+        p_session_token: getRiderSession().session_token,
         p_period_start: selectedFrom,
         p_period_end: selectedTo,
         p_file_name: file.name,
