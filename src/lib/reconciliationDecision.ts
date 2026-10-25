@@ -41,3 +41,63 @@ export function hasUnambiguousInvoiceSource<T extends { invoice_number: string; 
   if (matches.length !== 1) return false
   return Boolean(matches[0].invoice_number && normalizeBranch(matches[0].branch_name))
 }
+
+export type InvoiceEvidence = {
+  branch_name?: string | null
+  customer_code?: string | null
+  phone?: string | null
+  invoice_amount?: number | null
+}
+
+function customerCode(value: unknown): string {
+  return String(value ?? '').replace(/[\s\-]/g, '').trim()
+}
+
+function phoneSuffix(value: unknown): string {
+  const digits = String(value ?? '').replace(/\D/g, '')
+  return digits.length >= 10 ? digits.slice(-10) : ''
+}
+
+/**
+ * Select a verified B-Connect source without treating the rider's home branch
+ * as the invoice source. An ambiguous invoice number needs two independent
+ * corroborating facts including customer identity; a name is never sufficient.
+ */
+export function selectVerifiedSystemInvoice<T extends InvoiceEvidence>(
+  order: InvoiceEvidence,
+  candidates: readonly T[],
+  normalizeBranch: (value: string) => string,
+): T | null {
+  if (candidates.length === 0) return null
+  const branch = normalizeBranch(order.branch_name || '')
+  const code = customerCode(order.customer_code)
+  const phone = phoneSuffix(order.phone)
+  const amount = Number(order.invoice_amount || 0)
+
+  const assessed = candidates.map(candidate => {
+    const otherCode = customerCode(candidate.customer_code)
+    const otherPhone = phoneSuffix(candidate.phone)
+    const otherAmount = Number(candidate.invoice_amount || 0)
+    const codeKnown = Boolean(code && otherCode)
+    const phoneKnown = Boolean(phone && otherPhone)
+    const amountKnown = amount > 0 && otherAmount > 0
+    const codeEqual = codeKnown && code === otherCode
+    const phoneEqual = phoneKnown && phone === otherPhone
+    const amountEqual = amountKnown && Math.abs(amount - otherAmount) <= Math.max(5, amount * 0.01)
+    const conflicting = (codeKnown && !codeEqual) || (phoneKnown && !phoneEqual) || (amountKnown && !amountEqual)
+    const sameBranch = Boolean(branch && branch === normalizeBranch(candidate.branch_name || ''))
+    return { candidate, sameBranch, codeEqual, phoneEqual, amountEqual, conflicting }
+  }).filter(result => !result.conflicting)
+
+  if (assessed.length === 0) return null
+  if (candidates.length === 1) {
+    const only = assessed[0]
+    // A unique invoice in another branch needs corroboration, not a home-branch guess.
+    return only.sameBranch || only.codeEqual || only.phoneEqual || only.amountEqual ? only.candidate : null
+  }
+
+  const proven = assessed.filter(result =>
+    (result.codeEqual || result.phoneEqual) && result.amountEqual,
+  )
+  return proven.length === 1 ? proven[0].candidate : null
+}

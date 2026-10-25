@@ -9,7 +9,7 @@ import { fetchAllRows } from '../../lib/fetchAllRows'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
 import { formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
-import { classifyMissingSystemInvoice, isConfirmedAdminExclusion, preserveHumanDecision } from '../../lib/reconciliationDecision'
+import { classifyMissingSystemInvoice, isConfirmedAdminExclusion, preserveHumanDecision, selectVerifiedSystemInvoice } from '../../lib/reconciliationDecision'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
 import CycleSelector from '../../components/CycleSelector'
 
@@ -674,7 +674,6 @@ export default function Reconciliation() {
         raw: row.raw_json || row,
       }))
 
-      const exactSystemMap = new Map(bconnect.map(row => [systemInvoiceKey(row.invoice_number, row.branch_name), row]))
       const candidatesByInvoice = new Map<string, BConnectRow[]>()
       bconnect.forEach(row => {
         const list = candidatesByInvoice.get(row.invoice_number) || []
@@ -684,11 +683,13 @@ export default function Reconciliation() {
       const findSystemMatch = (order: DeliveryOrder) => {
         const invoice = normalizeOrderInvoice(order)
         if (!invoice) return null
-        const branch = (order as any).branch_name || ''
-        const exact = exactSystemMap.get(systemInvoiceKey(invoice, branch))
-        if (exact) return exact
         const candidates = candidatesByInvoice.get(invoice) || []
-        return candidates.length === 1 ? candidates[0] : null
+        return selectVerifiedSystemInvoice({
+          branch_name: (order as any).branch_name || '',
+          customer_code: (order as any).customer_code || (order as any).customer_code_snapshot,
+          phone: (order as any).customer_phone || (order as any).customer_phone_snapshot,
+          invoice_amount: Number((order as any).invoice_amount ?? (order as any).invoice_value ?? 0),
+        }, candidates, normalizeBranchName)
       }
       const currentOrders = orders.length ? orders : ((await supabase
         .from('delivery_orders')
@@ -1021,14 +1022,22 @@ export default function Reconciliation() {
   }
 
   async function handleMarkNotFound(orderId: string) {
+    const selectedOrder = orders.find(order => order.id === orderId)
+    const invoice = selectedOrder ? normalizeOrderInvoice(selectedOrder) : '—'
+    if (!window.confirm(
+      `تأكيد قرار إداري باستبعاد الأوردر صاحب الفاتورة ${invoice} من مستحقات الدليفري؟\n\nغياب الفاتورة من ملف B-Connect وحده ليس دليل رفض. تأكد من اكتمال الملفات ومراجعة الفروع قبل الاعتماد.`,
+    )) return false
     try {
       const updatedAt = new Date().toISOString()
+      const previousNotes = String((selectedOrder as any)?.reconciliation_notes || '').trim()
+      const decisionNote = `استبعاد مؤكد يدويًا بواسطة الإدارة — ${new Date(updatedAt).toLocaleString('ar-EG')}`
       const patch = {
         bconnect_match_status: 'invoice_not_found',
         is_countable: false,
         final_count_status: 'excluded_invoice_not_found',
         count_exclusion_reason: 'marked_not_found_by_admin',
         needs_review: false,
+        reconciliation_notes: previousNotes ? `${previousNotes}\n${decisionNote}` : decisionNote,
         updated_at: updatedAt,
       } as const
 
@@ -1056,9 +1065,11 @@ export default function Reconciliation() {
       )
 
       toast.success('تم استبعاد الفاتورة من الحساب بدون إعادة تحميل الصفحة')
+      return true
     } catch (error: any) {
       console.error(error)
       toast.error('فشل التحديث: ' + (error?.message ?? ''))
+      return false
     }
   }
 
@@ -1631,8 +1642,9 @@ export default function Reconciliation() {
               setDetailsOrder(null)
             }}
             onReject={() => {
-              void handleMarkNotFound(detailsOrder.id)
-              setDetailsOrder(null)
+              void handleMarkNotFound(detailsOrder.id).then(confirmed => {
+                if (confirmed) setDetailsOrder(null)
+              })
             }}
           />
         )}

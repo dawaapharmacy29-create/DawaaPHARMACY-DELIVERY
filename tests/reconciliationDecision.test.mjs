@@ -5,6 +5,7 @@ import {
   hasUnambiguousInvoiceSource,
   isConfirmedAdminExclusion,
   preserveHumanDecision,
+  selectVerifiedSystemInvoice,
 } from '../src/lib/reconciliationDecision.ts'
 
 test('a partial file never rejects an absent invoice', () => {
@@ -37,4 +38,35 @@ test('the same number in two source branches needs review', () => {
   assert.equal(hasUnambiguousInvoiceSource([
     { invoice_number: '74857', branch_name: 'Shokry' },
   ], normalize), true)
+})
+
+test('a rider working at another branch can match unique verified invoice', () => {
+  const invoice = { branch_name: 'Shokry', customer_code: '17777', invoice_amount: 675 }
+  assert.equal(selectVerifiedSystemInvoice(
+    { branch_name: 'Shamy', customer_code: '17777', invoice_amount: 675 },
+    [invoice], value => value.toLowerCase(),
+  ), invoice)
+})
+
+test('different customer or amount cannot be auto-matched across branches', () => {
+  const invoice = { branch_name: 'Shokry', customer_code: '17777', invoice_amount: 675 }
+  const norm = value => value.toLowerCase()
+  assert.equal(selectVerifiedSystemInvoice(
+    { branch_name: 'Shamy', customer_code: '99999', invoice_amount: 675 }, [invoice], norm,
+  ), null)
+  assert.equal(selectVerifiedSystemInvoice(
+    { branch_name: 'Shamy', customer_code: '17777', invoice_amount: 700 }, [invoice], norm,
+  ), null)
+})
+
+test('two branches with the same invoice number require independent customer and amount evidence', () => {
+  const a = { branch_name: 'Shokry', customer_code: '17777', invoice_amount: 675 }
+  const b = { branch_name: 'Shamy', customer_code: '34567', invoice_amount: 675 }
+  const norm = value => value.toLowerCase()
+  assert.equal(selectVerifiedSystemInvoice(
+    { branch_name: 'Other', customer_code: '17777', invoice_amount: 675 }, [a, b], norm,
+  ), a)
+  assert.equal(selectVerifiedSystemInvoice(
+    { branch_name: 'Other', invoice_amount: 675 }, [a, b], norm,
+  ), null)
 })

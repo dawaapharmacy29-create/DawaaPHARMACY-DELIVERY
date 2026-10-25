@@ -57,7 +57,7 @@ const newFind = `      const findSystemMatch = (order: DeliveryOrder) => {
         return candidates.length === 1 ? candidates[0] : null
       }`
 
-if (!source.includes(newFind)) {
+if (!source.includes('selectVerifiedSystemInvoice({') && !source.includes(newFind)) {
   if (!source.includes(oldFind)) throw new Error('Smart duplicate invoice matching anchor not found')
   source = source.replace(oldFind, newFind)
 }
