@@ -9,7 +9,7 @@ import { fetchAllRows } from '../../lib/fetchAllRows'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
 import { formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
-import { classifyMissingSystemInvoice, isConfirmedAdminExclusion, preserveHumanDecision, selectVerifiedSystemInvoice } from '../../lib/reconciliationDecision'
+import { isConfirmedAdminExclusion, preserveHumanDecision, selectVerifiedSystemInvoice } from '../../lib/reconciliationDecision'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
 import CycleSelector from '../../components/CycleSelector'
 
@@ -746,16 +746,9 @@ export default function Reconciliation() {
           reconciliationStatus = 'pending_source_coverage'
           differenceReason = 'لم تظهر الفاتورة في الملفات المرفوعة حتى الآن؛ لا يُعد ذلك رفضًا'
           notFound++
-          const decision = classifyMissingSystemInvoice()
-          patch = {
-            ...patch,
-            bconnect_match_status: decision.matchStatus,
-            is_countable: decision.isCountable,
-            final_count_status: decision.finalCountStatus,
-            count_exclusion_reason: decision.countExclusionReason,
-            needs_review: decision.needsReview,
-            reconciliation_notes: 'بانتظار استكمال ملفات B-Connect أو مراجعة الإدارة؛ لم يصدر قرار استبعاد',
-          }
+          // An absent invoice is only incomplete evidence. The report below
+          // records it; previous count, earning and review states remain intact.
+          patch = {}
         } else if (isDuplicate) {
           reconciliationStatus = 'duplicate_in_app'
           differenceReason = 'رقم فاتورة مكرر في التطبيق ويحتاج مراجعة'
