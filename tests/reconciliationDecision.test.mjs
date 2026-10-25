@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import {
   classifyMissingSystemInvoice,
   hasUnambiguousInvoiceSource,
@@ -69,4 +70,12 @@ test('two branches with the same invoice number require independent customer and
   assert.equal(selectVerifiedSystemInvoice(
     { branch_name: 'Other', invoice_amount: 675 }, [a, b], norm,
   ), null)
+})
+
+test('partial file import cannot trigger legacy precise reconciliation through monthly archive', () => {
+  const page = readFileSync(new URL('../src/pages/admin/Reconciliation.tsx', import.meta.url), 'utf8')
+  const safeWrapper = readFileSync(new URL('../src/pages/admin/ReconciliationSafe.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(page, /supabase\.rpc\(['"]archive_monthly_rider_performance['"]/) 
+  assert.doesNotMatch(safeWrapper, /originalRpc\(['"]reconcile_delivery_orders_precise['"]/) 
+  assert.match(safeWrapper, /RECONCILIATION_ARCHIVE_REQUIRES_VERIFIED_COVERAGE/)
 })

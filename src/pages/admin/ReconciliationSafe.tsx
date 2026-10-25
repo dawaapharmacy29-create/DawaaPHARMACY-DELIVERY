@@ -312,16 +312,16 @@ if (!client.__reconciliationNetworkPatched) {
 
   client.rpc = async (functionName: string, args?: any, options?: unknown) => {
     if (functionName === 'archive_monthly_rider_performance') {
-      const preciseResult: any = await withRetry(() => originalRpc('reconcile_delivery_orders_precise', {
-        p_period_start: args?.p_period_start,
-        p_period_end: args?.p_period_end,
-        p_batch_id: args?.p_batch_id,
-      }), 4)
-
-      if (preciseResult?.error) return preciseResult
-      const archiveResult: any = await withRetry(() => originalRpc(functionName, args, options), 4)
-      if (archiveResult?.error) return archiveResult
-      return { ...archiveResult, precise_summary: preciseResult?.data ?? null }
+      // Fail closed while the database archive function still invokes legacy
+      // precise reconciliation and can exclude orders on incomplete coverage.
+      // This client guard is not a substitute for restricting the privileged RPC.
+      return {
+        data: null,
+        error: {
+          code: 'RECONCILIATION_ARCHIVE_REQUIRES_VERIFIED_COVERAGE',
+          message: 'الأرشفة متوقفة مؤقتًا لحماية حقوق المندوبين حتى تأمين مطابقة قاعدة البيانات والتحقق من اكتمال التغطية.',
+        },
+      }
     }
 
     const result: any = await withRetry(() => originalRpc(functionName, args, options), 4)

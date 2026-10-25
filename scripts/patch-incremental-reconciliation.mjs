@@ -3,6 +3,15 @@ import { readFile, writeFile } from 'node:fs/promises'
 const file = new URL('../src/pages/admin/Reconciliation.tsx', import.meta.url)
 let source = await readFile(file, 'utf8')
 
+// The incremental import has already been materialized into the tracked page.
+// Re-running this historical patch against the newer verified matching logic
+// would fail its old anchors and must never overwrite the current algorithm.
+if (source.includes('selectVerifiedSystemInvoice(') &&
+    source.includes('const { data: accumulatedRows, error: accumulatedError }')) {
+  console.info('Incremental reconciliation already applied; preserving verified matching logic')
+  process.exit(0)
+}
+
 function replaceText(before, after, label, required = true) {
   if (source.includes(after)) return
   if (!source.includes(before)) {
