@@ -80,3 +80,12 @@ test('partial file import cannot trigger legacy precise reconciliation through m
   assert.match(safeWrapper, /functionName === 'reconcile_delivery_orders_precise'/)
   assert.match(safeWrapper, /RECONCILIATION_ARCHIVE_REQUIRES_VERIFIED_COVERAGE/)
 })
+
+test('missing system invoice is a report observation and never writes an order patch', () => {
+  const page = readFileSync(new URL('../src/pages/admin/Reconciliation.tsx', import.meta.url), 'utf8')
+  const missingBranch = page.split('} else if (!match) {')[1]?.split('} else if (isDuplicate) {')[0]
+  assert.ok(missingBranch, 'the missing-invoice branch must exist')
+  assert.match(missingBranch, /reconciliationStatus = 'pending_source_coverage'/)
+  assert.match(missingBranch, /patch = \\{\\}/)
+  assert.doesNotMatch(missingBranch, /final_count_status:|is_countable:|count_exclusion_reason:|order_earning:/)
+})
