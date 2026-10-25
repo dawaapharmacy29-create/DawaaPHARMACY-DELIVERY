@@ -9,6 +9,7 @@ import { fetchAllRows } from '../../lib/fetchAllRows'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
 import { formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
+import { classifyMissingSystemInvoice, isConfirmedAdminExclusion, preserveHumanDecision } from '../../lib/reconciliationDecision'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
 import CycleSelector from '../../components/CycleSelector'
 
@@ -498,7 +499,7 @@ export default function Reconciliation() {
       (filter === 'all' && !isDeleted) ||
       (filter === 'counted' && ((order as any).is_countable === true || finalStatus === 'counted')) ||
       (filter === 'pending' && (!finalStatus || String(finalStatus).startsWith('pending'))) ||
-      (filter === 'not_found' && (order as any).count_exclusion_reason === 'marked_not_found_by_admin' && !isDeleted) ||
+      (filter === 'not_found' && isConfirmedAdminExclusion(order as any) && !isDeleted) ||
       (filter === 'failed' && isFailed) ||
       (filter === 'duplicate' && isDuplicate && !isDeleted) ||
       (filter === 'multiplier' && isMultiplier && !isDeleted) ||
@@ -721,10 +722,10 @@ export default function Reconciliation() {
 
         // An import is evidence, not an administrative decision. Preserve explicit
         // exclusions and approvals across repeated or partial B-Connect uploads.
-        const adminExcluded = (order as any).count_exclusion_reason === 'marked_not_found_by_admin'
+        const adminExcluded = isConfirmedAdminExclusion(order as any)
         const manuallyApproved = order.bconnect_match_status === 'manually_approved'
 
-        if (adminExcluded || manuallyApproved) {
+        if (preserveHumanDecision(order as any)) {
           reconciliationStatus = adminExcluded ? 'admin_excluded' : 'manual_override'
           differenceReason = adminExcluded ? 'استبعاد مؤكد بواسطة الإدارة' : 'اعتماد يدوي محفوظ'
           patch = {}
@@ -744,13 +745,14 @@ export default function Reconciliation() {
           reconciliationStatus = 'pending_source_coverage'
           differenceReason = 'لم تظهر الفاتورة في الملفات المرفوعة حتى الآن؛ لا يُعد ذلك رفضًا'
           notFound++
+          const decision = classifyMissingSystemInvoice()
           patch = {
             ...patch,
-            bconnect_match_status: 'pending',
-            is_countable: false,
-            final_count_status: 'pending_reconciliation',
-            count_exclusion_reason: null,
-            needs_review: true,
+            bconnect_match_status: decision.matchStatus,
+            is_countable: decision.isCountable,
+            final_count_status: decision.finalCountStatus,
+            count_exclusion_reason: decision.countExclusionReason,
+            needs_review: decision.needsReview,
             reconciliation_notes: 'بانتظار استكمال ملفات B-Connect أو مراجعة الإدارة؛ لم يصدر قرار استبعاد',
           }
         } else if (isDuplicate) {
@@ -1240,7 +1242,7 @@ export default function Reconciliation() {
   const deletedTotal = scopedOrders.filter(o => Boolean((o as any).deleted_at)).length
   const countedTotal = activeOrders.filter(o => (o as any).is_countable === true || (o as any).final_count_status === 'counted').length
   const failedTotal = activeOrders.filter(o => o.status === 'failed').length
-  const notFoundTotal = activeOrders.filter(o => (o as any).count_exclusion_reason === 'marked_not_found_by_admin').length
+  const notFoundTotal = activeOrders.filter(o => isConfirmedAdminExclusion(o as any)).length
   const duplicateTotal = activeOrders.filter(o => duplicateInvoiceSet.has(normalizeOrderInvoice(o)) || o.is_duplicate_invoice).length
   const multiplierTotal = activeOrders.filter(o => (o.order_multiplier ?? 1) >= 1.5).length
   const pendingTotal = activeOrders.filter(o => String((o as any).final_count_status || '').startsWith('pending')).length

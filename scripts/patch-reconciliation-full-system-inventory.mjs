@@ -52,31 +52,9 @@ const newFind = `      const findSystemMatch = (order: DeliveryOrder) => {
         if (exact) return exact
 
         const candidates = candidatesByInvoice.get(invoice) || []
-        if (candidates.length === 1) return candidates[0]
-        if (candidates.length === 0) return null
-
-        const orderCode = normalizeArabicText((order as any).customer_code || (order as any).customer_code_snapshot)
-        if (orderCode) {
-          const byCode = candidates.filter(row => normalizeArabicText(row.customer_code) === orderCode)
-          if (byCode.length === 1) return byCode[0]
-        }
-
-        const orderPhone = String((order as any).customer_phone || (order as any).customer_phone_snapshot || '').replace(/\\D/g, '').slice(-10)
-        if (orderPhone) {
-          const byPhone = candidates.filter(row => String(row.phone || '').replace(/\\D/g, '').slice(-10) === orderPhone)
-          if (byPhone.length === 1) return byPhone[0]
-        }
-
-        const orderName = normalizeArabicText((order as any).customer_name || order.customer_name_snapshot)
-        if (orderName) {
-          const byName = candidates.filter(row => {
-            const systemName = normalizeArabicText(row.customer_name)
-            return systemName && (systemName === orderName || systemName.includes(orderName) || orderName.includes(systemName))
-          })
-          if (byName.length === 1) return byName[0]
-        }
-
-        return null
+        // More than one invoice source requires independent corroboration and
+        // administrative review. Name/code alone must not approve a payment.
+        return candidates.length === 1 ? candidates[0] : null
       }`
 
 if (!source.includes(newFind)) {
