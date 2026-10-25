@@ -87,7 +87,7 @@ test('missing system invoice is a report observation and never writes an order p
   const missingBranch = page.split('} else if (!match) {')[1]?.split('} else if (isDuplicate) {')[0]
   assert.ok(missingBranch, 'the missing-invoice branch must exist')
   assert.match(missingBranch, /reconciliationStatus = 'pending_source_coverage'/)
-  assert.match(missingBranch, /patch = \\{\\}/)
+  assert.match(missingBranch, /patch = \{\}/)
   assert.doesNotMatch(missingBranch, /final_count_status:|is_countable:|count_exclusion_reason:|order_earning:/)
 })
 
@@ -123,8 +123,8 @@ test('duplicate invoices inside a single source file cannot silently discard a c
   const page = readFileSync(new URL('../src/pages/admin/Reconciliation.tsx', import.meta.url), 'utf8')
   const parser = page.split('function parseBConnectRows(')[1]?.split('function normalizeOrderInvoice(')[0]
   assert.ok(parser)
-  assert.match(parser, /const seen = new Map<string, BConnectRow>\\(\\)/)
-  assert.match(parser, /findInvoiceEvidenceConflicts\\(\\[parsed\\], \\[previous\\], normalizeBranchName\\)/)
-  assert.match(parser, /throw new Error\\(`الملف يحتوي فاتورة مكررة ببيانات متعارضة/)
-  assert.doesNotMatch(parser, /if \\(\\!invoice \\|\\| seen\\.has\\(dedupeKey\\)\\) continue/)
+  assert.match(parser, /const seen = new Map<string, BConnectRow>\(\)/)
+  assert.match(parser, /findInvoiceEvidenceConflicts\(\[parsed\], \[previous\], normalizeBranchName\)/)
+  assert.match(parser, /throw new Error\(`الملف يحتوي فاتورة مكررة ببيانات متعارضة/)
+  assert.doesNotMatch(parser, /if \(!invoice \|\| seen\.has\(dedupeKey\)\) continue/)
 })
