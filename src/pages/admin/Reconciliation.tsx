@@ -846,11 +846,10 @@ export default function Reconciliation() {
         if (clearResultsError) throw clearResultsError
         const { error: resultInsertError } = await supabase.from('monthly_invoice_reconciliation_results').insert(resultRows)
         if (resultInsertError) throw resultInsertError
-        await supabase.rpc('archive_monthly_rider_performance', {
-          p_batch_id: batchId,
-          p_period_start: selectedFrom,
-          p_period_end: selectedTo
-        })
+        // Do not archive on a partial B-Connect upload. Production's archive RPC
+        // invokes the legacy precise reconciliation, which can turn absent
+        // invoices into exclusions before file coverage has been verified.
+        // Monthly archive must be a separate, explicit, coverage-verified action.
       }
 
       setMissingFromRiders(bconnectOnly.slice(0, 300))
