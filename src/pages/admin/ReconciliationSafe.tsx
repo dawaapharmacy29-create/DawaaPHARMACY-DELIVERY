@@ -200,7 +200,12 @@ async function writeChunk(tableName: string, mode: BulkWriteMode, rows: unknown[
 
   const run = () => {
     if (tableName === 'monthly_system_invoices') {
-      return Promise.resolve(table.upsert(preparedRows, { onConflict: 'invoice_cycle_key' }))
+      // Re-uploading a partial file must never silently replace invoice evidence
+      // already stored for this cycle and branch. Corrections need review.
+      return Promise.resolve(table.upsert(preparedRows, {
+        onConflict: 'invoice_cycle_key',
+        ignoreDuplicates: true,
+      }))
     }
     return Promise.resolve(mode === 'upsert' ? table.upsert(preparedRows, options) : table.insert(preparedRows, options))
   }
