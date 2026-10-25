@@ -77,5 +77,6 @@ test('partial file import cannot trigger legacy precise reconciliation through m
   const safeWrapper = readFileSync(new URL('../src/pages/admin/ReconciliationSafe.tsx', import.meta.url), 'utf8')
   assert.doesNotMatch(page, /supabase\.rpc\(['"]archive_monthly_rider_performance['"]/) 
   assert.doesNotMatch(safeWrapper, /originalRpc\(['"]reconcile_delivery_orders_precise['"]/) 
+  assert.match(safeWrapper, /functionName === 'reconcile_delivery_orders_precise'/)
   assert.match(safeWrapper, /RECONCILIATION_ARCHIVE_REQUIRES_VERIFIED_COVERAGE/)
 })

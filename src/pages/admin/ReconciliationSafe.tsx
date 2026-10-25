@@ -311,7 +311,8 @@ if (!client.__reconciliationNetworkPatched) {
   client.__reconciliationOriginalFrom = originalFrom
 
   client.rpc = async (functionName: string, args?: any, options?: unknown) => {
-    if (functionName === 'archive_monthly_rider_performance') {
+    if (functionName === 'archive_monthly_rider_performance' ||
+        functionName === 'reconcile_delivery_orders_precise') {
       // Fail closed while the database archive function still invokes legacy
       // precise reconciliation and can exclude orders on incomplete coverage.
       // This client guard is not a substitute for restricting the privileged RPC.
