@@ -49,6 +49,54 @@ export type InvoiceEvidence = {
   invoice_amount?: number | null
 }
 
+export type InvoiceSourceRow = InvoiceEvidence & {
+  invoice_number?: string | null
+  net_total?: number | null
+  gross_total?: number | null
+}
+
+export type InvoiceEvidenceConflict = {
+  invoiceNumber: string
+  branch: string
+  reasons: string[]
+  previousAmount: number | null
+  incomingAmount: number | null
+}
+
+/** Detect changed source identity/amount before any import batch is persisted. */
+export function findInvoiceEvidenceConflicts(
+  incoming: readonly InvoiceSourceRow[],
+  existing: readonly InvoiceSourceRow[],
+  normalizeBranch: (value: string) => string,
+): InvoiceEvidenceConflict[] {
+  const key = (row: InvoiceSourceRow) => `${normalizeBranch(row.branch_name || '')}|${String(row.invoice_number || '').trim()}`
+  const previous = new Map(existing.map(row => [key(row), row]))
+  const conflicts: InvoiceEvidenceConflict[] = []
+
+  for (const candidate of incoming) {
+    const old = previous.get(key(candidate))
+    if (!old) continue
+    const reasons: string[] = []
+    const oldCode = customerCode(old.customer_code)
+    const newCode = customerCode(candidate.customer_code)
+    if (oldCode && newCode && oldCode !== newCode) reasons.push('كود العميل مختلف')
+
+    const oldAmount = Number(old.net_total ?? old.invoice_amount ?? old.gross_total ?? 0)
+    const newAmount = Number(candidate.net_total ?? candidate.invoice_amount ?? candidate.gross_total ?? 0)
+    if (oldAmount > 0 && newAmount > 0 && Number.isFinite(oldAmount) && Number.isFinite(newAmount)
+      && Math.abs(oldAmount - newAmount) > 0.01) reasons.push('قيمة الفاتورة مختلفة')
+
+    if (reasons.length) conflicts.push({
+      invoiceNumber: String(candidate.invoice_number || ''),
+      branch: normalizeBranch(candidate.branch_name || ''),
+      reasons,
+      previousAmount: oldAmount > 0 ? oldAmount : null,
+      incomingAmount: newAmount > 0 ? newAmount : null,
+    })
+  }
+  return conflicts
+}
+
 function customerCode(value: unknown): string {
   return String(value ?? '').replace(/[\s\-]/g, '').trim()
 }
