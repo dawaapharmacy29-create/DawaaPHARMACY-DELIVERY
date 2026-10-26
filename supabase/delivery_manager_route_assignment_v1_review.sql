@@ -42,6 +42,11 @@ begin
     (v_manager_branch is null or v_manager_branch is distinct from v_rider.branch_id) then
     raise exception 'manager_branch_mismatch' using errcode='42501';
   end if;
+  -- Do not report success for a partially de-duplicated client selection.
+  if (select count(distinct btrim(x)) from unnest(p_order_ids) as x)
+      <> cardinality(p_order_ids) then
+    raise exception 'duplicate_order_ids_in_route' using errcode='22023';
+  end if;
 
   -- Consistent lock order prevents opposing simultaneous reassignment deadlocks.
   for v_id in
@@ -56,7 +61,7 @@ begin
       where id=v_id for update;
     if v_order.id is null or v_order.deleted_at is not null
       or v_order.branch_id is distinct from v_rider.branch_id
-      or v_order.status not in ('registered','needs_review') then
+      or coalesce(v_order.status,'') not in ('registered','needs_review') then
       raise exception 'route_order_not_eligible' using errcode='42501';
     end if;
     update public.delivery_orders set
