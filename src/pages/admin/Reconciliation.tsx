@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { getRiderSession } from '../../lib/auth'
+import { finalizeReconciliationBatch, writeReconciliationBatchChunks } from '../../lib/reconciliationBatchWrite'
 import { fetchAllRows } from '../../lib/fetchAllRows'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
@@ -666,8 +667,11 @@ export default function Reconciliation() {
       setLastBatchId(batchId)
 
       if (batchId && uploadedInvoices.length) {
-        const { error: invoiceInsertError } = await supabase.from('monthly_system_invoices').upsert(
-          uploadedInvoices.map(row => ({
+        await writeReconciliationBatchChunks(supabase.rpc.bind(supabase) as any, {
+          token: getRiderSession().session_token,
+          batchId,
+          kind: 'invoice',
+          rows: uploadedInvoices.map(row => ({
             batch_id: batchId,
             period_start: selectedFrom,
             period_end: selectedTo,
@@ -686,9 +690,7 @@ export default function Reconciliation() {
             close_time_text: row.close_time,
             raw_json: row.raw,
           })),
-          { onConflict: 'period_start,period_end,normalized_branch_name,invoice_number' }
-        )
-        if (invoiceInsertError) throw invoiceInsertError
+        })
       }
 
       const accumulatedRows = await fetchAllRows<any>({
@@ -880,16 +882,19 @@ export default function Reconciliation() {
       if (batchId && resultRows.length) {
         // Results are immutable snapshots by batch. Never delete an earlier
         // cycle snapshot before a potentially partial multi-chunk insert.
-        const { error: resultInsertError } = await supabase.from('monthly_invoice_reconciliation_results').insert(resultRows)
-        if (resultInsertError) throw resultInsertError
+        await writeReconciliationBatchChunks(supabase.rpc.bind(supabase) as any, {
+          token: getRiderSession().session_token,
+          batchId,
+          kind: 'result',
+          rows: resultRows,
+        })
         // Readers select the latest completed batch. An interrupted upload
         // remains 'started' and must not replace the last completed snapshot.
-        const { data: finishedBatch, error: finishError } = await supabase.from('monthly_invoice_import_batches')
-          .update({ status: 'matched', matched_at: new Date().toISOString() })
-          .eq('id', batchId).eq('status', 'started')
-          .select('id').single()
-        if (finishError) throw finishError
-        if (finishedBatch?.id !== batchId) throw new Error('تعذر تأكيد اكتمال دفعة المطابقة؛ النتائج الجديدة لم تُعتمد للعرض')
+        await finalizeReconciliationBatch(supabase.rpc.bind(supabase) as any, {
+          token: getRiderSession().session_token,
+          batchId,
+          expectedResults: resultRows.length,
+        })
         // Do not archive on a partial B-Connect upload. Production's archive RPC
         // invokes the legacy precise reconciliation, which can turn absent
         // invoices into exclusions before file coverage has been verified.
