@@ -226,6 +226,9 @@ export default function RiderDashboardV3() {
   }
   async function handleSaveEditOrder() {
     if (!editOrder || !editDraft) return
+    if (import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true') {
+      return toast.error('تعديل بيانات الفاتورة من شاشة الدليفري متوقف بعد تفعيل الحماية. اطلب مراجعة المدير.')
+    }
     if (!editDraft.invoice_number.trim()) return toast.error('رقم الفاتورة مطلوب')
     if (editReason.trim().length < 5) return toast.error('اكتب سبب واضح للتعديل')
     try {

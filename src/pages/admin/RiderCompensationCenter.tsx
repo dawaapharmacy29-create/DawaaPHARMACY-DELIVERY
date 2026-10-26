@@ -3,10 +3,12 @@ import { Printer, RefreshCw, Save, WalletCards } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import TeamAdminTabs from '../../components/TeamAdminTabs'
+import { getRiderSession } from '../../lib/auth'
 
 type Row = Record<string, any>
 type BonusType = 'monthly' | 'quarterly'
 type AdjustmentType = 'penalty' | 'reward'
+const VISIT_GATEWAY_ENABLED = import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true'
 
 type Criterion = {
   key: string
@@ -69,6 +71,8 @@ export default function RiderCompensationCenter() {
   const [trips, setTrips] = useState<Row[]>([])
   const [adjustments, setAdjustments] = useState<Row[]>([])
   const [assessments, setAssessments] = useState<Row[]>([])
+  const [visitCredits, setVisitCredits] = useState<Row[]>([])
+  const [visitCreditError, setVisitCreditError] = useState(false)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [orderRate, setOrderRate] = useState('0')
@@ -109,6 +113,17 @@ export default function RiderCompensationCenter() {
       setTrips(tripsRows)
       setAdjustments(adjustmentRows)
       setAssessments(assessmentRows)
+      if (VISIT_GATEWAY_ENABLED) {
+        const { data, error } = await supabase.rpc('list_delivery_rider_visit_credit_v1', {
+          p_token: getRiderSession().session_token || '', p_rider_id: riderId,
+          p_from: from, p_to: to,
+        } as any)
+        setVisitCreditError(Boolean(error))
+        setVisitCredits(error ? [] : (data || []) as Row[])
+      } else {
+        setVisitCredits([])
+        setVisitCreditError(false)
+      }
       setOrderRate(String(rider?.order_rate ?? 0))
       setTripRate(String(rider?.trip_rate ?? 0))
       const existing = assessmentRows.find(row => row.cycle_start === from && row.cycle_end === to && row.bonus_type === bonusType)
@@ -309,6 +324,17 @@ export default function RiderCompensationCenter() {
             ['الأوردرات المحتسبة', summary.countedOrders], ['المشاوير المعتمدة', summary.approvedTrips], ['قيمة الأوردرات', `${money(summary.orderValue)} ج`], ['قيمة المشاوير', `${money(summary.tripValue)} ج`], ['الصافي النهائي', `${money(summary.net)} ج`],
           ].map(([label, value]) => <div key={String(label)} className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-black text-slate-500">{label}</p><p className="mt-1 text-xl font-black text-[#061827]">{value}</p></div>)}
         </div>
+        {VISIT_GATEWAY_ENABLED && (
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-950">
+            <p className="font-black">سجل الزيارات المكررة — منفصل عن صافي المستحقات</p>
+            {visitCreditError ? (
+              <p className="mt-2 text-rose-800">تعذر تحميل سجل الزيارات؛ الحساب المعروض لا يؤكد استحقاقات الزيارات المكررة.</p>
+            ) : (
+              <p className="mt-2">معتمدة: {visitCredits.filter(item => item.visit_status === 'approved').length} · معلقة: {visitCredits.filter(item => item.visit_status === 'pending').length} · مرفوضة: {visitCredits.filter(item => item.visit_status === 'rejected').length}</p>
+            )}
+            <p className="mt-2 text-xs">الزيارة المعتمدة تُثبت تنفيذ زيارة مستقلة، لكنها لا تُضاف لقيمة الفاتورة أو صافي الأجر تلقائيًا قبل اعتماد سياسة التعويض المالي. التسجيلات التاريخية تُراجع بشكل منفصل.</p>
+          </div>
+        )}
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2 print:hidden">

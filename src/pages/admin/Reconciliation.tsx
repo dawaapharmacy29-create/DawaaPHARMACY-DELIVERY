@@ -5,9 +5,13 @@ import { ArrowLeft, Upload, CheckCircle2, XCircle, Search, AlertTriangle, FileSp
 import * as XLSX from 'xlsx'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
+import { getRiderSession } from '../../lib/auth'
+import { finalizeReconciliationBatch, writeReconciliationBatchChunks } from '../../lib/reconciliationBatchWrite'
+import { fetchAllRows } from '../../lib/fetchAllRows'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
-import { formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
+import { duplicateReasonLabel, formatCairoDateTime, formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
+import { findInvoiceEvidenceConflicts, isConfirmedAdminExclusion, preserveHumanDecision, selectVerifiedSystemInvoice } from '../../lib/reconciliationDecision'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
 import CycleSelector from '../../components/CycleSelector'
 
@@ -15,7 +19,7 @@ import CycleSelector from '../../components/CycleSelector'
 void Trash2
 void Pencil
 
-type FilterKey = 'all' | 'counted' | 'pending' | 'not_found' | 'failed' | 'duplicate' | 'multiplier' | 'deleted'
+type FilterKey = 'all' | 'counted' | 'pending' | 'not_found' | 'failed' | 'duplicate' | 'multiplier' | 'customer_mismatch' | 'deleted'
 
 type BConnectRow = {
   invoice_number: string
@@ -44,6 +48,7 @@ type ReconciliationReport = {
   duplicatesPending: number
   multiplierReview: number
   bconnectWithoutRider: number
+  customerNameMismatches: number
 }
 
 type OrderEditForm = {
@@ -176,24 +181,26 @@ function downloadCsv(fileName: string, rows: Array<Record<string, unknown>>) {
 
 function parseBConnectRows(rows: Record<string, unknown>[]): BConnectRow[] {
   const out: BConnectRow[] = []
-  const seen = new Set<string>()
+  const seen = new Map<string, BConnectRow>()
 
   for (const row of rows) {
     const invoiceType = first(row, TYPE_KEYS)
-    // المطابقة الرسمية للدليفري تكون على فواتير التوصيل فقط، وليس الكاش.
-    if (!isDeliveryInvoiceType(invoiceType)) continue
+    // B-Connect type describes payment/accounting, not the actual delivery mode.
+    // A delivery order may be recorded as cash, credit, or home-delivery.
+    // Keep all invoice types as source evidence; match only verified app orders.
 
     const invoice = normalizeInvoice(first(row, INVOICE_KEYS))
-    if (!invoice || seen.has(invoice)) continue
-    seen.add(invoice)
+    const branchName = first(row, BRANCH_KEYS)
+    const dedupeKey = systemInvoiceKey(invoice, branchName)
+    if (!invoice) continue
 
     const gross = toNumber(first(row, GROSS_AMOUNT_KEYS))
     const net = toNumber(first(row, NET_AMOUNT_KEYS)) || gross
 
-    out.push({
+    const parsed: BConnectRow = {
       invoice_number: invoice,
       invoice_type: invoiceType,
-      branch_name: first(row, BRANCH_KEYS),
+      branch_name: branchName,
       customer_code: first(row, CODE_KEYS),
       customer_name: first(row, NAME_KEYS),
       phone: first(row, PHONE_KEYS),
@@ -205,7 +212,17 @@ function parseBConnectRows(rows: Record<string, unknown>[]): BConnectRow[] {
       system_user: first(row, SYSTEM_USER_KEYS),
       close_time: first(row, CLOSE_TIME_KEYS),
       raw: row,
-    })
+    }
+    const previous = seen.get(dedupeKey)
+    if (previous) {
+      const conflicts = findInvoiceEvidenceConflicts([parsed], [previous], normalizeBranchName)
+      if (conflicts.length) {
+        throw new Error(`الملف يحتوي فاتورة مكررة ببيانات متعارضة: ${invoice} (${branchName || 'فرع غير محدد'}). راجع كود العميل وقيمة الفاتورة داخل الملف قبل رفعه.`)
+      }
+      continue // Exact/compatible repeats are one invoice, not extra sales.
+    }
+    seen.set(dedupeKey, parsed)
+    out.push(parsed)
   }
 
   return out
@@ -213,6 +230,18 @@ function parseBConnectRows(rows: Record<string, unknown>[]): BConnectRow[] {
 
 function normalizeOrderInvoice(order: DeliveryOrder): string {
   return normalizeInvoice((order as any).invoice_number || (order as any).invoice_no)
+}
+
+function customerNamesDiffer(appName: unknown, systemName: unknown): boolean {
+  const app = normalizeArabicText(appName)
+  const system = normalizeArabicText(systemName)
+  if (!app || !system) return false
+  if (app === system || app.includes(system) || system.includes(app)) return false
+  return true
+}
+
+function systemInvoiceKey(invoice: unknown, branch: unknown): string {
+  return `${normalizeInvoice(invoice)}::${normalizeBranchName(branch)}`
 }
 
 export default function Reconciliation() {
@@ -260,7 +289,7 @@ export default function Reconciliation() {
 
   useEffect(() => {
     const incoming = searchParams.get('filter') as FilterKey | null
-    if (incoming && ['all','counted','pending','not_found','failed','duplicate','multiplier','deleted'].includes(incoming)) setFilter(incoming)
+    if (incoming && ['all','counted','pending','not_found','failed','duplicate','multiplier','customer_mismatch','deleted'].includes(incoming)) setFilter(incoming)
     const q = searchParams.get('q')
     if (q) setSearchTerm(q)
   }, [searchParams])
@@ -326,45 +355,71 @@ export default function Reconciliation() {
         ? new Date().toISOString().slice(0, 10)
         : selectedTo
       const [ordersRes, ridersRes, tripsRes, attendanceRes, actionsRes, uploadLogRes] = await Promise.allSettled([
-        supabase
-          .from('delivery_orders')
-          .select('*')
-          .gte('delivery_date', fromDate)
-          .lte('delivery_date', toDate)
-          .order('registered_at', { ascending: false }),
+        fetchAllRows<DeliveryOrder>({
+          table: 'delivery_orders',
+          filters: [
+            { column: 'delivery_date', operator: 'gte', value: fromDate },
+            { column: 'delivery_date', operator: 'lte', value: toDate },
+          ],
+          orderColumn: 'registered_at',
+          ascending: false,
+        }),
         getRiders(),
-        supabase
-          .from('internal_trips')
-          .select('*')
-          .gte('trip_date', fromDate)
-          .lte('trip_date', toDate)
-          .order('registered_at', { ascending: false }),
-        supabase
-          .from('attendance')
-          .select('*')
-          .gte('work_date', fromDate)
-          .lte('work_date', toDate),
-        supabase
-          .from('rider_shift_actions')
-          .select('*')
-          .gte('shift_date', fromDate)
-          .lte('shift_date', toDate)
-          .order('incident_at', { ascending: false }),
+        fetchAllRows<InternalTrip>({
+          table: 'internal_trips',
+          filters: [
+            { column: 'trip_date', operator: 'gte', value: fromDate },
+            { column: 'trip_date', operator: 'lte', value: toDate },
+          ],
+          orderColumn: 'registered_at',
+          ascending: false,
+        }),
+        fetchAllRows<Attendance>({
+          table: 'attendance',
+          filters: [
+            { column: 'work_date', operator: 'gte', value: fromDate },
+            { column: 'work_date', operator: 'lte', value: toDate },
+          ],
+          orderColumn: 'work_date',
+          ascending: false,
+        }),
+        fetchAllRows<any>({
+          table: 'rider_shift_actions',
+          filters: [
+            { column: 'shift_date', operator: 'gte', value: fromDate },
+            { column: 'shift_date', operator: 'lte', value: toDate },
+          ],
+          orderColumn: 'incident_at',
+          ascending: false,
+        }),
         supabase
           .from('reconciliation_upload_history')
           .select('*')
-          .eq('period_start', selectedFrom)
-          .eq('period_end', selectedTo)
           .order('uploaded_at', { ascending: false })
           .limit(1)
           .maybeSingle(),
       ])
-      if (ordersRes.status === 'fulfilled') setOrders((ordersRes.value.data ?? []) as DeliveryOrder[])
+
+      if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value)
+      else console.error('Failed to load all reconciliation orders', ordersRes.reason)
+
       if (ridersRes.status === 'fulfilled') setRiders(ridersRes.value)
-      if (tripsRes.status === 'fulfilled') setTrips((tripsRes.value.data ?? []) as InternalTrip[])
-      if (attendanceRes.status === 'fulfilled') setAttendanceRows((attendanceRes.value.data ?? []) as Attendance[])
-      if (actionsRes.status === 'fulfilled') setRiderActions((actionsRes.value.data ?? []) as any[])
-      if (uploadLogRes.status === 'fulfilled' && !uploadLogRes.value.error) setLatestUploadLog((uploadLogRes.value.data ?? null) as ReconciliationUploadLog | null)
+      else console.error('Failed to load reconciliation riders', ridersRes.reason)
+
+      if (tripsRes.status === 'fulfilled') setTrips(tripsRes.value)
+      else console.error('Failed to load all reconciliation trips', tripsRes.reason)
+
+      if (attendanceRes.status === 'fulfilled') setAttendanceRows(attendanceRes.value)
+      else console.error('Failed to load all reconciliation attendance', attendanceRes.reason)
+
+      if (actionsRes.status === 'fulfilled') setRiderActions(actionsRes.value)
+      else console.error('Failed to load all reconciliation actions', actionsRes.reason)
+
+      if (uploadLogRes.status === 'fulfilled' && !uploadLogRes.value.error) {
+        setLatestUploadLog((uploadLogRes.value.data ?? null) as ReconciliationUploadLog | null)
+      } else if (uploadLogRes.status === 'rejected') {
+        console.error('Failed to load latest reconciliation upload log', uploadLogRes.reason)
+      }
 
     } catch (error) {
       console.error(error)
@@ -456,10 +511,11 @@ export default function Reconciliation() {
       (filter === 'all' && !isDeleted) ||
       (filter === 'counted' && ((order as any).is_countable === true || finalStatus === 'counted')) ||
       (filter === 'pending' && (!finalStatus || String(finalStatus).startsWith('pending'))) ||
-      (filter === 'not_found' && order.bconnect_match_status === 'invoice_not_found') ||
+      (filter === 'not_found' && isConfirmedAdminExclusion(order as any) && !isDeleted) ||
       (filter === 'failed' && isFailed) ||
       (filter === 'duplicate' && isDuplicate && !isDeleted) ||
       (filter === 'multiplier' && isMultiplier && !isDeleted) ||
+      (filter === 'customer_mismatch' && String((order as any).bconnect_match_status) === 'matched_customer_name_mismatch' && !isDeleted) ||
       (filter === 'deleted' && isDeleted)
     const rider = riderMap.get(order.rider_id)
     const haystack = [
@@ -541,7 +597,7 @@ export default function Reconciliation() {
 
           // ملفات B-Connect فيها عمودان بنفس الاسم "النوع":
           // الأول هو نوع الفاتورة (كاش/توصيل منزلى)، والثاني هو حالة الفاتورة (تم حفظها/معلقة).
-          // كان العمود الثاني يكتب فوق الأول، فتفشل قراءة كل فواتير التوصيل.
+          // كان العمود الثاني يكتب فوق الأول، فيضيع نوع الفاتورة الأصلي.
           if (count === 0) {
             out[h] = value
           } else {
@@ -559,30 +615,64 @@ export default function Reconciliation() {
     try {
       setUploading(true)
       const rows = await readImportFile(file)
-      const bconnect = parseBConnectRows(rows)
+      const uploadedInvoices = parseBConnectRows(rows)
 
-      if (!bconnect.length) {
-        toast.error('لم يتم قراءة أي فاتورة توصيل من الملف. تأكد أن الملف هو ملف فواتير السيستم وفيه أعمدة: المخزن، الرقم، النوع، الكود، العميل.')
+      if (!uploadedInvoices.length) {
+        toast.error('لم يتم قراءة أي فاتورة صالحة من الملف. تأكد أن الملف يحتوي أعمدة: المخزن، الرقم، النوع، الكود، العميل.')
         console.warn('Reconciliation import parsed rows but no delivery invoices found', { sample: rows.slice(0, 5) })
         return
       }
 
-      console.info('Reconciliation import sample invoices', bconnect.slice(0, 10).map(r => r.invoice_number))
+      // Read the entire cycle before creating a batch. A changed source invoice
+      // is a correction proposal, never a silent replacement on re-upload.
+      const existingInvoices = await fetchAllRows<{
+        invoice_number: string
+        branch_name: string
+        customer_code: string | null
+        net_total: number | null
+        gross_total: number | null
+      }>({
+        table: 'monthly_system_invoices',
+        select: 'id,invoice_number,branch_name,customer_code,net_total,gross_total',
+        filters: [
+          { column: 'period_start', operator: 'eq', value: selectedFrom },
+          { column: 'period_end', operator: 'eq', value: selectedTo },
+        ],
+        orderColumn: 'id',
+      })
+      const conflicts = findInvoiceEvidenceConflicts(uploadedInvoices, existingInvoices, normalizeBranchName)
+      if (conflicts.length) {
+        downloadCsv(`bconnect-invoice-conflicts-${selectedFrom}-${selectedTo}.csv`, conflicts.map(conflict => ({
+          'رقم الفاتورة': conflict.invoiceNumber,
+          'الفرع': conflict.branch,
+          'سبب التعارض': conflict.reasons.join('، '),
+          'القيمة المسجلة': conflict.previousAmount ?? '',
+          'القيمة المرفوعة': conflict.incomingAmount ?? '',
+        })))
+        toast.error(`تم إيقاف الرفع: ${conflicts.length} فاتورة تتعارض مع بيانات مسجلة. نزلنا تقريرًا بالمراجعات المطلوبة؛ لم تُحفظ دفعة جديدة.`)
+        return
+      }
 
-      const { data: batchData, error: batchError } = await supabase.rpc('save_monthly_invoice_import_batch', {
+      console.info('Reconciliation import sample invoices', uploadedInvoices.slice(0, 10).map(r => r.invoice_number))
+
+      const { data: batchData, error: batchError } = await supabase.rpc('save_monthly_invoice_import_batch_v2', {
+        p_session_token: getRiderSession().session_token,
         p_period_start: selectedFrom,
         p_period_end: selectedTo,
         p_file_name: file.name,
         p_total_rows: rows.length,
-        p_delivery_rows: bconnect.length
+        p_delivery_rows: uploadedInvoices.length
       })
       if (batchError) throw batchError
       const batchId = (Array.isArray(batchData) ? batchData[0] : batchData) as string
       setLastBatchId(batchId)
 
-      if (batchId && bconnect.length) {
-        const { error: invoiceInsertError } = await supabase.from('monthly_system_invoices').insert(
-          bconnect.map(row => ({
+      if (batchId && uploadedInvoices.length) {
+        await writeReconciliationBatchChunks(supabase.rpc.bind(supabase) as any, {
+          token: getRiderSession().session_token,
+          batchId,
+          kind: 'invoice',
+          rows: uploadedInvoices.map(row => ({
             batch_id: batchId,
             period_start: selectedFrom,
             period_end: selectedTo,
@@ -600,25 +690,69 @@ export default function Reconciliation() {
             system_user_name: row.system_user,
             close_time_text: row.close_time,
             raw_json: row.raw,
-          }))
-        )
-        if (invoiceInsertError) throw invoiceInsertError
+          })),
+        })
       }
 
-      const bconnectMap = new Map(bconnect.map(row => [row.invoice_number, row])) // رقم الفاتورة هو العلامة المميزة الأساسية
+      const accumulatedRows = await fetchAllRows<any>({
+        table: 'monthly_system_invoices',
+        filters: [
+          { column: 'period_start', operator: 'eq', value: selectedFrom },
+          { column: 'period_end', operator: 'eq', value: selectedTo },
+        ],
+        orderColumn: 'id',
+      })
+
+      const bconnect: BConnectRow[] = (accumulatedRows || []).map((row: any) => ({
+        invoice_number: normalizeInvoice(row.invoice_number),
+        invoice_type: row.invoice_type || '',
+        branch_name: row.branch_name || '',
+        customer_code: row.customer_code || '',
+        customer_name: row.customer_name || '',
+        phone: row.customer_phone || '',
+        address: row.delivery_address || '',
+        invoice_date: row.invoice_date_text || '',
+        invoice_amount: Number(row.net_total ?? row.gross_total ?? 0),
+        gross_total: Number(row.gross_total || 0),
+        net_total: Number(row.net_total || 0),
+        system_user: row.system_user_name || '',
+        close_time: row.close_time_text || '',
+        raw: row.raw_json || row,
+      }))
+
+      const candidatesByInvoice = new Map<string, BConnectRow[]>()
+      bconnect.forEach(row => {
+        const list = candidatesByInvoice.get(row.invoice_number) || []
+        list.push(row)
+        candidatesByInvoice.set(row.invoice_number, list)
+      })
+      const findSystemMatch = (order: DeliveryOrder) => {
+        const invoice = normalizeOrderInvoice(order)
+        if (!invoice) return null
+        const candidates = candidatesByInvoice.get(invoice) || []
+        return selectVerifiedSystemInvoice({
+          branch_name: (order as any).branch_name || '',
+          customer_code: (order as any).customer_code || (order as any).customer_code_snapshot,
+          phone: (order as any).customer_phone || (order as any).customer_phone_snapshot,
+          invoice_amount: Number((order as any).invoice_amount ?? (order as any).invoice_value ?? 0),
+        }, candidates, normalizeBranchName)
+      }
       const currentOrders = orders.length ? orders : ((await supabase
         .from('delivery_orders')
         .select('*')
         .gte('delivery_date', selectedFrom)
-        .lte('delivery_date', selectedTo)).data ?? []) as DeliveryOrder[]
+         .lte('delivery_date', selectedTo)).data ?? []) as DeliveryOrder[]
 
-      const orderInvoices = new Set(currentOrders.map(normalizeOrderInvoice).filter(Boolean))
+      const orderInvoices = new Set(currentOrders
+        .filter(order => Boolean(normalizeOrderInvoice(order)))
+        .map(order => systemInvoiceKey(normalizeOrderInvoice(order), (order as any).branch_name)))
       const updates: any[] = []
       let counted = 0
       let failedExcluded = 0
       let notFound = 0
       let duplicatesPending = 0
       let multiplierReview = 0
+      let customerNameMismatches = 0
       const resultRows: any[] = []
 
       for (const order of currentOrders) {
@@ -626,7 +760,8 @@ export default function Reconciliation() {
         const isFailed = order.status === 'failed'
         const isDuplicate = duplicateInvoiceSet.has(inv) || order.is_duplicate_invoice
         const isMultiplier = (order.order_multiplier ?? 1) >= 1.5
-        const match = inv ? bconnectMap.get(inv) : null
+        const match = findSystemMatch(order)
+        const nameMismatch = Boolean(match && customerNamesDiffer((order as any).customer_name || order.customer_name_snapshot, match.customer_name))
         let reconciliationStatus = 'needs_manual_review'
         let differenceReason = ''
 
@@ -634,7 +769,16 @@ export default function Reconciliation() {
           updated_at: new Date().toISOString(),
         }
 
-        if (isFailed) {
+        // An import is evidence, not an administrative decision. Preserve explicit
+        // exclusions and approvals across repeated or partial B-Connect uploads.
+        const adminExcluded = isConfirmedAdminExclusion(order as any)
+        const manuallyApproved = order.bconnect_match_status === 'manually_approved'
+
+        if (preserveHumanDecision(order as any)) {
+          reconciliationStatus = adminExcluded ? 'admin_excluded' : 'manual_override'
+          differenceReason = adminExcluded ? 'استبعاد مؤكد بواسطة الإدارة' : 'اعتماد يدوي محفوظ'
+          patch = {}
+        } else if (isFailed) {
           reconciliationStatus = match ? 'matched_failed_excluded' : 'app_only_failed'
           differenceReason = 'أوردر فاشل لا يحتسب'
           failedExcluded++
@@ -647,17 +791,12 @@ export default function Reconciliation() {
             order_earning: 0,
           }
         } else if (!match) {
-          reconciliationStatus = 'app_only'
-          differenceReason = 'مسجل في التطبيق وغير موجود في ملف السيستم'
+          reconciliationStatus = 'pending_source_coverage'
+          differenceReason = 'لم تظهر الفاتورة في الملفات المرفوعة حتى الآن؛ لا يُعد ذلك رفضًا'
           notFound++
-          patch = {
-            ...patch,
-            bconnect_match_status: 'invoice_not_found',
-            is_countable: false,
-            final_count_status: 'excluded_invoice_not_found',
-            count_exclusion_reason: 'invoice_not_found_in_bconnect',
-            reconciliation_notes: 'الفاتورة غير موجودة في ملف السيستم لهذه الدورة',
-          }
+          // An absent invoice is only incomplete evidence. The report below
+          // records it; previous count, earning and review states remain intact.
+          patch = {}
         } else if (isDuplicate) {
           reconciliationStatus = 'duplicate_in_app'
           differenceReason = 'رقم فاتورة مكرر في التطبيق ويحتاج مراجعة'
@@ -673,19 +812,20 @@ export default function Reconciliation() {
             reconciliation_notes: 'الفاتورة موجودة في ملف السيستم لكنها مكررة وتحتاج اعتماد إداري',
           }
         } else {
-          reconciliationStatus = 'matched'
-          differenceReason = ''
+          reconciliationStatus = nameMismatch ? 'matched_customer_name_mismatch' : 'matched'
+          differenceReason = nameMismatch ? 'رقم الفاتورة مطابق لكن اسم العميل مختلف ويحتاج مراجعة' : ''
+          if (nameMismatch) customerNameMismatches++
           counted++
           if (isMultiplier) multiplierReview++
           patch = {
             ...patch,
-            bconnect_match_status: 'matched',
+            bconnect_match_status: nameMismatch ? 'matched_customer_name_mismatch' : 'matched',
             matched_at: new Date().toISOString(),
             matched_amount: match.invoice_amount,
             is_countable: true,
-            final_count_status: isMultiplier ? 'counted_multiplier_pending_value_review' : 'counted',
+            final_count_status: isMultiplier ? 'counted_multiplier_pending_value_review' : (nameMismatch ? 'counted_customer_name_review' : 'counted'),
             count_exclusion_reason: null,
-            reconciliation_notes: isMultiplier ? 'مطابقة ومحتاجة مراجعة قيمة ×1.5' : 'مطابقة مع ملف السيستم وتحتسب',
+            reconciliation_notes: nameMismatch ? `الفاتورة تحتسب لأن الرقم مطابق، مع اختلاف اسم العميل: التطبيق (${(order as any).customer_name || order.customer_name_snapshot || '—'}) / السيستم (${match.customer_name || '—'})` : (isMultiplier ? 'مطابقة ومحتاجة مراجعة قيمة ×1.5' : 'مطابقة مع ملف السيستم وتحتسب'),
           }
         }
 
@@ -707,16 +847,20 @@ export default function Reconciliation() {
           system_customer_name: match?.customer_name ?? null,
           app_branch_name: (order as any).branch_name || null,
           system_branch_name: match?.branch_name ?? null,
-          is_countable: Boolean((patch as any).is_countable),
-          needs_review: !Boolean((patch as any).is_countable),
+          is_countable: Boolean((patch as any).is_countable ?? (order as any).is_countable),
+          needs_review: adminExcluded ? false : manuallyApproved ? false : nameMismatch || !Boolean((patch as any).is_countable),
           raw_json: { order, system: match || null },
         })
 
-        updates.push(supabase.from('delivery_orders').update(patch).eq('id', order.id))
+        if (Object.keys(patch).length) updates.push(supabase.from('delivery_orders').update(patch).eq('id', order.id))
       }
 
-      await Promise.all(updates)
-      const bconnectOnly = bconnect.filter(row => !orderInvoices.has(row.invoice_number))
+      // Cash/credit invoices ARE valid proof when a delivery order matches.
+      // Without a matching delivery order they are not evidence of a missing
+      // delivery, unlike B-Connect invoices explicitly marked home delivery.
+      const bconnectOnly = bconnect.filter(row =>
+        isDeliveryInvoiceType(row.invoice_type)
+        && !orderInvoices.has(systemInvoiceKey(row.invoice_number, row.branch_name)))
       resultRows.push(...bconnectOnly.map(row => ({
         batch_id: batchId,
         period_start: selectedFrom,
@@ -741,14 +885,33 @@ export default function Reconciliation() {
       })))
 
       if (batchId && resultRows.length) {
-        const { error: resultInsertError } = await supabase.from('monthly_invoice_reconciliation_results').insert(resultRows)
-        if (resultInsertError) throw resultInsertError
-        await supabase.rpc('archive_monthly_rider_performance', {
-          p_batch_id: batchId,
-          p_period_start: selectedFrom,
-          p_period_end: selectedTo
+        // Results are immutable snapshots by batch. Never delete an earlier
+        // cycle snapshot before a potentially partial multi-chunk insert.
+        await writeReconciliationBatchChunks(supabase.rpc.bind(supabase) as any, {
+          token: getRiderSession().session_token,
+          batchId,
+          kind: 'result',
+          rows: resultRows,
         })
+        // Readers select the latest completed batch. An interrupted upload
+        // remains 'started' and must not replace the last completed snapshot.
+        await finalizeReconciliationBatch(supabase.rpc.bind(supabase) as any, {
+          token: getRiderSession().session_token,
+          batchId,
+          expectedResults: resultRows.length,
+        })
+        // Do not archive on a partial B-Connect upload. Production's archive RPC
+        // invokes the legacy precise reconciliation, which can turn absent
+        // invoices into exclusions before file coverage has been verified.
+        // Monthly archive must be a separate, explicit, coverage-verified action.
       }
+
+      // A failed or interrupted batch must never change rider count/earnings.
+      // Apply computed order projections only after the immutable source and
+      // result snapshot have both been persisted and the batch finalized.
+      const updateResults = await Promise.all(updates)
+      const failedUpdate = updateResults.find(result => result.error)
+      if (failedUpdate?.error) throw failedUpdate.error
 
       setMissingFromRiders(bconnectOnly.slice(0, 300))
       try {
@@ -763,7 +926,7 @@ export default function Reconciliation() {
           matched_count: matchedCount,
           unmatched_count: unmatchedCount,
           uploaded_by: 'admin',
-          notes: `B-Connect: ${bconnect.length} | Rider orders: ${currentOrders.length} | Failed excluded: ${failedExcluded} | 1.5 review: ${multiplierReview}`,
+          notes: `الملف الحالي: ${uploadedInvoices.length} | إجمالي فواتير الدورة بعد الدمج: ${bconnect.length} | Rider orders: ${currentOrders.length} | اختلاف اسم العميل: ${customerNameMismatches} | Failed excluded: ${failedExcluded} | 1.5 review: ${multiplierReview}`,
         })
       } catch (logError) {
         console.warn('Reconciliation upload log was not saved, reconciliation succeeded', logError)
@@ -778,8 +941,9 @@ export default function Reconciliation() {
         duplicatesPending,
         multiplierReview,
         bconnectWithoutRider: bconnectOnly.length,
+        customerNameMismatches,
       })
-      toast.success('تمت المطابقة وحفظ أرشيف الشهر لكل دليفري')
+      toast.success(`تم دمج ${uploadedInvoices.length} فاتورة مع الدورة. الإجمالي التراكمي الآن ${bconnect.length} فاتورة، والمطابقة أُعيدت على كل الدورة.`)
       await loadAll()
     } catch (error: any) {
       console.error(error)
@@ -805,6 +969,10 @@ export default function Reconciliation() {
 
   async function handleSaveOrderEdit() {
     if (!editingOrder) return
+    if (import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true') {
+      toast.error('تعديل الفاتورة من المطابقة متوقف أثناء تفعيل الحماية. استخدم تصحيح مدير الفرع المعتمد.')
+      return
+    }
     const reason = editForm.edit_reason.trim()
     if (reason.length < 5) {
       toast.error('اكتب سبب تعديل واضح عشان نحفظ سجل المراجعة')
@@ -837,6 +1005,9 @@ export default function Reconciliation() {
 
       const { error } = await supabase.from('delivery_orders').update({
         invoice_number: invoiceNumber,
+        // Legacy screens read invoice_no while reconciliation reads invoice_number.
+        // An administrative correction must never leave two different identities.
+        invoice_no: invoiceNumber,
         invoice_amount: amount || null,
         customer_code_snapshot: editForm.customer_code.trim() || null,
         customer_name_snapshot: editForm.customer_name.trim() || null,
@@ -886,6 +1057,12 @@ export default function Reconciliation() {
   async function handleManualMatch(orderId: string) {
     try {
       const order = orders.find(o => o.id === orderId)
+      const duplicate = Boolean(order && (order.is_duplicate_invoice || duplicateInvoiceSet.has(normalizeOrderInvoice(order))))
+      if (duplicate && (!order?.duplicate_reason || (order as any).duplicate_review_status !== 'approved')) {
+        toast.error('لازم تراجع سبب التكرار وتعتمد التكرار أولًا من صفحة الأوردرات المكررة')
+        navigate(`/admin/duplicate-invoices?from=${encodeURIComponent(selectedFrom)}&to=${encodeURIComponent(selectedTo)}&status=pending`)
+        return
+      }
       const isMultiplier = ((order?.order_multiplier ?? 1) >= 1.5)
       const patch = {
         bconnect_match_status: 'manually_approved',
@@ -918,14 +1095,22 @@ export default function Reconciliation() {
   }
 
   async function handleMarkNotFound(orderId: string) {
+    const selectedOrder = orders.find(order => order.id === orderId)
+    const invoice = selectedOrder ? normalizeOrderInvoice(selectedOrder) : '—'
+    if (!window.confirm(
+      `تأكيد قرار إداري باستبعاد الأوردر صاحب الفاتورة ${invoice} من مستحقات الدليفري؟\n\nغياب الفاتورة من ملف B-Connect وحده ليس دليل رفض. تأكد من اكتمال الملفات ومراجعة الفروع قبل الاعتماد.`,
+    )) return false
     try {
       const updatedAt = new Date().toISOString()
+      const previousNotes = String((selectedOrder as any)?.reconciliation_notes || '').trim()
+      const decisionNote = `استبعاد مؤكد يدويًا بواسطة الإدارة — ${new Date(updatedAt).toLocaleString('ar-EG')}`
       const patch = {
         bconnect_match_status: 'invoice_not_found',
         is_countable: false,
         final_count_status: 'excluded_invoice_not_found',
         count_exclusion_reason: 'marked_not_found_by_admin',
         needs_review: false,
+        reconciliation_notes: previousNotes ? `${previousNotes}\n${decisionNote}` : decisionNote,
         updated_at: updatedAt,
       } as const
 
@@ -953,9 +1138,11 @@ export default function Reconciliation() {
       )
 
       toast.success('تم استبعاد الفاتورة من الحساب بدون إعادة تحميل الصفحة')
+      return true
     } catch (error: any) {
       console.error(error)
       toast.error('فشل التحديث: ' + (error?.message ?? ''))
+      return false
     }
   }
 
@@ -1139,7 +1326,7 @@ export default function Reconciliation() {
   const deletedTotal = scopedOrders.filter(o => Boolean((o as any).deleted_at)).length
   const countedTotal = activeOrders.filter(o => (o as any).is_countable === true || (o as any).final_count_status === 'counted').length
   const failedTotal = activeOrders.filter(o => o.status === 'failed').length
-  const notFoundTotal = activeOrders.filter(o => o.bconnect_match_status === 'invoice_not_found').length
+  const notFoundTotal = activeOrders.filter(o => isConfirmedAdminExclusion(o as any)).length
   const duplicateTotal = activeOrders.filter(o => duplicateInvoiceSet.has(normalizeOrderInvoice(o)) || o.is_duplicate_invoice).length
   const multiplierTotal = activeOrders.filter(o => (o.order_multiplier ?? 1) >= 1.5).length
   const pendingTotal = activeOrders.filter(o => String((o as any).final_count_status || '').startsWith('pending')).length
@@ -1232,7 +1419,7 @@ export default function Reconciliation() {
           <Kpi label="تسجيلات الدليفري" value={scopedOrders.length} />
           <Kpi label="محتسبة بعد المطابقة" value={countedTotal} tone="green" />
           <Kpi label="فاشلة لا تحتسب" value={failedTotal} tone="red" />
-          <Kpi label="غير موجودة ببي كونكت" value={notFoundTotal} tone="red" />
+          <Kpi label="استبعاد بقرار الإدارة" value={notFoundTotal} tone="red" />
           <Kpi label="فواتير مكررة" value={duplicateTotal} tone="amber" />
           <Kpi label="أوردرات ×1.5" value={multiplierTotal} tone="blue" />
           <Kpi label="محذوفة محفوظة" value={deletedTotal} tone="amber" />
@@ -1342,9 +1529,9 @@ export default function Reconciliation() {
           <div className="rounded-3xl border border-teal-200 bg-teal-50 p-5">
             <h3 className="mb-3 text-lg font-black text-teal-800">نتيجة آخر مطابقة</h3>
             <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-              <Kpi label="فواتير التوصيل في الملف" value={report.bconnectInvoices} />
+              <Kpi label="فواتير السيستم المتاحة للمطابقة" value={report.bconnectInvoices} />
               <Kpi label="المظبوط المحتسب" value={report.counted} tone="green" />
-              <Kpi label="تلاعب/غير موجود" value={report.notFound} tone="red" />
+              <Kpi label="بانتظار استكمال ملفات السيستم" value={report.notFound} tone="amber" />
               <Kpi label="فاشل مستبعد" value={report.failedExcluded} tone="red" />
               <Kpi label="فواتير لم يسجلها دليفري" value={report.bconnectWithoutRider} tone="amber" />
             </div>
@@ -1367,7 +1554,7 @@ export default function Reconciliation() {
             </button>
             <button type="button" onClick={() => applyMainFilter('not_found')} className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-right transition hover:-translate-y-0.5 hover:shadow-md">
               <p className="text-3xl font-black text-rose-700">{notFoundTotal}</p>
-              <p className="mt-1 font-black text-rose-900">غير موجود في ملف المبيعات</p>
+              <p className="mt-1 font-black text-rose-900">استبعاد مؤكد بواسطة الإدارة</p>
               <p className="mt-1 text-xs font-bold text-rose-700">راجع الرقم/التاريخ أو اعتمد يدويًا لو عندك إثبات.</p>
             </button>
             <button type="button" onClick={() => applyMainFilter('failed')} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-right transition hover:-translate-y-0.5 hover:shadow-md">
@@ -1428,7 +1615,7 @@ export default function Reconciliation() {
             <FilterButton active={filter === 'counted'} onClick={() => applyMainFilter('counted')}>محتسبة ({countedTotal})</FilterButton>
             <FilterButton active={filter === 'pending'} onClick={() => applyMainFilter('pending')}>تحتاج قرار ({pendingTotal})</FilterButton>
             <FilterButton active={filter === 'failed'} onClick={() => applyMainFilter('failed')}>فاشلة ({failedTotal})</FilterButton>
-            <FilterButton active={filter === 'not_found'} onClick={() => applyMainFilter('not_found')}>غير موجودة ({notFoundTotal})</FilterButton>
+            <FilterButton active={filter === 'not_found'} onClick={() => applyMainFilter('not_found')}>استبعاد إداري ({notFoundTotal})</FilterButton>
             <FilterButton active={filter === 'duplicate'} onClick={() => openDuplicateQueue('all')}>مكررة — الكل ({duplicateTotal})</FilterButton>
             <FilterButton active={filter === 'multiplier'} onClick={() => applyMainFilter('multiplier')}>×1.5 ({multiplierTotal})</FilterButton>
             <FilterButton active={filter === 'deleted'} onClick={() => applyMainFilter('deleted')}>محذوفة ({deletedTotal})</FilterButton>
@@ -1465,16 +1652,19 @@ export default function Reconciliation() {
                         <Info label="كود العميل" value={(order as any).customer_code_snapshot || (order as any).customer_code || '—'} />
                         <Info label="التليفون" value={order.customer_phone_snapshot || (order as any).customer_phone || '—'} />
                         <Info label="قيمة الفاتورة" value={formatMoney(order.invoice_amount || (order as any).invoice_value || 0)} />
-                        <Info label="حالة المطابقة" value={friendlyReason(order.bconnect_match_status || 'pending')} />
-                        <Info label="سبب القرار" value={friendlyReason((order as any).count_exclusion_reason)} />
-                        <Info label="دكتور التحضير" value={(order as any).preparing_doctor_name || '—'} />
+                        <Info label="تاريخ ووقت التسجيل (القاهرة)" value={formatCairoDateTime((order as any).registered_at || (order as any).created_at)} />
+                        {!(duplicateInvoiceSet.has(inv) || order.is_duplicate_invoice) && (
+                          <>
+                            <Info label="حالة المطابقة" value={friendlyReason(order.bconnect_match_status || 'pending')} />
+                            <Info label="سبب القرار" value={friendlyReason((order as any).count_exclusion_reason)} />
+                            <Info label="دكتور التحضير" value={(order as any).preparing_doctor_name || '—'} />
+                          </>
+                        )}
                       </div>
                       {(duplicateInvoiceSet.has(inv) || order.is_duplicate_invoice) && (
-                        <DuplicateDecisionPanel
-                          order={order}
-                          siblings={duplicateGroups.get(inv) || [order]}
-                          riderMap={riderMap}
-                        />
+                        <div className="mt-3">
+                          <DuplicateDecisionPanel order={order} siblings={duplicateGroups.get(inv) || [order]} riderMap={riderMap} />
+                        </div>
                       )}
                       {(order as any).reconciliation_notes && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-sm font-bold text-slate-600">{(order as any).reconciliation_notes}</p>}
                       {(order as any).deletion_reason && <p className="mt-2 rounded-lg bg-slate-100 p-2 text-sm font-bold text-slate-700">سبب الحذف: {(order as any).deletion_reason}</p>}
@@ -1528,8 +1718,9 @@ export default function Reconciliation() {
               setDetailsOrder(null)
             }}
             onReject={() => {
-              void handleMarkNotFound(detailsOrder.id)
-              setDetailsOrder(null)
+              void handleMarkNotFound(detailsOrder.id).then(confirmed => {
+                if (confirmed) setDetailsOrder(null)
+              })
             }}
           />
         )}
@@ -1671,23 +1862,35 @@ function DuplicateDecisionPanel({
           const rider = riderMap.get(item.rider_id)
           const counted = (item as any).is_countable === true
           const finalStatus = String((item as any).final_count_status || '')
-          const stamp = (item as any).delivered_at || (item as any).registered_at || (item as any).created_at
+          const registeredAt = (item as any).registered_at || (item as any).created_at
+          const duplicateNote = String((item as any).duplicate_note || '').trim()
           return (
-            <div key={item.id} className={`rounded-xl border p-3 text-xs ${isCurrent ? 'border-slate-700 bg-slate-50' : 'border-slate-200 bg-white'}`}>
+            <div key={item.id} className={`rounded-xl border p-3 text-sm ${isCurrent ? 'border-slate-700 bg-slate-50' : 'border-slate-200 bg-white'}`}>
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <span className="font-black text-slate-900">{isCurrent ? 'هذا التسجيل' : 'التسجيل الآخر'}</span>
                 <span className={`rounded-full px-2 py-1 font-black ${counted ? 'bg-emerald-100 text-emerald-700' : item.status === 'failed' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
                   {counted ? 'محتسب' : item.status === 'failed' ? 'فاشل' : 'غير محتسب'}
                 </span>
               </div>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <Info label="المندوب" value={rider?.name || (item as any).rider_name || 'غير محدد'} />
-                <Info label="حالة التنفيذ" value={item.status || '—'} />
-                <Info label="التوقيت" value={stamp ? new Date(stamp).toLocaleString('ar-EG') : '—'} />
-                <Info label="النتيجة المالية" value={finalStatus || '—'} />
-                <Info label="سبب التكرار" value={friendlyReason((item as any).duplicate_reason)} />
-                <Info label="سبب الفشل" value={friendlyReason((item as any).failed_reason)} />
+                <Info label="تاريخ ووقت التسجيل (القاهرة)" value={formatCairoDateTime(registeredAt)} />
               </div>
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <p className="text-xs font-black text-amber-800">سبب التكرار</p>
+                <p className="mt-1 font-black text-slate-950">{duplicateReasonLabel((item as any).duplicate_reason)}</p>
+                <p className="mt-2 text-xs font-black text-amber-800">ملاحظة المندوب</p>
+                <p className="mt-1 whitespace-pre-wrap break-words font-bold text-slate-800">{duplicateNote || 'لا توجد ملاحظة إضافية'}</p>
+              </div>
+              <details className="mt-3 text-xs text-slate-600">
+                <summary className="cursor-pointer font-bold text-teal-800">تفاصيل إضافية عند الحاجة</summary>
+                <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-3">
+                  <Info label="حالة التنفيذ" value={item.status || '—'} />
+                  <Info label="النتيجة المالية" value={finalStatus || '—'} />
+                  <Info label="وقت التسليم" value={formatCairoDateTime((item as any).delivered_at)} />
+                  <Info label="سبب الفشل" value={friendlyReason((item as any).failed_reason)} />
+                </div>
+              </details>
             </div>
           )
         })}
@@ -1699,6 +1902,6 @@ function DuplicateDecisionPanel({
 function StatusPill({ counted, status, finalStatus }: { counted: boolean; status: string; finalStatus: string }) {
   if (status === 'failed') return <span className="rounded-full bg-rose-100 px-2 py-1 text-xs font-black text-rose-700">فاشل لا يحتسب</span>
   if (counted) return <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-black text-emerald-700">محتسب</span>
-  if (finalStatus.includes('not_found')) return <span className="rounded-full bg-rose-100 px-2 py-1 text-xs font-black text-rose-700">غير موجود</span>
+  if (finalStatus.includes('not_found')) return <span className="rounded-full bg-rose-100 px-2 py-1 text-xs font-black text-rose-700">مستبعد بقرار الإدارة أو قرار قديم يحتاج تدقيق</span>
   return <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-black text-amber-700">تحت المراجعة</span>
 }

@@ -35,7 +35,15 @@ async function patchPage() {
 
   for (const [before, after] of replacements) {
     if (source.includes(after)) continue
-    if (!source.includes(before)) throw new Error(`Reconciliation anchor not found: ${before.slice(0, 60)}`)
+    if (!source.includes(before)) {
+      // Older KPI captions are no longer guaranteed to exist in the revised
+      // reconciliation page; preserve newer copy and counting rules.
+      if (source.includes('selectVerifiedSystemInvoice(')) {
+        console.info(`Obsolete unified-summary copy skipped: ${before.slice(0, 45)}`)
+        continue
+      }
+      throw new Error(`Reconciliation anchor not found: ${before.slice(0, 60)}`)
+    }
     source = source.replace(before, after)
   }
 

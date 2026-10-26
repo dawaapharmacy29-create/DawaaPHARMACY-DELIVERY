@@ -11,6 +11,7 @@ import {
   getOperationalPeriod,
   TRIP_TYPE_LABELS,
   DUPLICATE_REASON_LABELS,
+  DUPLICATE_REASON_HINTS,
   ORDER_STATUS_LABELS,
   TRIP_STATUS_LABELS,
   arrayBufferToHex,
@@ -35,6 +36,9 @@ import { useRealtimeSync } from "../../lib/useRealtimeSync";
 import { LiveEarningsBar, NavigateButton, SmartCustomerCard } from "../../components/rider/RiderIntelligence";
 import { APP_VERSION } from "../../lib/appVersion";
 import { findStaleTripForReview, reviewTripAsStale, logOrderEdit } from "../../lib/delivery";
+
+// Coordinated with DB registry + invoice write guards; disabled by default.
+const VISIT_GATEWAY_ENABLED = import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type ModalName =
@@ -482,6 +486,8 @@ export default function RiderDashboard() {
     useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const orderSaveLockRef = useRef(false);
+  const repeatedVisitRequestIdRef = useRef<string | null>(null);
   const [activeModal, setActiveModal] = useState<ModalName>(null);
   const [orderViewMode, setOrderViewMode] = useState<OrderViewMode>("all");
   const [orderViewTitle, setOrderViewTitle] = useState("أوردرات اليوم");
@@ -1473,6 +1479,7 @@ export default function RiderDashboard() {
 
   // ── ORDER FORM ────────────────────────────────────────────────────────────
   function resetOrderForm() {
+    repeatedVisitRequestIdRef.current = null;
     setCustomerSearch("");
     setCustomers([]);
     setSelectedCustomer(null);
@@ -1924,7 +1931,7 @@ export default function RiderDashboard() {
   void handleExtractReceiptData;
 
   async function handleSaveOrder(isDup = false) {
-    if (!rider) return;
+    if (!rider || orderSaveLockRef.current) return;
     const manualCustomerText = customerSearch.trim();
     const nameForValidation = (
       customerName ||
@@ -1959,15 +1966,42 @@ export default function RiderDashboard() {
       toast.error("اختار سبب التكرار");
       return;
     }
-    const effectiveDupNote = (dupNote.trim() || orderNotes.trim());
+    if (isDup && !VISIT_GATEWAY_ENABLED) {
+      toast.error("تسجيل الزيارة المكررة متوقف لحين تفعيل الحماية الجديدة على قاعدة البيانات.");
+      return;
+    }
+    const effectiveDupNote = dupNote.trim();
     if (isDup && effectiveDupNote.length < 5) {
-      toast.error("اكتب ملاحظة واضحة للتكرار لا تقل عن 5 حروف");
+      toast.error('اكتب ملاحظة إجبارية عن التكرار (5 أحرف على الأقل)');
       return;
     }
 
     try {
+      orderSaveLockRef.current = true;
       setSaving(true);
       setOrderSaveError("");
+
+      if (isDup) {
+        const token = getStoredRiderToken();
+        if (!token) throw new Error('انتهت الجلسة. سجل دخول مرة أخرى.');
+        if (!navigator.onLine) throw new Error('تسجيل الزيارة المكررة يحتاج اتصال بالإنترنت.');
+        const { data: visitData, error: visitError } = await supabase.rpc('rider_register_repeated_visit_v1', {
+          p_token: token,
+          p_invoice_number: invoiceNumber.trim(),
+          p_reason: dupReason,
+          p_note: effectiveDupNote,
+          p_client_request_id: repeatedVisitRequestIdRef.current ||= crypto.randomUUID(),
+        });
+        const visit = getRpcResult<any>(visitData);
+        if (visitError || !visit?.success) {
+          throw new Error(visitError?.message || visit?.message || visit?.error || 'تعذر تسجيل الزيارة المكررة');
+        }
+        toast.success('تم تسجيل الزيارة للمراجعة بدون إنشاء فاتورة جديدة أو إضافة قيمة مبيعات.');
+        repeatedVisitRequestIdRef.current = null;
+        setActiveModal(null);
+        resetOrderForm();
+        return;
+      }
 
       // Check duplicate (if not already confirmed)
       if (!isDup && navigator.onLine) {
@@ -1977,6 +2011,7 @@ export default function RiderDashboard() {
             "id, invoice_number, registered_at, rider_name, customer_name_snapshot, preparing_doctor_name",
           )
           .eq("invoice_number", invoiceNumber.trim())
+          .eq("branch_id", rider.branch_id)
           .order("registered_at", { ascending: true })
           .limit(1);
         const existing = Array.isArray(existingRows) ? existingRows[0] : null;
@@ -2143,11 +2178,20 @@ export default function RiderDashboard() {
         },
       );
       const result = getRpcResult<any>(secureData);
-      if (secureError) throw secureError;
-      if (!result?.success)
-        throw new Error(
-          result?.message || result?.error || "رفض السيرفر تسجيل الأوردر",
-        );
+      if (secureError || !result?.success) {
+        const errorCode = String(result?.error || secureError?.code || "");
+        const errorMessage = String(secureError?.message || result?.message || result?.error || "رفض السيرفر تسجيل الأوردر");
+        // A second rider may register the same invoice after the initial lookup.
+        // Preserve the form and open the duplicate details instead of stranding the rider on an error.
+        if (!isDup && (errorCode === "DUPLICATE_DETAILS_REQUIRED" || /مكرر|duplicate/i.test(errorMessage))) {
+          setDupWarning(null);
+          setOrderSaveError("");
+          setActiveModal("duplicate");
+          toast.warning("الفاتورة مكررة — اختار السبب واكتب ملاحظة إجبارية، ثم أكد الأوردر.");
+          return;
+        }
+        throw new Error(errorMessage);
+      }
       data = {
         ...payload,
         id: result.order_id,
@@ -2198,6 +2242,7 @@ export default function RiderDashboard() {
       setOrderSaveError(e?.message || "حدث خطأ شبكة. بياناتك ما زالت محفوظة ويمكن إعادة المحاولة.");
       toast.error("تعذر تسجيل الأوردر: " + (e?.message ?? ""));
     } finally {
+      orderSaveLockRef.current = false;
       setSaving(false);
     }
   }
@@ -2533,23 +2578,43 @@ export default function RiderDashboard() {
   async function handlePickedUp(orderId: string) {
     if (!rider) return;
     try {
-      const pickedAt = new Date().toISOString();
-      const { data, error } = await supabase
-        .from("delivery_orders")
-        .update({
-          picked_up_at: pickedAt,
-          picked_up_by: rider.id,
-          picked_up_by_name: rider.name,
-          dispatch_status: "picked_up",
-          updated_at: pickedAt,
-        })
-        .eq("id", orderId)
-        .select("*")
-        .single();
-      if (error) throw error;
+      // Keep the existing production flow until the pickup RPC has been
+      // installed and the coordinated permission cutover is ready.
+      if (!VISIT_GATEWAY_ENABLED) {
+        const pickedAt = new Date().toISOString();
+        const { data: legacyOrder, error: legacyError } = await supabase
+          .from("delivery_orders")
+          .update({
+            picked_up_at: pickedAt,
+            picked_up_by: rider.id,
+            picked_up_by_name: rider.name,
+            dispatch_status: "picked_up",
+            updated_at: pickedAt,
+          })
+          .eq("id", orderId)
+          .select("*")
+          .single();
+        if (legacyError) throw legacyError;
+        setOrders((prev) => prev.map((o) => o.id === orderId ? legacyOrder as DeliveryOrder : o));
+        setCycleOrders((prev) => prev.map((o) => o.id === orderId ? legacyOrder as DeliveryOrder : o));
+        toast.success("تم تسجيل استلام الأوردر من الفرع ✅");
+        return;
+      }
+      const token = getStoredRiderToken();
+      if (!token) throw new Error("انتهت الجلسة");
+      const { data, error } = await supabase.rpc("rider_mark_order_picked_up_v1", {
+        p_token: token,
+        p_order_id: String(orderId),
+      });
+      const result = getRpcResult<any>(data);
+      if (error || !result?.success || !result.order) {
+        throw new Error(error?.message || result?.message || "تعذر تسجيل استلام الأوردر");
+      }
+      const updated = result.order as DeliveryOrder;
       setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? (data as DeliveryOrder) : o)),
+        prev.map((o) => (o.id === orderId ? updated : o)),
       );
+      setCycleOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)));
       toast.success("تم تسجيل استلام الأوردر من الفرع ✅");
     } catch {
       toast.error("تعذر تسجيل استلام الأوردر");
@@ -3615,7 +3680,7 @@ export default function RiderDashboard() {
             <input
               type="text"
               value={invoiceNumber}
-              onChange={(e) => setInvoiceNumber(e.target.value)}
+              onChange={(e) => { repeatedVisitRequestIdRef.current = null; setInvoiceNumber(e.target.value); }}
               placeholder="رقم الفاتورة"
               className="dawaa-input text-right"
             />
@@ -3770,7 +3835,7 @@ export default function RiderDashboard() {
         >
           <div className="rounded-2xl bg-amber-50 border border-amber-300 p-4">
             <p className="font-black text-amber-800">
-              الفاتورة دي متسجلة قبل كده لأي دليفري، ولازم سبب استثنائي واضح.
+              الفاتورة دي متسجلة قبل كده. اختار سبب التكرار الحقيقي، واكتب ملاحظة إجبارية توضح تفاصيل الزيارة.
             </p>
             <p className="text-xs text-amber-600 mt-1">
               سُجلت في: {formatDateTime(dupWarning?.registered_at)}
@@ -3794,6 +3859,7 @@ export default function RiderDashboard() {
                 </option>
               ))}
             </select>
+            {dupReason && <p className="mt-2 rounded-xl bg-teal-50 p-3 text-sm font-bold leading-6 text-teal-900">{DUPLICATE_REASON_HINTS[dupReason]}</p>}
           </Field>
           <Field label="اسم الدكتور اللي طلع/حضّر الأوردر (اختياري)">
             <input
@@ -3803,22 +3869,22 @@ export default function RiderDashboard() {
               placeholder="مثال: د/ أحمد أو د/ شيماء"
             />
           </Field>
-          <Field label="تفاصيل التكرار * (5 حروف على الأقل)">
+          <Field label="ملاحظة التكرار *">
             <textarea
               value={dupNote}
               onChange={(e) => setDupNote(e.target.value)}
               rows={3}
+              required
+              minLength={5}
               className="dawaa-input text-right resize-none"
-              placeholder="اكتب تفاصيل التكرار، ويمكن استخدام ملاحظات الأوردر"
+              placeholder="تفاصيل تساعد الإدارة على اتخاذ القرار (5 أحرف على الأقل)"
             />
-            <p className="text-xs text-slate-400">{(dupNote.trim() || orderNotes.trim()).length}/5</p>
           </Field>
           <button
             onClick={() => handleSaveOrder(true)}
             disabled={
               saving ||
-              !dupReason ||
-              (dupNote.trim() || orderNotes.trim()).length < 5
+              !dupReason
             }
             className="w-full rounded-2xl bg-amber-500 py-4 font-black text-white disabled:opacity-50"
           >

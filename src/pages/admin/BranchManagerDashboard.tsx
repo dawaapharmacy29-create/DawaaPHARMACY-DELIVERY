@@ -144,6 +144,9 @@ export default function BranchManagerDashboard() {
         p_notes: 'تأكيد خروج الأوردر من لوحة مدير الفرع'
       })
       if (error) {
+        if (import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true') {
+          throw new Error('فشل تسجيل الخروج عبر المسار المعتمد؛ التعديل المباشر غير مسموح أثناء حماية الفواتير')
+        }
         const now = new Date().toISOString()
         const fallback = await supabase.from('delivery_orders').update({
           dispatched_at: row.dispatched_at || now,
@@ -198,7 +201,21 @@ export default function BranchManagerDashboard() {
     setSaving(true)
     try {
       const actor = profile.display_name || 'مدير الفرع'
-      if (modal.type === 'reassign') {
+      const protectedAction = import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true'
+        && ['reassign', 'delete', 'order_to_trip'].includes(modal.type)
+      if (protectedAction) {
+        const token = getRiderSession().session_token
+        const { data, error } = await supabase.rpc('delivery_branch_manager_order_action_v1', {
+          p_token: token || '',
+          p_order_id: String(modal.row.id),
+          p_action: modal.type === 'delete' ? 'exclude' : modal.type,
+          p_reason: reason.trim(),
+          p_target_rider_id: modal.type === 'reassign' ? targetRiderId : null,
+        })
+        if (error) throw error
+        if (!(data as any)?.success) throw new Error('لم يتم اعتماد إجراء المدير')
+      }
+      if (!protectedAction && modal.type === 'reassign') {
         if (!targetRiderId) throw new Error('اختر المندوب الجديد')
         const target = riders.find(r => r.id === targetRiderId)
         const { error } = await supabase.from('delivery_orders').update({
@@ -215,7 +232,7 @@ export default function BranchManagerDashboard() {
         }).eq('id', modal.row.id)
         if (error) throw error
       }
-      if (modal.type === 'delete') {
+      if (!protectedAction && modal.type === 'delete') {
         const { error } = await supabase.from('delivery_orders').update({
           deleted_at: new Date().toISOString(), deleted_by_name: actor, deletion_reason: reason, is_countable: false,
           final_count_status: 'excluded_by_branch_manager', review_status: 'deleted_by_branch_manager', updated_at: new Date().toISOString()
@@ -231,7 +248,7 @@ export default function BranchManagerDashboard() {
         })
         if (error) throw error
       }
-      if (modal.type === 'order_to_trip') {
+      if (!protectedAction && modal.type === 'order_to_trip') {
         const { error } = await supabase.from('delivery_orders').update({
           review_status: 'converted_to_trip_request', approval_status: 'pending', review_reason: reason, is_countable: false, updated_at: new Date().toISOString()
         }).eq('id', modal.row.id)
@@ -239,12 +256,21 @@ export default function BranchManagerDashboard() {
       }
       if (modal.type === 'edit_invoice') {
         if (!newInvoiceNumber.trim()) throw new Error('اكتب رقم الفاتورة الصحيح')
-        const { data, error } = await supabase.rpc('branch_manager_update_order_invoice', {
-          p_order_id: modal.row.id,
-          p_new_invoice_number: newInvoiceNumber.trim(),
-          p_reason: reason,
-          p_actor_name: actor
-        })
+        const useProtectedCorrection = import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true'
+        const managerToken = getRiderSession().session_token
+        const { data, error } = useProtectedCorrection
+          ? await supabase.rpc('branch_manager_update_order_invoice_v2', {
+              p_token: managerToken || '',
+              p_order_id: String(modal.row.id),
+              p_new_invoice_number: newInvoiceNumber.trim(),
+              p_reason: reason,
+            })
+          : await supabase.rpc('branch_manager_update_order_invoice', {
+              p_order_id: modal.row.id,
+              p_new_invoice_number: newInvoiceNumber.trim(),
+              p_reason: reason,
+              p_actor_name: actor,
+            })
         if (error) throw error
         const result: any = Array.isArray(data) ? data[0] : data
         if (result?.success === false) throw new Error(result?.message || 'تعذر تعديل رقم الفاتورة')

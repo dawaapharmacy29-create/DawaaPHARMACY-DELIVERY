@@ -164,6 +164,10 @@ export default function RiderPerformanceDetail() {
 
   async function saveEdit() {
     if (!edit || !draft) return
+    if (import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true') {
+      toast.error('تعديل الفاتورة والمستحقات المباشر متوقف بعد تفعيل الحماية. استخدم مراجعة المدير المعتمدة.')
+      return
+    }
     try {
       setSaving(true)
       const multiplier = Number(draft.multiplier || 1) || 1
