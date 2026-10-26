@@ -10,7 +10,7 @@ import { finalizeReconciliationBatch, writeReconciliationBatchChunks } from '../
 import { fetchAllRows } from '../../lib/fetchAllRows'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
-import { duplicateReasonLabel, formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
+import { duplicateReasonLabel, formatCairoDateTime, formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
 import { findInvoiceEvidenceConflicts, isConfirmedAdminExclusion, preserveHumanDecision, selectVerifiedSystemInvoice } from '../../lib/reconciliationDecision'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
 import CycleSelector from '../../components/CycleSelector'
@@ -185,8 +185,9 @@ function parseBConnectRows(rows: Record<string, unknown>[]): BConnectRow[] {
 
   for (const row of rows) {
     const invoiceType = first(row, TYPE_KEYS)
-    // Cash and credit invoices can prove delivery app orders too.
-    // Source payment type must never exclude an invoice from matching.
+    // B-Connect type describes payment/accounting, not the actual delivery mode.
+    // A delivery order may be recorded as cash, credit, or home-delivery.
+    // Keep all invoice types as source evidence; match only verified app orders.
 
     const invoice = normalizeInvoice(first(row, INVOICE_KEYS))
     const branchName = first(row, BRANCH_KEYS)
@@ -617,7 +618,7 @@ export default function Reconciliation() {
       const uploadedInvoices = parseBConnectRows(rows)
 
       if (!uploadedInvoices.length) {
-        toast.error('لم يتم قراءة أي فاتورة صالحة من الملف. تأكد أن الملف هو ملف فواتير السيستم وفيه أعمدة: المخزن، الرقم، النوع، الكود، العميل.')
+        toast.error('لم يتم قراءة أي فاتورة صالحة من الملف. تأكد أن الملف يحتوي أعمدة: المخزن، الرقم، النوع، الكود، العميل.')
         console.warn('Reconciliation import parsed rows but no delivery invoices found', { sample: rows.slice(0, 5) })
         return
       }
@@ -854,8 +855,9 @@ export default function Reconciliation() {
         if (Object.keys(patch).length) updates.push(supabase.from('delivery_orders').update(patch).eq('id', order.id))
       }
 
-      // Cash/credit invoices can match deliveries, but alone are not proof of
-      // an unregistered delivery. Require an explicit delivery source type.
+      // Cash/credit invoices ARE valid proof when a delivery order matches.
+      // Without a matching delivery order they are not evidence of a missing
+      // delivery, unlike B-Connect invoices explicitly marked home delivery.
       const bconnectOnly = bconnect.filter(row =>
         isDeliveryInvoiceType(row.invoice_type)
         && !orderInvoices.has(systemInvoiceKey(row.invoice_number, row.branch_name)))
@@ -904,7 +906,9 @@ export default function Reconciliation() {
         // Monthly archive must be a separate, explicit, coverage-verified action.
       }
 
-      // Only project rider counts/earnings after a fully finalized source snapshot.
+      // A failed or interrupted batch must never change rider count/earnings.
+      // Apply computed order projections only after the immutable source and
+      // result snapshot have both been persisted and the batch finalized.
       const updateResults = await Promise.all(updates)
       const failedUpdate = updateResults.find(result => result.error)
       if (failedUpdate?.error) throw failedUpdate.error
@@ -1641,17 +1645,17 @@ export default function Reconciliation() {
                         <Info label="كود العميل" value={(order as any).customer_code_snapshot || (order as any).customer_code || '—'} />
                         <Info label="التليفون" value={order.customer_phone_snapshot || (order as any).customer_phone || '—'} />
                         <Info label="قيمة الفاتورة" value={formatMoney(order.invoice_amount || (order as any).invoice_value || 0)} />
-                        <Info label="حالة المطابقة" value={friendlyReason(order.bconnect_match_status || 'pending')} />
-                        <Info label="سبب القرار" value={friendlyReason((order as any).count_exclusion_reason)} />
-                        <Info label="دكتور التحضير" value={(order as any).preparing_doctor_name || '—'} />
+                        <Info label="تاريخ ووقت التسجيل (القاهرة)" value={formatCairoDateTime((order as any).registered_at || (order as any).created_at)} />
+                        {!(duplicateInvoiceSet.has(inv) || order.is_duplicate_invoice) && (
+                          <>
+                            <Info label="حالة المطابقة" value={friendlyReason(order.bconnect_match_status || 'pending')} />
+                            <Info label="سبب القرار" value={friendlyReason((order as any).count_exclusion_reason)} />
+                            <Info label="دكتور التحضير" value={(order as any).preparing_doctor_name || '—'} />
+                          </>
+                        )}
                       </div>
                       {(duplicateInvoiceSet.has(inv) || order.is_duplicate_invoice) && (
-                        <div className="mt-3 space-y-2">
-                          <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3">
-                            <p className="text-xs font-black text-amber-700">سبب تسجيل الأوردر مرة أخرى</p>
-                            <p className="mt-1 text-sm font-black text-slate-900">{duplicateReasonLabel((order as any).duplicate_reason)}</p>
-                            <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{(order as any).duplicate_note || 'بدون ملاحظة إضافية'}</p>
-                          </div>
+                        <div className="mt-3">
                           <DuplicateDecisionPanel order={order} siblings={duplicateGroups.get(inv) || [order]} riderMap={riderMap} />
                         </div>
                       )}
@@ -1851,24 +1855,35 @@ function DuplicateDecisionPanel({
           const rider = riderMap.get(item.rider_id)
           const counted = (item as any).is_countable === true
           const finalStatus = String((item as any).final_count_status || '')
-          const stamp = (item as any).delivered_at || (item as any).registered_at || (item as any).created_at
+          const registeredAt = (item as any).registered_at || (item as any).created_at
+          const duplicateNote = String((item as any).duplicate_note || '').trim()
           return (
-            <div key={item.id} className={`rounded-xl border p-3 text-xs ${isCurrent ? 'border-slate-700 bg-slate-50' : 'border-slate-200 bg-white'}`}>
+            <div key={item.id} className={`rounded-xl border p-3 text-sm ${isCurrent ? 'border-slate-700 bg-slate-50' : 'border-slate-200 bg-white'}`}>
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <span className="font-black text-slate-900">{isCurrent ? 'هذا التسجيل' : 'التسجيل الآخر'}</span>
                 <span className={`rounded-full px-2 py-1 font-black ${counted ? 'bg-emerald-100 text-emerald-700' : item.status === 'failed' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
                   {counted ? 'محتسب' : item.status === 'failed' ? 'فاشل' : 'غير محتسب'}
                 </span>
               </div>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <Info label="المندوب" value={rider?.name || (item as any).rider_name || 'غير محدد'} />
-                <Info label="حالة التنفيذ" value={item.status || '—'} />
-                <Info label="التوقيت" value={stamp ? new Date(stamp).toLocaleString('ar-EG') : '—'} />
-                <Info label="النتيجة المالية" value={finalStatus || '—'} />
-                <Info label="سبب التكرار" value={duplicateReasonLabel((item as any).duplicate_reason)} />
-                {(item as any).duplicate_note && <div className="col-span-2 rounded-lg border border-amber-200 bg-amber-50 p-2"><Info label="توضيح المندوب" value={String((item as any).duplicate_note)} /></div>}
-                <Info label="سبب الفشل" value={friendlyReason((item as any).failed_reason)} />
+                <Info label="تاريخ ووقت التسجيل (القاهرة)" value={formatCairoDateTime(registeredAt)} />
               </div>
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <p className="text-xs font-black text-amber-800">سبب التكرار</p>
+                <p className="mt-1 font-black text-slate-950">{duplicateReasonLabel((item as any).duplicate_reason)}</p>
+                <p className="mt-2 text-xs font-black text-amber-800">ملاحظة المندوب</p>
+                <p className="mt-1 whitespace-pre-wrap break-words font-bold text-slate-800">{duplicateNote || 'لا توجد ملاحظة إضافية'}</p>
+              </div>
+              <details className="mt-3 text-xs text-slate-600">
+                <summary className="cursor-pointer font-bold text-teal-800">تفاصيل إضافية عند الحاجة</summary>
+                <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-3">
+                  <Info label="حالة التنفيذ" value={item.status || '—'} />
+                  <Info label="النتيجة المالية" value={finalStatus || '—'} />
+                  <Info label="وقت التسليم" value={formatCairoDateTime((item as any).delivered_at)} />
+                  <Info label="سبب الفشل" value={friendlyReason((item as any).failed_reason)} />
+                </div>
+              </details>
             </div>
           )
         })}
