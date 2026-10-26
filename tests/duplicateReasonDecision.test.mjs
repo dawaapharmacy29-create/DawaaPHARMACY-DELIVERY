@@ -16,6 +16,11 @@ test('both rider entry points require reason but never require extra note', () =
   assert.match(quick, /ملاحظة إضافية \(اختيارية\)/)
   assert.match(dashboard, /DUPLICATE_REASON_HINTS\[dupReason\]/)
   assert.match(quick, /DUPLICATE_REASON_HINTS\[duplicateReason\]/)
+  assert.match(dashboard, /errorCode === "DUPLICATE_DETAILS_REQUIRED"/)
+  assert.match(dashboard, /setActiveModal\("duplicate"\)/)
+  assert.match(dashboard, /if \(!rider \|\| orderSaveLockRef\.current\) return/)
+  assert.match(dashboard, /finally \{\s*orderSaveLockRef\.current = false;\s*setSaving\(false\)/)
+  assert.match(quick, /isSubmittingRef\.current = false/)
   for (const code of ['customer_added_items', 'preparation_error', 'return', 'second_visit', 'invoice_correction', 'other']) {
     assert.match(helper, new RegExp(`\\b${code}:`))
   }
@@ -33,7 +38,15 @@ test('decision displays direct duplicate note before technical feed', () => {
   assert.match(manager, /duplicateReasonLabel\(duplicateReason\)/)
   assert.match(manager, /if \(!duplicateReason\)/)
   assert.doesNotMatch(manager, /duplicateNote\.length < 8/)
-  assert.match(reconciliation, /duplicateReasonLabel\(\(order as any\)\.duplicate_reason\)/)
+  assert.match(reconciliation, /duplicateReasonLabel\(\(item as any\)\.duplicate_reason\)/)
+  assert.match(reconciliation, /ملاحظة المندوب/)
+  assert.match(reconciliation, /formatCairoDateTime\(registeredAt\)/)
+  assert.match(reconciliation, /تفاصيل إضافية عند الحاجة/)
+  assert.match(reconciliation, /لا توجد ملاحظة إضافية/)
+  const duplicateQueue = source('../src/pages/admin/DuplicateInvoices.tsx')
+  assert.match(duplicateQueue, /formatCairoDateTime\(\(order as any\)\.registered_at/)
+  const helper = source('../src/lib/helpers.ts')
+  assert.match(helper, /timeZone: 'Africa\/Cairo'/)
   assert.match(reconciliation, /duplicate_review_status !== 'approved'/)
 })
 
