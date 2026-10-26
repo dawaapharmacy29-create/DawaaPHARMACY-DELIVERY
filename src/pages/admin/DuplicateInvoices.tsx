@@ -38,6 +38,21 @@ function safeStatus(order: any) {
 }
 
 const VISIT_GATEWAY_ENABLED = import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true'
+const DECISION_REQUEST_TIMEOUT_MS = 20000
+
+async function boundedDecisionRequest<T>(request: PromiseLike<T>, timeoutMs = DECISION_REQUEST_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      Promise.resolve(request),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('decision_response_timeout')), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 type PendingVisit = {
   visit_id: number
@@ -56,6 +71,9 @@ export default function DuplicateInvoices() {
   const [orders, setOrders] = useState<DeliveryOrder[]>([])
   const [riders, setRiders] = useState<Rider[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const loadedPeriodRef = useRef<string | null>(null)
+  const loadSequenceRef = useRef(0)
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [detailsOrder, setDetailsOrder] = useState<DeliveryOrder | null>(null)
@@ -65,6 +83,7 @@ export default function DuplicateInvoices() {
   const [decisionRejectReason, setDecisionRejectReason] = useState('')
   const [decisionCustomReason, setDecisionCustomReason] = useState('')
   const [savingPairDecision, setSavingPairDecision] = useState(false)
+  const [decisionUncertain, setDecisionUncertain] = useState(false)
   const [decidingOrderId, setDecidingOrderId] = useState<string | null>(null)
   const decidingRef = useRef(false)
   const [pendingVisits, setPendingVisits] = useState<PendingVisit[]>([])
@@ -80,12 +99,19 @@ export default function DuplicateInvoices() {
   useEffect(() => {
     const status = searchParams.get('status') as typeof filter | null
     if (status && ['all', 'pending', 'approved', 'rejected'].includes(status)) setFilter(status)
-    void loadAll()
   }, [searchParams])
 
+  useEffect(() => {
+    void loadAll()
+  }, [selectedFrom, selectedTo])
+
   async function loadAll() {
+    const requestId = ++loadSequenceRef.current
+    const periodKey = `${selectedFrom}:${selectedTo}`
+    const isNewPeriod = loadedPeriodRef.current !== periodKey
     try {
-      setLoading(true)
+      if (isNewPeriod) setLoading(true)
+      else setRefreshing(true)
       const [byDeliveryDate, byWorkDate, ridersData] = await Promise.allSettled([
         supabase.from('delivery_orders').select('*').gte('delivery_date', selectedFrom).lte('delivery_date', selectedTo).order('registered_at', { ascending: false }).limit(50000),
         supabase.from('delivery_orders').select('*').gte('work_date', selectedFrom).lte('work_date', selectedTo).order('registered_at', { ascending: false }).limit(50000),
@@ -113,16 +139,36 @@ export default function DuplicateInvoices() {
         return Boolean((order as any).is_duplicate_invoice || (key && (invoiceCounts.get(key) || 0) > 1))
       })
 
+      if (requestId !== loadSequenceRef.current) return
+
       setOrders(duplicateOrders.sort((a: any, b: any) => String(orderDate(b)).localeCompare(String(orderDate(a)))))
+      loadedPeriodRef.current = periodKey
       if (ridersData.status === 'fulfilled') setRiders(ridersData.value)
       if (VISIT_GATEWAY_ENABLED) await loadVisitQueue()
     } catch (error) {
       console.error(error)
-      setOrders([])
-      toast.error(error instanceof Error ? error.message : 'فشل تحميل بيانات الفواتير المكررة')
+      if (requestId === loadSequenceRef.current) {
+        if (isNewPeriod) setOrders([])
+        toast.error(error instanceof Error ? error.message : 'فشل تحميل بيانات الفواتير المكررة')
+      }
     } finally {
-      setLoading(false)
+      if (requestId === loadSequenceRef.current) {
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
+  }
+
+  // After a manager decision, fetch only the affected rows. Never block the whole
+  // cycle behind two 50,000-row queries or clear the visible list on refresh.
+  async function refreshDecidedOrders(orderIds: string[]) {
+    const { data, error } = await boundedDecisionRequest(supabase.from('delivery_orders')
+      .select('*').in('id', orderIds), 12000)
+    if (error || !data || data.length !== orderIds.length) {
+      throw new Error('تعذر تحديث التسجيلات بعد حفظ القرار. استخدم تحديث القائمة لاحقًا.')
+    }
+    const updates = new Map(data.map(row => [String(row.id), row as DeliveryOrder]))
+    setOrders(current => current.map(order => updates.get(String(order.id)) || order))
   }
 
   async function loadVisitQueue() {
@@ -213,11 +259,35 @@ export default function DuplicateInvoices() {
     setDecisionNote('')
     setDecisionRejectReason('')
     setDecisionCustomReason('')
+    setDecisionUncertain(false)
     setDecisionInvoice(key)
   }
 
+  async function isUnifiedDecisionCommitted(firstId: string, secondId: string, choice: 'first' | 'second' | 'none'): Promise<boolean> {
+    const { data, error } = await boundedDecisionRequest(supabase.from('delivery_orders')
+      .select('id,duplicate_review_status,not_countable,needs_review')
+      .in('id', [firstId, secondId]), 10000)
+    if (error || !data || data.length !== 2) return false
+    const byId = new Map(data.map(row => [String(row.id), row]))
+    return ([firstId, secondId] as const).every((id, index) => {
+      const shouldApprove = (choice === 'first' && index === 0) || (choice === 'second' && index === 1)
+      const order = byId.get(id)
+      return order?.duplicate_review_status === (shouldApprove ? 'approved' : 'rejected') &&
+        order.not_countable === !shouldApprove && order.needs_review === false
+    })
+  }
+
+  async function refreshCommittedPair(firstId: string, secondId: string) {
+    try {
+      await refreshDecidedOrders([firstId, secondId])
+    } catch (error) {
+      console.warn('Pair committed but live row refresh failed', error)
+      toast.warning('القرار محفوظ، لكن تحديث العرض اتأخر. اضغط تحديث القائمة عند الحاجة.')
+    }
+  }
+
   async function saveUnifiedDecision() {
-    if (savingPairDecision || decidingRef.current || !decisionGroup || decisionGroup.entries.length !== 2 || !decisionChoice) return
+    if (savingPairDecision || decidingRef.current || decisionUncertain || !decisionGroup || decisionGroup.entries.length !== 2 || !decisionChoice) return
     if (decisionChoice === 'both') {
       toast.error('اعتماد زيارتين مستقلتين يحتاج مراجعة الزيارات، ولا يمكن احتساب الفاتورة مرتين')
       return
@@ -237,25 +307,58 @@ export default function DuplicateInvoices() {
     try {
       decidingRef.current = true
       setSavingPairDecision(true)
-      const { data, error } = await supabase.rpc('review_duplicate_invoice_pair_v1', {
+      const { data, error } = await boundedDecisionRequest(supabase.rpc('review_duplicate_invoice_pair_v1', {
         p_token: token,
         p_first_order_id: String(first.id),
         p_second_order_id: String(second.id),
         p_choice: decisionChoice,
         p_rejection_reason: rejectionReason,
         p_manager_note: decisionNote.trim() || null,
-      })
+      }))
       if (error) throw error
       if (!(data as any)?.first_status || !(data as any)?.second_status) throw new Error('لم يتم تأكيد حفظ القرارين')
       setDecisionInvoice(null)
       toast.success('تم اعتماد القرار النهائي للتسجيلين بنجاح')
-      await loadAll()
+      void refreshCommittedPair(String(first.id), String(second.id))
     } catch (error) {
       console.error(error)
-      toast.error('تعذر حفظ القرار النهائي. لم يتم اعتماد أي نتيجة من الشاشة؛ راجع حالة التسجيلين قبل إعادة المحاولة')
-      await loadAll()
+      // A timed-out HTTP response does not imply the PostgreSQL transaction failed.
+      // Reconcile both committed order states before ever inviting another write.
+      let committed = false
+      try {
+        committed = await isUnifiedDecisionCommitted(String(first.id), String(second.id), decisionChoice)
+      } catch (reconcileError) {
+        console.warn('Could not reconcile duplicate decision after request error', reconcileError)
+      }
+      if (committed) {
+        setDecisionInvoice(null)
+        toast.success('القرار محفوظ بالفعل في قاعدة البيانات وتم تأكيده للتسجيلين')
+        void refreshCommittedPair(String(first.id), String(second.id))
+      } else {
+        setDecisionUncertain(true)
+        toast.error('لم نتمكن من تأكيد نتيجة الحفظ. لا تعِد الإرسال؛ تحقّق من الحالة أولًا.')
+      }
     } finally {
       decidingRef.current = false
+      setSavingPairDecision(false)
+    }
+  }
+
+  async function recheckUnifiedDecision() {
+    if (!decisionGroup || decisionGroup.entries.length !== 2 || !decisionChoice || decisionChoice === 'both' || savingPairDecision) return
+    setSavingPairDecision(true)
+    try {
+      const committed = await isUnifiedDecisionCommitted(String(decisionGroup.entries[0].id), String(decisionGroup.entries[1].id), decisionChoice)
+      if (committed) {
+        setDecisionInvoice(null)
+        toast.success('تم التأكد: القرار النهائي محفوظ للتسجيلين')
+        void refreshCommittedPair(String(decisionGroup.entries[0].id), String(decisionGroup.entries[1].id))
+      } else {
+        toast.error('لم يتم إثبات حفظ القرارين. راجع حالة الفاتورة مع الإدارة قبل اتخاذ قرار جديد.')
+      }
+    } catch {
+      toast.error('تعذر التحقق من قاعدة البيانات الآن. لا تعِد اعتماد الفاتورة.')
+    } finally {
       setSavingPairDecision(false)
     }
   }
@@ -293,7 +396,8 @@ export default function DuplicateInvoices() {
       setDecidingOrderId(orderId)
       await approveDuplicateInvoice(orderId)
       toast.success('تم اعتماد هذا التسجيل فقط')
-      await loadAll()
+      try { await refreshDecidedOrders([orderId]) }
+      catch { toast.warning('القرار محفوظ، لكن تحديث عرضه تعذر. اضغط تحديث القائمة لاحقًا.') }
     } catch (error) {
       console.error(error)
       toast.error('فشل اعتماد الفاتورة')
@@ -317,7 +421,8 @@ export default function DuplicateInvoices() {
       setDecidingOrderId(orderId)
       await rejectDuplicateInvoice(orderId, reason)
       toast.success('تم رفض هذا التسجيل فقط')
-      await loadAll()
+      try { await refreshDecidedOrders([orderId]) }
+      catch { toast.warning('القرار محفوظ، لكن تحديث عرضه تعذر. اضغط تحديث القائمة لاحقًا.') }
     } catch (error) {
       console.error(error)
       toast.error('فشل رفض الفاتورة')
@@ -344,6 +449,10 @@ export default function DuplicateInvoices() {
           </div>
         </section>
         <CycleSelector from={selectedFrom} to={selectedTo} onApply={applyCycle} />
+        <div className="flex items-center justify-end gap-2">
+          {refreshing && <span className="text-xs font-bold text-slate-500">جارٍ تحديث القائمة بالخلفية...</span>}
+          <button type="button" disabled={refreshing} onClick={() => void loadAll()} className="rounded-xl border border-teal-200 bg-white px-3 py-2 text-xs font-black text-teal-800 disabled:opacity-50">تحديث القائمة</button>
+        </div>
 
         {VISIT_GATEWAY_ENABLED && (
           <section className="space-y-3 rounded-3xl border border-teal-200 bg-white p-5 shadow-sm">
@@ -531,8 +640,10 @@ export default function DuplicateInvoices() {
             </label>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-white p-3 sm:px-5">
+              {decisionUncertain && <p role="alert" className="w-full text-sm font-bold text-amber-900">النتيجة غير مؤكدة بسبب تأخر الاتصال. لا تعِد الحفظ؛ اضغط «تحقق من القرار» لمراجعة الحالة الفعلية.</p>}
               <button type="button" disabled={savingPairDecision} onClick={() => setDecisionInvoice(null)} className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-black disabled:opacity-50">إغلاق</button>
-              <button type="button" disabled={savingPairDecision || !decisionChoice || decisionChoice === 'both' || (decisionRejectReason === 'سبب آخر' ? decisionCustomReason.trim().length < 5 : decisionRejectReason.trim().length < 5)} onClick={() => void saveUnifiedDecision()} className="rounded-xl bg-teal-700 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">{savingPairDecision ? 'جاري حفظ القرار...' : 'اعتماد القرار النهائي'}</button>
+              {decisionUncertain && <button type="button" disabled={savingPairDecision} onClick={() => void recheckUnifiedDecision()} className="rounded-xl bg-amber-600 px-4 py-3 text-sm font-black text-white disabled:opacity-40">تحقق من القرار</button>}
+              <button type="button" disabled={savingPairDecision || decisionUncertain || !decisionChoice || decisionChoice === 'both' || (decisionRejectReason === 'سبب آخر' ? decisionCustomReason.trim().length < 5 : decisionRejectReason.trim().length < 5)} onClick={() => void saveUnifiedDecision()} className="rounded-xl bg-teal-700 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">{savingPairDecision ? 'جاري حفظ القرار...' : 'اعتماد القرار النهائي'}</button>
             </div>
           </section>
         </div>
