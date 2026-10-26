@@ -43,6 +43,23 @@ export function formatDateTime(date: string | null | undefined): string {
   return d.toLocaleString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
+/** Full registration timestamp for operational decisions, independent of device timezone. */
+export function formatCairoDateTime(date: unknown): string {
+  if (!date) return 'غير مسجل'
+  const raw = String(date).trim()
+  // A work-date without a timestamp must not become a fabricated 03:00 AM.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const dateOnly = new Date(`${raw}T12:00:00Z`)
+    return Number.isNaN(dateOnly.getTime()) ? 'غير مسجل' : `${dateOnly.toLocaleDateString('ar-EG', { timeZone: 'Africa/Cairo', year: 'numeric', month: 'numeric', day: 'numeric' })} — وقت التسجيل غير مسجل`
+  }
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return 'غير مسجل'
+  return parsed.toLocaleString('ar-EG', {
+    timeZone: 'Africa/Cairo',
+    year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
+}
+
 export function formatTime(date: string | null | undefined): string {
   if (!date) return 'غير محدد'
   const d = new Date(date)
