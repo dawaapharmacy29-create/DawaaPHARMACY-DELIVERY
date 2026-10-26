@@ -15,6 +15,10 @@ const endMarker = "      if (uploadLogRes.status === 'fulfilled' && !uploadLogRe
 
 const start = source.indexOf(startMarker)
 const endStart = source.indexOf(endMarker, start)
+if ((start < 0 || endStart < 0) && source.includes('fetchAllRows<DeliveryOrder>({')) {
+  console.log('Reconciliation pagination already applied')
+  process.exit(0)
+}
 if (start < 0 || endStart < 0) throw new Error('Reconciliation loading block not found')
 const end = endStart + endMarker.length
 

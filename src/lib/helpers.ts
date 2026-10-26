@@ -43,6 +43,23 @@ export function formatDateTime(date: string | null | undefined): string {
   return d.toLocaleString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
+/** Full registration timestamp for operational decisions, independent of device timezone. */
+export function formatCairoDateTime(date: unknown): string {
+  if (!date) return 'غير مسجل'
+  const raw = String(date).trim()
+  // A work-date without a timestamp must not become a fabricated 03:00 AM.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const dateOnly = new Date(`${raw}T12:00:00Z`)
+    return Number.isNaN(dateOnly.getTime()) ? 'غير مسجل' : `${dateOnly.toLocaleDateString('ar-EG', { timeZone: 'Africa/Cairo', year: 'numeric', month: 'numeric', day: 'numeric' })} — وقت التسجيل غير مسجل`
+  }
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return 'غير مسجل'
+  return parsed.toLocaleString('ar-EG', {
+    timeZone: 'Africa/Cairo',
+    year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
+}
+
 export function formatTime(date: string | null | undefined): string {
   if (!date) return 'غير محدد'
   const d = new Date(date)
@@ -174,11 +191,26 @@ export const TRIP_TYPE_LABELS: Record<string, string> = {
 }
 
 export const DUPLICATE_REASON_LABELS: Record<string, string> = {
-  return:              'مرتجع',
-  preparation_error:   'خطأ في تحضير الأوردر',
-  invoice_correction:  'تعديل على الفاتورة',
-  second_visit:        'روحت للعميل تاني',
-  other:               'سبب آخر',
+  customer_added_items: 'إضافة صنف أو استكمال ناقص',
+  preparation_error:   'صنف أو تركيز غلط',
+  return:              'مرتجع أو استبدال',
+  second_visit:        'إعادة زيارة / العميل أجّل الاستلام',
+  invoice_correction:  'تصحيح أو إعادة تسجيل الفاتورة',
+  other:               'سبب مختلف عن الاختيارات',
+}
+
+export const DUPLICATE_REASON_HINTS: Record<string, string> = {
+  customer_added_items: 'العميل طلب صنفًا إضافيًا، أو كان فيه صنف ناقص وخرجت تكمله لنفس الفاتورة.',
+  preparation_error: 'تم إرسال صنف أو تركيز أو شكل دوائي غير المطلوب، وخرج تصحيح للأوردر.',
+  return: 'رجعت صنفًا من العميل، أو استبدلته بمنتج آخر.',
+  second_visit: 'رجعت لنفس العميل لأن التسليم اتأجل أو احتاج زيارة ثانية لنفس الطلب.',
+  invoice_correction: 'الفاتورة اتعدلت أو اتسجلت من جديد، بدون سبب من البنود السابقة.',
+  other: 'السبب مش موجود في البنود السابقة. يفضّل تكتب توضيحًا قصيرًا عشان الإدارة تفهم الحالة.',
+}
+
+export function duplicateReasonLabel(value: unknown): string {
+  const code = String(value ?? '').trim()
+  return DUPLICATE_REASON_LABELS[code] || (code || 'لم يسجل سبب')
 }
 
 export const ORDER_STATUS_LABELS: Record<string, string> = {

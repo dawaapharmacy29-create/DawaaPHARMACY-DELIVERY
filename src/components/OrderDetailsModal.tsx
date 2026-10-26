@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { CheckCircle2, Pencil, X, XCircle } from 'lucide-react'
-import { formatMoney } from '../lib/helpers'
+import { duplicateReasonLabel, formatMoney } from '../lib/helpers'
 import { supabase } from '../lib/supabase'
 
 type OrderDetailsModalProps = {
@@ -66,6 +66,15 @@ function noteKindLabel(kind: string) {
   return labels[kind] || kind
 }
 
+function businessNoteText(note: UnifiedOrderNote): string {
+  if (note.note_kind !== 'order_note') return note.note_text
+  // Older rider forms mixed business notes with GPS/device diagnostics.
+  // Keep the genuine customer/rider text without surfacing telemetry as a reason.
+  return note.note_text.split(/\r?\n/).map(line => line.trim()).filter(line =>
+    line && !/^(العميل من قاعدة التطبيق|عميل جديد من BConnect|نوع الأوردر:|أوردر عادي|أوردر بعيد|الفرع:|بطارية:|Online:|GPS accuracy:)/i.test(line)
+  ).join('\n')
+}
+
 export default function OrderDetailsModal({
   order,
   riderName,
@@ -78,6 +87,7 @@ export default function OrderDetailsModal({
 }: OrderDetailsModalProps) {
   const [unifiedNotes, setUnifiedNotes] = useState<UnifiedOrderNote[]>([])
   const [notesLoading, setNotesLoading] = useState(false)
+  const [showTechnical, setShowTechnical] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -113,6 +123,13 @@ export default function OrderDetailsModal({
   const countable = order.is_countable === true ? 'نعم' : 'لا'
   const multiplier = Number(order.order_multiplier ?? 1)
   const amount = Number(order.invoice_amount ?? order.invoice_value ?? 0)
+  const duplicate = Boolean(order.is_duplicate_invoice || order.duplicate_reason)
+  const duplicateNote = String(order.duplicate_note ?? '').trim()
+  const businessNotes = unifiedNotes.filter(note =>
+    !['audit_note', 'timeline_note', 'reconciliation_note'].includes(note.note_kind)
+    && Boolean(businessNoteText(note))
+  )
+  const visibleNotes = showTechnical ? unifiedNotes : businessNotes
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4" dir="rtl">
@@ -127,6 +144,15 @@ export default function OrderDetailsModal({
         </div>
 
         <div className="max-h-[calc(92vh-96px)] overflow-auto p-5">
+          {duplicate && (
+            <section className="mb-4 rounded-2xl border-2 border-amber-300 bg-amber-50 p-4">
+              <p className="text-xs font-black text-amber-800">مهم قبل قرار الاعتماد أو الاستبعاد</p>
+              <h4 className="mt-1 text-lg font-black text-slate-950">سبب التكرار: {duplicateReasonLabel(order.duplicate_reason)}</h4>
+              <p className="mt-2 whitespace-pre-wrap text-sm font-bold text-slate-800">{duplicateNote ? `ملاحظة المندوب: ${duplicateNote}` : 'لم يكتب المندوب ملاحظة إضافية'}</p>
+              {order.preparing_doctor_name && <p className="mt-2 text-xs font-bold text-slate-600">المحضّر: {order.preparing_doctor_name}</p>}
+              <p className="mt-2 text-xs font-bold text-amber-900">سبب التكرار يوضح الواقعة، لكنه لا يعني اعتماد أوردر إضافي تلقائيًا.</p>
+            </section>
+          )}
           <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Detail label="المندوب" value={riderName || valueOf(order, 'rider_name')} />
             <Detail label="العميل" value={valueOf(order, 'customer_name_snapshot', 'customer_name')} />
@@ -135,48 +161,46 @@ export default function OrderDetailsModal({
             <Detail label="العنوان" value={valueOf(order, 'customer_address_snapshot', 'customer_address', 'address')} />
             <Detail label="قيمة الفاتورة" value={formatMoney(amount)} />
             <Detail label="حالة الأوردر" value={valueOf(order, 'status')} />
-            <Detail label="حالة بي كونكت" value={valueOf(order, 'bconnect_match_status')} />
-            <Detail label="حالة الاحتساب" value={finalStatus} />
-            <Detail label="محتسب؟" value={countable} />
+            {showTechnical && <Detail label="حالة بي كونكت" value={valueOf(order, 'bconnect_match_status')} />}
+            {showTechnical && <Detail label="حالة الاحتساب الفنية" value={finalStatus} />}
+            <Detail label="يدخل في حساب المندوب؟" value={countable} />
             <Detail label="معامل الأوردر" value={String(multiplier)} />
             <Detail label="دكتور التحضير" value={valueOf(order, 'preparing_doctor_name')} />
             <Detail label="وقت التسجيل" value={dateValue(order.registered_at || order.created_at)} />
             <Detail label="وقت التسليم" value={dateValue(order.delivered_at)} />
-            <Detail label="تاريخ الحذف" value={dateValue(order.deleted_at)} />
             <Detail label="فرع/منطقة" value={valueOf(order, 'branch_name', 'delivery_zone', 'zone')} />
           </div>
 
           <div className="grid gap-3 lg:grid-cols-2">
             <Detail label="سبب 1.5" value={valueOf(order, 'multiplier_reason')} />
-            <Detail label="سبب التكرار" value={valueOf(order, 'duplicate_reason')} />
             <Detail label="سبب الفشل" value={valueOf(order, 'failed_reason')} danger={Boolean(order.failed_reason)} />
-            <Detail label="سبب الاستبعاد" value={valueOf(order, 'count_exclusion_reason')} danger={Boolean(order.count_exclusion_reason)} />
-            <Detail label="سبب الحذف" value={valueOf(order, 'deletion_reason')} danger={Boolean(order.deleted_at)} />
-            <Detail label="سبب التحويل" value={valueOf(order, 'reassignment_reason')} />
+            {order.count_exclusion_reason && <Detail label="سبب الاستبعاد" value={valueOf(order, 'count_exclusion_reason')} danger />}
+            {order.deletion_reason && <Detail label="سبب الحذف" value={valueOf(order, 'deletion_reason')} danger />}
+            {order.reassignment_reason && <Detail label="سبب التحويل" value={valueOf(order, 'reassignment_reason')} />}
           </div>
 
           <div className="mt-3 rounded-2xl border border-teal-100 bg-teal-50 p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
-                <p className="text-sm font-black text-teal-800">سجل الملاحظات الموحد</p>
-                <p className="text-xs font-bold text-teal-700/70">كل ملاحظات الأوردر من مكان واحد بدون تكرار</p>
+                <p className="text-sm font-black text-teal-800">ملاحظات التشغيل المهمة</p>
+                <p className="text-xs font-bold text-teal-700/70">السجل الفني متاح عند الحاجة فقط</p>
               </div>
-              <span className="rounded-full bg-white px-2 py-1 text-xs font-black text-teal-700">{unifiedNotes.length} ملاحظة</span>
+              <button type="button" onClick={() => setShowTechnical(value => !value)} className="rounded-full bg-white px-3 py-1 text-xs font-black text-teal-700">{showTechnical ? 'إخفاء السجل الفني' : 'عرض التفاصيل الفنية'}</button>
             </div>
             {notesLoading ? (
               <p className="text-sm font-bold text-slate-500">جاري تحميل الملاحظات…</p>
-            ) : unifiedNotes.length === 0 ? (
+            ) : visibleNotes.length === 0 ? (
               <p className="text-sm font-bold text-slate-500">لا توجد ملاحظات مسجلة</p>
             ) : (
               <div className="space-y-2">
-                {unifiedNotes.map(note => (
+                {visibleNotes.map(note => (
                   <div key={note.note_key} className="rounded-xl border border-white/80 bg-white p-3 shadow-sm">
                     <div className="mb-1 flex flex-wrap items-center gap-2">
                       <span className="rounded-full bg-teal-100 px-2 py-1 text-[11px] font-black text-teal-800">{noteKindLabel(note.note_kind)}</span>
                       {note.actor_name && <span className="text-[11px] font-bold text-slate-500">{note.actor_name}</span>}
                       {note.note_at && <span className="text-[11px] font-bold text-slate-400">{dateValue(note.note_at)}</span>}
                     </div>
-                    <p className="whitespace-pre-wrap text-sm font-bold text-slate-700">{note.note_text}</p>
+                    <p className="whitespace-pre-wrap text-sm font-bold text-slate-700">{note.note_kind === 'duplicate_reason' ? duplicateReasonLabel(note.note_text) : showTechnical ? note.note_text : businessNoteText(note)}</p>
                   </div>
                 ))}
               </div>

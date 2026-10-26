@@ -11,6 +11,7 @@ import {
   getOperationalPeriod,
   TRIP_TYPE_LABELS,
   DUPLICATE_REASON_LABELS,
+  DUPLICATE_REASON_HINTS,
   ORDER_STATUS_LABELS,
   TRIP_STATUS_LABELS,
   arrayBufferToHex,
@@ -482,6 +483,7 @@ export default function RiderDashboard() {
     useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const orderSaveLockRef = useRef(false);
   const [activeModal, setActiveModal] = useState<ModalName>(null);
   const [orderViewMode, setOrderViewMode] = useState<OrderViewMode>("all");
   const [orderViewTitle, setOrderViewTitle] = useState("أوردرات اليوم");
@@ -1924,7 +1926,7 @@ export default function RiderDashboard() {
   void handleExtractReceiptData;
 
   async function handleSaveOrder(isDup = false) {
-    if (!rider) return;
+    if (!rider || orderSaveLockRef.current) return;
     const manualCustomerText = customerSearch.trim();
     const nameForValidation = (
       customerName ||
@@ -1959,13 +1961,10 @@ export default function RiderDashboard() {
       toast.error("اختار سبب التكرار");
       return;
     }
-    const effectiveDupNote = (dupNote.trim() || orderNotes.trim());
-    if (isDup && effectiveDupNote.length < 5) {
-      toast.error("اكتب ملاحظة واضحة للتكرار لا تقل عن 5 حروف");
-      return;
-    }
+    const effectiveDupNote = dupNote.trim();
 
     try {
+      orderSaveLockRef.current = true;
       setSaving(true);
       setOrderSaveError("");
 
@@ -2143,11 +2142,20 @@ export default function RiderDashboard() {
         },
       );
       const result = getRpcResult<any>(secureData);
-      if (secureError) throw secureError;
-      if (!result?.success)
-        throw new Error(
-          result?.message || result?.error || "رفض السيرفر تسجيل الأوردر",
-        );
+      if (secureError || !result?.success) {
+        const errorCode = String(result?.error || secureError?.code || "");
+        const errorMessage = String(secureError?.message || result?.message || result?.error || "رفض السيرفر تسجيل الأوردر");
+        // A second rider may register the same invoice after the initial lookup.
+        // Preserve the form and open the duplicate details instead of stranding the rider on an error.
+        if (!isDup && (errorCode === "DUPLICATE_DETAILS_REQUIRED" || /مكرر|duplicate/i.test(errorMessage))) {
+          setDupWarning(null);
+          setOrderSaveError("");
+          setActiveModal("duplicate");
+          toast.warning("الفاتورة مكررة — اختار السبب، والملاحظة اختيارية، ثم أكد الأوردر.");
+          return;
+        }
+        throw new Error(errorMessage);
+      }
       data = {
         ...payload,
         id: result.order_id,
@@ -2198,6 +2206,7 @@ export default function RiderDashboard() {
       setOrderSaveError(e?.message || "حدث خطأ شبكة. بياناتك ما زالت محفوظة ويمكن إعادة المحاولة.");
       toast.error("تعذر تسجيل الأوردر: " + (e?.message ?? ""));
     } finally {
+      orderSaveLockRef.current = false;
       setSaving(false);
     }
   }
@@ -3770,7 +3779,7 @@ export default function RiderDashboard() {
         >
           <div className="rounded-2xl bg-amber-50 border border-amber-300 p-4">
             <p className="font-black text-amber-800">
-              الفاتورة دي متسجلة قبل كده لأي دليفري، ولازم سبب استثنائي واضح.
+              الفاتورة دي متسجلة قبل كده. اختار سبب التكرار الحقيقي، والملاحظة الإضافية اختيارية.
             </p>
             <p className="text-xs text-amber-600 mt-1">
               سُجلت في: {formatDateTime(dupWarning?.registered_at)}
@@ -3794,6 +3803,7 @@ export default function RiderDashboard() {
                 </option>
               ))}
             </select>
+            {dupReason && <p className="mt-2 rounded-xl bg-teal-50 p-3 text-sm font-bold leading-6 text-teal-900">{DUPLICATE_REASON_HINTS[dupReason]}</p>}
           </Field>
           <Field label="اسم الدكتور اللي طلع/حضّر الأوردر (اختياري)">
             <input
@@ -3803,22 +3813,20 @@ export default function RiderDashboard() {
               placeholder="مثال: د/ أحمد أو د/ شيماء"
             />
           </Field>
-          <Field label="تفاصيل التكرار * (5 حروف على الأقل)">
+          <Field label="ملاحظة إضافية (اختيارية)">
             <textarea
               value={dupNote}
               onChange={(e) => setDupNote(e.target.value)}
               rows={3}
               className="dawaa-input text-right resize-none"
-              placeholder="اكتب تفاصيل التكرار، ويمكن استخدام ملاحظات الأوردر"
+              placeholder="تفاصيل تساعد الإدارة على اتخاذ القرار، لو احتجت"
             />
-            <p className="text-xs text-slate-400">{(dupNote.trim() || orderNotes.trim()).length}/5</p>
           </Field>
           <button
             onClick={() => handleSaveOrder(true)}
             disabled={
               saving ||
-              !dupReason ||
-              (dupNote.trim() || orderNotes.trim()).length < 5
+              !dupReason
             }
             className="w-full rounded-2xl bg-amber-500 py-4 font-black text-white disabled:opacity-50"
           >

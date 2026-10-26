@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { readRiderDeviceSnapshot } from '../../lib/riderDeviceSnapshot'
-import { DUPLICATE_REASON_LABELS } from '../../lib/helpers'
+import { DUPLICATE_REASON_HINTS, DUPLICATE_REASON_LABELS } from '../../lib/helpers'
 import type { Rider } from '../../lib/types'
 
 type Props = {
@@ -97,7 +97,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
     return [selectedCustomer.address, selectedCustomer.area].filter(Boolean).join(' - ')
   }, [selectedCustomer])
   const manualMode = !selectedCustomer && customerSearchDone && customerQuery.trim().length > 0 && customerResults.length === 0
-  const duplicateDetailsValid = !duplicateRequired || Boolean(duplicateReason && (duplicateNote.trim() || notes.trim()).length >= 5)
+  const duplicateDetailsValid = !duplicateRequired || Boolean(duplicateReason)
   const canSave = Boolean(invoiceNumber.trim() && customerCode && (selectedCustomer || manualCustomerName.trim()) && duplicateDetailsValid)
 
   function startRuntimeContext() {
@@ -207,11 +207,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
       toast.error('اختار سبب التكرار')
       return
     }
-    const effectiveDuplicateNote = (duplicateNote.trim() || notes.trim())
-    if (duplicateRequired && effectiveDuplicateNote.length < 5) {
-      toast.error('اكتب تفاصيل واضحة للتكرار لا تقل عن 5 حروف')
-      return
-    }
+    const effectiveDuplicateNote = duplicateNote.trim()
     if (!navigator.onLine) {
       toast.error('تسجيل الأوردر يحتاج اتصال بالإنترنت للتحقق من العميل والفاتورة ومنع التكرار.')
       return
@@ -289,9 +285,8 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
         const message = String(error?.message || result?.message || result?.error || 'رفض السيرفر تسجيل الأوردر')
         if (!duplicateRequired && (code === 'DUPLICATE_DETAILS_REQUIRED' || /مكرر|duplicate/i.test(message))) {
           setDuplicateRequired(true)
-          if (!duplicateNote.trim() && notes.trim()) setDuplicateNote(notes.trim())
-          setLastError('الفاتورة مكررة: اختار سبب التكرار، وتأكد من تفاصيل الملاحظة ثم اضغط حفظ مرة أخرى.')
-          toast.warning('الفاتورة مكررة — أكمل سبب التكرار والتفاصيل ثم احفظها للمراجعة.')
+          setLastError('الفاتورة مكررة: اختار سبب التكرار، والملاحظة الإضافية اختيارية، ثم اضغط حفظ مرة أخرى.')
+          toast.warning('الفاتورة مكررة — اختار سبب التكرار ثم احفظها للمراجعة.')
           return
         }
         throw new Error(message)
@@ -415,16 +410,17 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
             {duplicateRequired ? (
               <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3">
                 <p className="text-sm font-black text-amber-900">⚠️ الفاتورة مكررة وتحتاج بيانات المراجعة</p>
-                <p className="mt-1 text-xs font-bold text-amber-700">الملاحظة المكتوبة في الأوردر يمكن استخدامها كتفاصيل للتكرار، واسم الدكتور اختياري.</p>
+                <p className="mt-1 text-xs font-bold text-amber-700">اختيار السبب إلزامي. الملاحظة الإضافية واسم الدكتور اختياريان.</p>
                 <div className="mt-3 space-y-3">
                   <Field label="سبب التكرار *">
                     <select value={duplicateReason} onChange={(e) => setDuplicateReason(e.target.value)} className="dawaa-input text-right">
                       <option value="">اختار سبب التكرار</option>
                       {Object.entries(DUPLICATE_REASON_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                     </select>
+                    {duplicateReason && <p className="mt-2 rounded-xl bg-teal-50 p-3 text-sm font-bold leading-6 text-teal-900">{DUPLICATE_REASON_HINTS[duplicateReason]}</p>}
                   </Field>
-                  <Field label="تفاصيل التكرار *">
-                    <textarea value={duplicateNote || notes} onChange={(e) => setDuplicateNote(e.target.value)} rows={3} className="dawaa-input resize-none text-right" placeholder="اكتب تفاصيل واضحة لا تقل عن 5 حروف" />
+                  <Field label="ملاحظة إضافية (اختيارية)">
+                    <textarea value={duplicateNote} onChange={(e) => setDuplicateNote(e.target.value)} rows={3} className="dawaa-input resize-none text-right" placeholder="ممكن توضح تفاصيل إضافية لو محتاج" />
                   </Field>
                   <Field label="اسم الدكتور اللي حضّر الأوردر (اختياري)">
                     <input value={duplicateDoctorName} onChange={(e) => setDuplicateDoctorName(e.target.value)} className="dawaa-input text-right" placeholder="مثال: د/ أحمد" />
