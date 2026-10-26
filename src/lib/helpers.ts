@@ -174,12 +174,21 @@ export const TRIP_TYPE_LABELS: Record<string, string> = {
 }
 
 export const DUPLICATE_REASON_LABELS: Record<string, string> = {
-  customer_added_items: 'العميل زوّد أصناف بعد خروج الأوردر',
-  preparation_error:   'صنف أو تركيز غلط / خطأ تحضير',
+  customer_added_items: 'إضافة صنف أو استكمال ناقص',
+  preparation_error:   'صنف أو تركيز غلط',
   return:              'مرتجع أو استبدال',
-  second_visit:        'زيارة ثانية أو إعادة توصيل بطلب العميل',
-  invoice_correction:  'تصحيح الفاتورة أو إعادة تسجيلها',
-  other:               'سبب آخر',
+  second_visit:        'إعادة زيارة / العميل أجّل الاستلام',
+  invoice_correction:  'تصحيح أو إعادة تسجيل الفاتورة',
+  other:               'سبب مختلف عن الاختيارات',
+}
+
+export const DUPLICATE_REASON_HINTS: Record<string, string> = {
+  customer_added_items: 'العميل طلب صنفًا إضافيًا، أو كان فيه صنف ناقص وخرجت تكمله لنفس الفاتورة.',
+  preparation_error: 'تم إرسال صنف أو تركيز أو شكل دوائي غير المطلوب، وخرج تصحيح للأوردر.',
+  return: 'رجعت صنفًا من العميل، أو استبدلته بمنتج آخر.',
+  second_visit: 'رجعت لنفس العميل لأن التسليم اتأجل أو احتاج زيارة ثانية لنفس الطلب.',
+  invoice_correction: 'الفاتورة اتعدلت أو اتسجلت من جديد، بدون سبب من البنود السابقة.',
+  other: 'السبب مش موجود في البنود السابقة. يفضّل تكتب توضيحًا قصيرًا عشان الإدارة تفهم الحالة.',
 }
 
 export function duplicateReasonLabel(value: unknown): string {
