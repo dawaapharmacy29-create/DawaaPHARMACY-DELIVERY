@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { readRiderDeviceSnapshot } from '../../lib/riderDeviceSnapshot'
-import { DUPLICATE_REASON_LABELS } from '../../lib/helpers'
+import { DUPLICATE_REASON_HINTS, DUPLICATE_REASON_LABELS } from '../../lib/helpers'
 import type { Rider } from '../../lib/types'
 
 type Props = {
@@ -417,6 +417,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
                       <option value="">اختار سبب التكرار</option>
                       {Object.entries(DUPLICATE_REASON_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                     </select>
+                    {duplicateReason && <p className="mt-2 rounded-xl bg-teal-50 p-3 text-sm font-bold leading-6 text-teal-900">{DUPLICATE_REASON_HINTS[duplicateReason]}</p>}
                   </Field>
                   <Field label="ملاحظة إضافية (اختيارية)">
                     <textarea value={duplicateNote} onChange={(e) => setDuplicateNote(e.target.value)} rows={3} className="dawaa-input resize-none text-right" placeholder="ممكن توضح تفاصيل إضافية لو محتاج" />
