@@ -7,12 +7,18 @@ const source = path => readFileSync(new URL(path, import.meta.url), 'utf8')
 test('both rider entry points require reason but never require extra note', () => {
   const dashboard = source('../src/pages/rider/RiderDashboard.tsx')
   const quick = source('../src/components/rider/RiderQuickOrderForm.tsx')
+  const helper = source('../src/lib/helpers.ts')
   assert.match(dashboard, /if \(isDup && !dupReason\)/)
   assert.match(quick, /if \(duplicateRequired && !duplicateReason\)/)
   assert.doesNotMatch(dashboard, /if \(isDup && effectiveDupNote\.length/)
   assert.doesNotMatch(quick, /if \(duplicateRequired && effectiveDuplicateNote\.length/)
   assert.match(dashboard, /ملاحظة إضافية \(اختيارية\)/)
   assert.match(quick, /ملاحظة إضافية \(اختيارية\)/)
+  assert.match(dashboard, /DUPLICATE_REASON_HINTS\[dupReason\]/)
+  assert.match(quick, /DUPLICATE_REASON_HINTS\[duplicateReason\]/)
+  for (const code of ['customer_added_items', 'preparation_error', 'return', 'second_visit', 'invoice_correction', 'other']) {
+    assert.match(helper, new RegExp(`\\b${code}:`))
+  }
 })
 
 test('decision displays direct duplicate note before technical feed', () => {
