@@ -878,10 +878,18 @@ export default function Reconciliation() {
       })))
 
       if (batchId && resultRows.length) {
-        const { error: clearResultsError } = await supabase.from('monthly_invoice_reconciliation_results').delete().eq('period_start', selectedFrom).eq('period_end', selectedTo)
-        if (clearResultsError) throw clearResultsError
+        // Results are immutable snapshots by batch. Never delete an earlier
+        // cycle snapshot before a potentially partial multi-chunk insert.
         const { error: resultInsertError } = await supabase.from('monthly_invoice_reconciliation_results').insert(resultRows)
         if (resultInsertError) throw resultInsertError
+        // Readers select the latest completed batch. An interrupted upload
+        // remains 'started' and must not replace the last completed snapshot.
+        const { data: finishedBatch, error: finishError } = await supabase.from('monthly_invoice_import_batches')
+          .update({ status: 'matched', matched_at: new Date().toISOString() })
+          .eq('id', batchId).eq('status', 'started')
+          .select('id').single()
+        if (finishError) throw finishError
+        if (finishedBatch?.id !== batchId) throw new Error('تعذر تأكيد اكتمال دفعة المطابقة؛ النتائج الجديدة لم تُعتمد للعرض')
         // Do not archive on a partial B-Connect upload. Production's archive RPC
         // invokes the legacy precise reconciliation, which can turn absent
         // invoices into exclusions before file coverage has been verified.
