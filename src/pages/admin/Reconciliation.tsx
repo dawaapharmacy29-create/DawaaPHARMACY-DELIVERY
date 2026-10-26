@@ -10,7 +10,7 @@ import { finalizeReconciliationBatch, writeReconciliationBatchChunks } from '../
 import { fetchAllRows } from '../../lib/fetchAllRows'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
-import { formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
+import { duplicateReasonLabel, formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
 import { findInvoiceEvidenceConflicts, isConfirmedAdminExclusion, preserveHumanDecision, selectVerifiedSystemInvoice } from '../../lib/reconciliationDecision'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
 import CycleSelector from '../../components/CycleSelector'
@@ -1640,11 +1640,14 @@ export default function Reconciliation() {
                         <Info label="دكتور التحضير" value={(order as any).preparing_doctor_name || '—'} />
                       </div>
                       {(duplicateInvoiceSet.has(inv) || order.is_duplicate_invoice) && (
-                        <DuplicateDecisionPanel
-                          order={order}
-                          siblings={duplicateGroups.get(inv) || [order]}
-                          riderMap={riderMap}
-                        />
+                        <div className="mt-3 space-y-2">
+                          <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3">
+                            <p className="text-xs font-black text-amber-700">سبب تسجيل الأوردر مرة أخرى</p>
+                            <p className="mt-1 text-sm font-black text-slate-900">{duplicateReasonLabel((order as any).duplicate_reason)}</p>
+                            <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{(order as any).duplicate_note || 'بدون ملاحظة إضافية'}</p>
+                          </div>
+                          <DuplicateDecisionPanel order={order} siblings={duplicateGroups.get(inv) || [order]} riderMap={riderMap} />
+                        </div>
                       )}
                       {(order as any).reconciliation_notes && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-sm font-bold text-slate-600">{(order as any).reconciliation_notes}</p>}
                       {(order as any).deletion_reason && <p className="mt-2 rounded-lg bg-slate-100 p-2 text-sm font-bold text-slate-700">سبب الحذف: {(order as any).deletion_reason}</p>}
@@ -1856,7 +1859,8 @@ function DuplicateDecisionPanel({
                 <Info label="حالة التنفيذ" value={item.status || '—'} />
                 <Info label="التوقيت" value={stamp ? new Date(stamp).toLocaleString('ar-EG') : '—'} />
                 <Info label="النتيجة المالية" value={finalStatus || '—'} />
-                <Info label="سبب التكرار" value={friendlyReason((item as any).duplicate_reason)} />
+                <Info label="سبب التكرار" value={duplicateReasonLabel((item as any).duplicate_reason)} />
+                {(item as any).duplicate_note && <div className="col-span-2 rounded-lg border border-amber-200 bg-amber-50 p-2"><Info label="توضيح المندوب" value={String((item as any).duplicate_note)} /></div>}
                 <Info label="سبب الفشل" value={friendlyReason((item as any).failed_reason)} />
               </div>
             </div>
