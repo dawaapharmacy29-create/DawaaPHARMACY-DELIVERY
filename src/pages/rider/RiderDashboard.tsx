@@ -11,6 +11,7 @@ import {
   getOperationalPeriod,
   TRIP_TYPE_LABELS,
   DUPLICATE_REASON_LABELS,
+  DUPLICATE_REASON_HINTS,
   ORDER_STATUS_LABELS,
   TRIP_STATUS_LABELS,
   arrayBufferToHex,
@@ -3790,6 +3791,7 @@ export default function RiderDashboard() {
                 </option>
               ))}
             </select>
+            {dupReason && <p className="mt-2 rounded-xl bg-teal-50 p-3 text-sm font-bold leading-6 text-teal-900">{DUPLICATE_REASON_HINTS[dupReason]}</p>}
           </Field>
           <Field label="اسم الدكتور اللي طلع/حضّر الأوردر (اختياري)">
             <input
