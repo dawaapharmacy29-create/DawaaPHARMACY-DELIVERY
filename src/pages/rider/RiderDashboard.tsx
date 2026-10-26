@@ -483,6 +483,7 @@ export default function RiderDashboard() {
     useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const orderSaveLockRef = useRef(false);
   const [activeModal, setActiveModal] = useState<ModalName>(null);
   const [orderViewMode, setOrderViewMode] = useState<OrderViewMode>("all");
   const [orderViewTitle, setOrderViewTitle] = useState("أوردرات اليوم");
@@ -1925,7 +1926,7 @@ export default function RiderDashboard() {
   void handleExtractReceiptData;
 
   async function handleSaveOrder(isDup = false) {
-    if (!rider) return;
+    if (!rider || orderSaveLockRef.current) return;
     const manualCustomerText = customerSearch.trim();
     const nameForValidation = (
       customerName ||
@@ -1963,6 +1964,7 @@ export default function RiderDashboard() {
     const effectiveDupNote = dupNote.trim();
 
     try {
+      orderSaveLockRef.current = true;
       setSaving(true);
       setOrderSaveError("");
 
@@ -2140,11 +2142,20 @@ export default function RiderDashboard() {
         },
       );
       const result = getRpcResult<any>(secureData);
-      if (secureError) throw secureError;
-      if (!result?.success)
-        throw new Error(
-          result?.message || result?.error || "رفض السيرفر تسجيل الأوردر",
-        );
+      if (secureError || !result?.success) {
+        const errorCode = String(result?.error || secureError?.code || "");
+        const errorMessage = String(secureError?.message || result?.message || result?.error || "رفض السيرفر تسجيل الأوردر");
+        // A second rider may register the same invoice after the initial lookup.
+        // Preserve the form and open the duplicate details instead of stranding the rider on an error.
+        if (!isDup && (errorCode === "DUPLICATE_DETAILS_REQUIRED" || /مكرر|duplicate/i.test(errorMessage))) {
+          setDupWarning(null);
+          setOrderSaveError("");
+          setActiveModal("duplicate");
+          toast.warning("الفاتورة مكررة — اختار السبب، والملاحظة اختيارية، ثم أكد الأوردر.");
+          return;
+        }
+        throw new Error(errorMessage);
+      }
       data = {
         ...payload,
         id: result.order_id,
@@ -2195,6 +2206,7 @@ export default function RiderDashboard() {
       setOrderSaveError(e?.message || "حدث خطأ شبكة. بياناتك ما زالت محفوظة ويمكن إعادة المحاولة.");
       toast.error("تعذر تسجيل الأوردر: " + (e?.message ?? ""));
     } finally {
+      orderSaveLockRef.current = false;
       setSaving(false);
     }
   }
