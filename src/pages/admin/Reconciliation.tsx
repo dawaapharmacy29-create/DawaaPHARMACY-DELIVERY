@@ -185,8 +185,8 @@ function parseBConnectRows(rows: Record<string, unknown>[]): BConnectRow[] {
 
   for (const row of rows) {
     const invoiceType = first(row, TYPE_KEYS)
-    // المطابقة الرسمية للدليفري تكون على فواتير التوصيل فقط، وليس الكاش.
-    if (!isDeliveryInvoiceType(invoiceType)) continue
+    // Cash and credit invoices can prove delivery app orders too.
+    // Source payment type must never exclude an invoice from matching.
 
     const invoice = normalizeInvoice(first(row, INVOICE_KEYS))
     const branchName = first(row, BRANCH_KEYS)
@@ -596,7 +596,7 @@ export default function Reconciliation() {
 
           // ملفات B-Connect فيها عمودان بنفس الاسم "النوع":
           // الأول هو نوع الفاتورة (كاش/توصيل منزلى)، والثاني هو حالة الفاتورة (تم حفظها/معلقة).
-          // كان العمود الثاني يكتب فوق الأول، فتفشل قراءة كل فواتير التوصيل.
+          // كان العمود الثاني يكتب فوق الأول، فيضيع نوع الفاتورة الأصلي.
           if (count === 0) {
             out[h] = value
           } else {
@@ -617,7 +617,7 @@ export default function Reconciliation() {
       const uploadedInvoices = parseBConnectRows(rows)
 
       if (!uploadedInvoices.length) {
-        toast.error('لم يتم قراءة أي فاتورة توصيل من الملف. تأكد أن الملف هو ملف فواتير السيستم وفيه أعمدة: المخزن، الرقم، النوع، الكود، العميل.')
+        toast.error('لم يتم قراءة أي فاتورة صالحة من الملف. تأكد أن الملف هو ملف فواتير السيستم وفيه أعمدة: المخزن، الرقم، النوع، الكود، العميل.')
         console.warn('Reconciliation import parsed rows but no delivery invoices found', { sample: rows.slice(0, 5) })
         return
       }
@@ -742,7 +742,9 @@ export default function Reconciliation() {
         .gte('delivery_date', selectedFrom)
          .lte('delivery_date', selectedTo)).data ?? []) as DeliveryOrder[]
 
-      const orderInvoices = new Set(currentOrders.map(normalizeOrderInvoice).filter(Boolean))
+      const orderInvoices = new Set(currentOrders
+        .filter(order => Boolean(normalizeOrderInvoice(order)))
+        .map(order => systemInvoiceKey(normalizeOrderInvoice(order), (order as any).branch_name)))
       const updates: any[] = []
       let counted = 0
       let failedExcluded = 0
@@ -852,7 +854,11 @@ export default function Reconciliation() {
         if (Object.keys(patch).length) updates.push(supabase.from('delivery_orders').update(patch).eq('id', order.id))
       }
 
-      const bconnectOnly = bconnect.filter(row => !orderInvoices.has(row.invoice_number))
+      // Cash/credit invoices can match deliveries, but alone are not proof of
+      // an unregistered delivery. Require an explicit delivery source type.
+      const bconnectOnly = bconnect.filter(row =>
+        isDeliveryInvoiceType(row.invoice_type)
+        && !orderInvoices.has(systemInvoiceKey(row.invoice_number, row.branch_name)))
       resultRows.push(...bconnectOnly.map(row => ({
         batch_id: batchId,
         period_start: selectedFrom,
@@ -1506,7 +1512,7 @@ export default function Reconciliation() {
           <div className="rounded-3xl border border-teal-200 bg-teal-50 p-5">
             <h3 className="mb-3 text-lg font-black text-teal-800">نتيجة آخر مطابقة</h3>
             <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-              <Kpi label="فواتير التوصيل في الملف" value={report.bconnectInvoices} />
+              <Kpi label="فواتير السيستم المتاحة للمطابقة" value={report.bconnectInvoices} />
               <Kpi label="المظبوط المحتسب" value={report.counted} tone="green" />
               <Kpi label="بانتظار استكمال ملفات السيستم" value={report.notFound} tone="amber" />
               <Kpi label="فاشل مستبعد" value={report.failedExcluded} tone="red" />
