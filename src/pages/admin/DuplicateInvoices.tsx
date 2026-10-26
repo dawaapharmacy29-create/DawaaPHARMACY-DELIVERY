@@ -4,7 +4,7 @@ import { CheckCircle2, Eye, Search, XCircle, CopyCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { DeliveryOrder, Rider } from '../../lib/types'
 import { approveDuplicateInvoice, getRiders, rejectDuplicateInvoice } from '../../lib/delivery'
-import { formatTime, getOperationalPeriod } from '../../lib/helpers'
+import { duplicateReasonLabel, formatTime, getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
 import CycleSelector from '../../components/CycleSelector'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
@@ -22,14 +22,6 @@ function safeStatus(order: any) {
   return String(order.duplicate_review_status || (order.is_duplicate_invoice ? 'pending' : 'pending'))
 }
 
-type UnifiedNoteSummary = {
-  order_id: string
-  note_count: number
-  business_note_count: number
-  unified_business_notes?: string | null
-  unified_all_notes?: string | null
-}
-
 export default function DuplicateInvoices() {
   const [searchParams, setSearchParams] = useSearchParams()
   const period = useMemo(() => getOperationalPeriod(), [])
@@ -39,7 +31,6 @@ export default function DuplicateInvoices() {
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [detailsOrder, setDetailsOrder] = useState<DeliveryOrder | null>(null)
-  const [noteSummaryMap, setNoteSummaryMap] = useState<Record<string, UnifiedNoteSummary>>({})
 
   const selectedFrom = searchParams.get('from') || period.start
   const selectedTo = searchParams.get('to') || period.end
@@ -77,23 +68,6 @@ export default function DuplicateInvoices() {
       })
 
       setOrders(duplicateOrders.sort((a: any, b: any) => String(orderDate(b)).localeCompare(String(orderDate(a)))))
-      const duplicateIds = duplicateOrders.map(order => String((order as any).id || '')).filter(Boolean)
-      if (duplicateIds.length > 0) {
-        const { data: noteRows, error: noteError } = await supabase
-          .from('delivery_order_note_summary_v1')
-          .select('order_id,note_count,business_note_count,unified_business_notes,unified_all_notes')
-          .in('order_id', duplicateIds)
-        if (!noteError) {
-          const nextMap: Record<string, UnifiedNoteSummary> = {}
-          ;(noteRows || []).forEach((row: any) => { nextMap[String(row.order_id)] = row as UnifiedNoteSummary })
-          setNoteSummaryMap(nextMap)
-        } else {
-          console.error('Failed to load unified duplicate notes', noteError)
-          setNoteSummaryMap({})
-        }
-      } else {
-        setNoteSummaryMap({})
-      }
       if (ridersData.status === 'fulfilled') setRiders(ridersData.value)
     } catch (error) {
       console.error(error)
@@ -137,10 +111,8 @@ export default function DuplicateInvoices() {
   async function handleApprove(orderId: string) {
     const order = orders.find(o => o.id === orderId)
     const duplicateReason = String((order as any)?.duplicate_reason || '').trim()
-    const duplicateNote = String(noteSummaryMap[orderId]?.unified_business_notes || (order as any)?.duplicate_note || (order as any)?.notes || '').trim()
-    const doctorName = String((order as any)?.preparing_doctor_name || (order as any)?.receipt_extracted_doctor_name || '').trim()
-    if (!duplicateReason || duplicateNote.length < 8 || !doctorName) {
-      toast.error('لا يمكن اعتماد الفاتورة المكررة قبل وجود سبب التكرار، ملاحظة واضحة، واسم الدكتور/المحضر')
+    if (!duplicateReason) {
+      toast.error('لا يمكن اعتماد الفاتورة المكررة بدون سبب تكرار محدد')
       return
     }
     try {
@@ -188,7 +160,7 @@ export default function DuplicateInvoices() {
         <CycleSelector from={selectedFrom} to={selectedTo} onApply={applyCycle} />
 
         <div className="rounded-3xl border border-amber-100 bg-amber-50 p-4 text-sm font-bold text-amber-800">
-          الفترة الحالية: <b>{selectedFrom}</b> إلى <b>{selectedTo}</b> — اضغط على زر العين لعرض كل تفاصيل الأوردر، والاعتماد يكون فقط بعد التأكد من السبب والدكتور الذي أخرج الأوردر.
+          الفترة الحالية: <b>{selectedFrom}</b> إلى <b>{selectedTo}</b> — راجع سبب التكرار وملاحظة المندوب إن وجدت، ثم قارن التسجيلات قبل قرار الاعتماد.
         </div>
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -217,9 +189,8 @@ export default function DuplicateInvoices() {
               const repeatCount = groupedCounts.get(invoice) || 1
               const doctorName = (order as any).preparing_doctor_name || (order as any).receipt_extracted_doctor_name || 'غير مسجل'
               const duplicateReason = (order as any).duplicate_reason || ''
-              const unifiedSummary = noteSummaryMap[String(order.id)]
-              const duplicateNote = unifiedSummary?.unified_business_notes || (order as any).duplicate_note || (order as any).notes || ''
-              const missingAuditInfo = status === 'pending' && (!duplicateReason || duplicateNote.length < 8 || doctorName === 'غير مسجل')
+              const duplicateNote = String((order as any).duplicate_note || '').trim()
+              const missingAuditInfo = status === 'pending' && !duplicateReason
               return (
                 <div key={order.id} className="rounded-2xl bg-white p-4 shadow-sm">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -231,25 +202,27 @@ export default function DuplicateInvoices() {
                           {status === 'approved' ? 'معتمدة' : status === 'rejected' ? 'مرفوضة' : 'قيد المراجعة'}
                         </span>
                         {!((order as any).is_duplicate_invoice) && <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-black text-blue-700">مكتشفة تلقائيًا</span>}
-                        {missingAuditInfo && <span className="rounded-full bg-rose-50 px-2 py-1 text-xs font-black text-rose-700">ناقص سبب/دكتور</span>}
+                        {missingAuditInfo && <span className="rounded-full bg-rose-50 px-2 py-1 text-xs font-black text-rose-700">سبب التكرار غير مسجل</span>}
+                      </div>
+                      <div className="mb-3 rounded-xl border-2 border-amber-200 bg-amber-50 p-3">
+                        <p className="text-xs font-black text-amber-700">سبب إعادة تسجيل الأوردر</p>
+                        <p className="mt-1 text-base font-black text-slate-900">{duplicateReasonLabel(duplicateReason)}</p>
+                        <p className="mt-2 whitespace-pre-wrap text-sm font-bold text-slate-700">{duplicateNote ? `ملاحظة المندوب: ${duplicateNote}` : 'بدون ملاحظة إضافية'}</p>
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
                         <div><p className="text-slate-500">الدليفري</p><p className="font-bold">{rider?.name || 'غير محدد'}</p></div>
                         <div><p className="text-slate-500">العميل</p><p className="font-bold">{order.customer_name_snapshot || 'غير محدد'}</p></div>
                         <div><p className="text-slate-500">تاريخ التسجيل</p><p className="font-bold">{formatTime((order as any).registered_at || orderDate(order))}</p></div>
                         <div><p className="text-slate-500">قيمة الفاتورة</p><p className="font-bold">{(order as any).invoice_amount || '—'}</p></div>
-                        <div><p className="text-slate-500">سبب التكرار</p><p className="font-bold">{duplicateReason || '—'}</p></div>
                         <div><p className="text-slate-500">الدكتور/المحضّر</p><p className="font-bold">{doctorName}</p></div>
                         <div><p className="text-slate-500">كود العميل</p><p className="font-bold">{(order as any).customer_code_snapshot || '—'}</p></div>
-                        <div><p className="text-slate-500">الملاحظات الموحدة</p><p className="font-bold">{duplicateNote || '—'}</p></div>
                       </div>
-                      {duplicateNote && <div className="mt-2 rounded-lg bg-slate-50 p-2 text-sm"><div className="mb-1 flex items-center justify-between gap-2"><p className="text-slate-500">سجل الملاحظات الموحد</p><span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-black text-slate-600">{unifiedSummary?.business_note_count || 0} ملاحظة</span></div><p className="whitespace-pre-wrap font-bold">{duplicateNote}</p></div>}
                     </div>
                     <div className="flex gap-2 sm:flex-col">
                       <button onClick={() => setDetailsOrder(order)} className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 font-black text-white hover:bg-slate-800"><Eye size={18} />تفاصيل</button>
                       {status === 'pending' && (
                         <>
-                          <button onClick={() => handleApprove(order.id)} disabled={missingAuditInfo} title={missingAuditInfo ? 'لا تعتمد قبل تسجيل سبب التكرار واسم الدكتور' : 'اعتماد'} className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 font-black text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300"><CheckCircle2 size={18} />اعتماد</button>
+                          <button onClick={() => handleApprove(order.id)} disabled={missingAuditInfo} title={missingAuditInfo ? 'لا تعتمد قبل تسجيل سبب التكرار' : 'اعتماد'} className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 font-black text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300"><CheckCircle2 size={18} />اعتماد</button>
                           <button onClick={() => handleReject(order.id)} className="flex items-center gap-2 rounded-xl bg-rose-100 px-4 py-2 font-black text-rose-700 hover:bg-rose-200"><XCircle size={18} />رفض</button>
                         </>
                       )}
