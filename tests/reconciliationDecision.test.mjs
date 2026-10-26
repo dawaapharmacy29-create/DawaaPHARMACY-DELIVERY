@@ -134,9 +134,9 @@ test('cash and credit invoices are valid source evidence without creating false 
   const parser = page.split('function parseBConnectRows(')[1]?.split('function normalizeOrderInvoice(')[0]
   assert.ok(parser)
   assert.doesNotMatch(parser, /isDeliveryInvoiceType/)
-  assert.match(parser, /invoice_type:\\s*invoiceType/)
-  assert.match(page, /const bconnectOnly = bconnect\\.filter\\(row =>\\s*isDeliveryInvoiceType\\(row\\.invoice_type\\)/)
-  assert.match(page, /orderInvoices\\.has\\(systemInvoiceKey\\(row\\.invoice_number, row\\.branch_name\\)\\)/)
+  assert.match(parser, /invoice_type:\s*invoiceType/)
+  assert.match(page, /const bconnectOnly = bconnect\.filter\(row =>\s*isDeliveryInvoiceType\(row\.invoice_type\)/)
+  assert.match(page, /orderInvoices\.has\(systemInvoiceKey\(row\.invoice_number, row\.branch_name\)\)/)
 })
 
 test('reconciliation results are append-only and visible only after batch completion', () => {
