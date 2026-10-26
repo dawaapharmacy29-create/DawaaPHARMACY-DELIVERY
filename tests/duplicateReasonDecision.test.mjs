@@ -22,10 +22,13 @@ test('decision displays direct duplicate note before technical feed', () => {
   assert.match(details, /duplicateReasonLabel\(order\.duplicate_reason\)/)
   assert.match(details, /ملاحظة المندوب: \$\{duplicateNote\}/)
   assert.match(details, /showTechnical \? unifiedNotes : businessNotes/)
+  assert.match(details, /GPS accuracy:/)
+  assert.match(details, /businessNoteText\(note\)/)
   assert.match(manager, /duplicateReasonLabel\(duplicateReason\)/)
   assert.match(manager, /if \(!duplicateReason\)/)
   assert.doesNotMatch(manager, /duplicateNote\.length < 8/)
   assert.match(reconciliation, /duplicateReasonLabel\(\(order as any\)\.duplicate_reason\)/)
+  assert.match(reconciliation, /duplicate_review_status !== 'approved'/)
 })
 
 test('database cutover only relaxes optional context, preserving required reason', () => {
