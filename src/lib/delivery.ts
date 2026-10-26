@@ -803,6 +803,9 @@ export async function rejectDuplicateInvoice(orderId: string, reason: string) {
     .update({
       duplicate_review_status: 'rejected',
       duplicate_rejection_reason: reason,
+      // The first registration may be treated as a normal countable order.
+      // Rejecting it must explicitly remove it from rider accounting too.
+      not_countable: true,
       needs_review: false
     })
     .eq('id', orderId)
