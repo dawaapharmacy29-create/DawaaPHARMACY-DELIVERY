@@ -32,12 +32,25 @@ export default function CustomerNameMismatchPanel() {
   async function load() {
     setLoading(true)
     try {
-      const { data, error } = await supabase
+      const { data: latestBatch, error: batchError } = await supabase
+        .from('monthly_invoice_import_batches')
+        .select('id')
+        .eq('period_start', from)
+        .eq('period_end', to)
+        .eq('status', 'matched')
+        .order('matched_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (batchError) throw batchError
+
+      let query = supabase
         .from('monthly_invoice_reconciliation_results')
         .select('id,invoice_number,rider_name,app_customer_code,system_customer_code,app_customer_name,system_customer_name,app_branch_name,system_branch_name,app_amount,system_amount,app_order_id')
         .eq('period_start', from)
         .eq('period_end', to)
         .eq('match_status', 'matched_customer_name_mismatch')
+      if (latestBatch?.id) query = query.eq('batch_id', latestBatch.id)
+      const { data, error } = await query
         .order('invoice_number', { ascending: true })
         .limit(500)
       if (error) throw error
