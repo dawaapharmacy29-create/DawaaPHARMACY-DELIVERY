@@ -1046,6 +1046,12 @@ export default function Reconciliation() {
   async function handleManualMatch(orderId: string) {
     try {
       const order = orders.find(o => o.id === orderId)
+      const duplicate = Boolean(order && (order.is_duplicate_invoice || duplicateInvoiceSet.has(normalizeOrderInvoice(order))))
+      if (duplicate && (!order?.duplicate_reason || (order as any).duplicate_review_status !== 'approved')) {
+        toast.error('لازم تراجع سبب التكرار وتعتمد التكرار أولًا من صفحة الأوردرات المكررة')
+        navigate(`/admin/duplicate-invoices?from=${encodeURIComponent(selectedFrom)}&to=${encodeURIComponent(selectedTo)}&status=pending`)
+        return
+      }
       const isMultiplier = ((order?.order_multiplier ?? 1) >= 1.5)
       const patch = {
         bconnect_match_status: 'manually_approved',
