@@ -71,6 +71,9 @@ export default function DuplicateInvoices() {
   const [orders, setOrders] = useState<DeliveryOrder[]>([])
   const [riders, setRiders] = useState<Rider[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const loadedPeriodRef = useRef<string | null>(null)
+  const loadSequenceRef = useRef(0)
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [detailsOrder, setDetailsOrder] = useState<DeliveryOrder | null>(null)
@@ -96,12 +99,19 @@ export default function DuplicateInvoices() {
   useEffect(() => {
     const status = searchParams.get('status') as typeof filter | null
     if (status && ['all', 'pending', 'approved', 'rejected'].includes(status)) setFilter(status)
-    void loadAll()
   }, [searchParams])
 
+  useEffect(() => {
+    void loadAll()
+  }, [selectedFrom, selectedTo])
+
   async function loadAll() {
+    const requestId = ++loadSequenceRef.current
+    const periodKey = `${selectedFrom}:${selectedTo}`
+    const isNewPeriod = loadedPeriodRef.current !== periodKey
     try {
-      setLoading(true)
+      if (isNewPeriod) setLoading(true)
+      else setRefreshing(true)
       const [byDeliveryDate, byWorkDate, ridersData] = await Promise.allSettled([
         supabase.from('delivery_orders').select('*').gte('delivery_date', selectedFrom).lte('delivery_date', selectedTo).order('registered_at', { ascending: false }).limit(50000),
         supabase.from('delivery_orders').select('*').gte('work_date', selectedFrom).lte('work_date', selectedTo).order('registered_at', { ascending: false }).limit(50000),
@@ -129,16 +139,36 @@ export default function DuplicateInvoices() {
         return Boolean((order as any).is_duplicate_invoice || (key && (invoiceCounts.get(key) || 0) > 1))
       })
 
+      if (requestId !== loadSequenceRef.current) return
+
       setOrders(duplicateOrders.sort((a: any, b: any) => String(orderDate(b)).localeCompare(String(orderDate(a)))))
+      loadedPeriodRef.current = periodKey
       if (ridersData.status === 'fulfilled') setRiders(ridersData.value)
       if (VISIT_GATEWAY_ENABLED) await loadVisitQueue()
     } catch (error) {
       console.error(error)
-      setOrders([])
-      toast.error(error instanceof Error ? error.message : 'فشل تحميل بيانات الفواتير المكررة')
+      if (requestId === loadSequenceRef.current) {
+        if (isNewPeriod) setOrders([])
+        toast.error(error instanceof Error ? error.message : 'فشل تحميل بيانات الفواتير المكررة')
+      }
     } finally {
-      setLoading(false)
+      if (requestId === loadSequenceRef.current) {
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
+  }
+
+  // After a manager decision, fetch only the affected rows. Never block the whole
+  // cycle behind two 50,000-row queries or clear the visible list on refresh.
+  async function refreshDecidedOrders(orderIds: string[]) {
+    const { data, error } = await boundedDecisionRequest(supabase.from('delivery_orders')
+      .select('*').in('id', orderIds), 12000)
+    if (error || !data || data.length !== orderIds.length) {
+      throw new Error('تعذر تحديث التسجيلات بعد حفظ القرار. استخدم تحديث القائمة لاحقًا.')
+    }
+    const updates = new Map(data.map(row => [String(row.id), row as DeliveryOrder]))
+    setOrders(current => current.map(order => updates.get(String(order.id)) || order))
   }
 
   async function loadVisitQueue() {
@@ -247,6 +277,15 @@ export default function DuplicateInvoices() {
     })
   }
 
+  async function refreshCommittedPair(firstId: string, secondId: string) {
+    try {
+      await refreshDecidedOrders([firstId, secondId])
+    } catch (error) {
+      console.warn('Pair committed but live row refresh failed', error)
+      toast.warning('القرار محفوظ، لكن تحديث العرض اتأخر. اضغط تحديث القائمة عند الحاجة.')
+    }
+  }
+
   async function saveUnifiedDecision() {
     if (savingPairDecision || decidingRef.current || decisionUncertain || !decisionGroup || decisionGroup.entries.length !== 2 || !decisionChoice) return
     if (decisionChoice === 'both') {
@@ -280,7 +319,7 @@ export default function DuplicateInvoices() {
       if (!(data as any)?.first_status || !(data as any)?.second_status) throw new Error('لم يتم تأكيد حفظ القرارين')
       setDecisionInvoice(null)
       toast.success('تم اعتماد القرار النهائي للتسجيلين بنجاح')
-      void loadAll()
+      void refreshCommittedPair(String(first.id), String(second.id))
     } catch (error) {
       console.error(error)
       // A timed-out HTTP response does not imply the PostgreSQL transaction failed.
@@ -294,7 +333,7 @@ export default function DuplicateInvoices() {
       if (committed) {
         setDecisionInvoice(null)
         toast.success('القرار محفوظ بالفعل في قاعدة البيانات وتم تأكيده للتسجيلين')
-        void loadAll()
+        void refreshCommittedPair(String(first.id), String(second.id))
       } else {
         setDecisionUncertain(true)
         toast.error('لم نتمكن من تأكيد نتيجة الحفظ. لا تعِد الإرسال؛ تحقّق من الحالة أولًا.')
@@ -313,7 +352,7 @@ export default function DuplicateInvoices() {
       if (committed) {
         setDecisionInvoice(null)
         toast.success('تم التأكد: القرار النهائي محفوظ للتسجيلين')
-        void loadAll()
+        void refreshCommittedPair(String(decisionGroup.entries[0].id), String(decisionGroup.entries[1].id))
       } else {
         toast.error('لم يتم إثبات حفظ القرارين. راجع حالة الفاتورة مع الإدارة قبل اتخاذ قرار جديد.')
       }
@@ -357,7 +396,8 @@ export default function DuplicateInvoices() {
       setDecidingOrderId(orderId)
       await approveDuplicateInvoice(orderId)
       toast.success('تم اعتماد هذا التسجيل فقط')
-      await loadAll()
+      try { await refreshDecidedOrders([orderId]) }
+      catch { toast.warning('القرار محفوظ، لكن تحديث عرضه تعذر. اضغط تحديث القائمة لاحقًا.') }
     } catch (error) {
       console.error(error)
       toast.error('فشل اعتماد الفاتورة')
@@ -381,7 +421,8 @@ export default function DuplicateInvoices() {
       setDecidingOrderId(orderId)
       await rejectDuplicateInvoice(orderId, reason)
       toast.success('تم رفض هذا التسجيل فقط')
-      await loadAll()
+      try { await refreshDecidedOrders([orderId]) }
+      catch { toast.warning('القرار محفوظ، لكن تحديث عرضه تعذر. اضغط تحديث القائمة لاحقًا.') }
     } catch (error) {
       console.error(error)
       toast.error('فشل رفض الفاتورة')
@@ -408,6 +449,10 @@ export default function DuplicateInvoices() {
           </div>
         </section>
         <CycleSelector from={selectedFrom} to={selectedTo} onApply={applyCycle} />
+        <div className="flex items-center justify-end gap-2">
+          {refreshing && <span className="text-xs font-bold text-slate-500">جارٍ تحديث القائمة بالخلفية...</span>}
+          <button type="button" disabled={refreshing} onClick={() => void loadAll()} className="rounded-xl border border-teal-200 bg-white px-3 py-2 text-xs font-black text-teal-800 disabled:opacity-50">تحديث القائمة</button>
+        </div>
 
         {VISIT_GATEWAY_ENABLED && (
           <section className="space-y-3 rounded-3xl border border-teal-200 bg-white p-5 shadow-sm">
