@@ -34,6 +34,9 @@ export default function DuplicateInvoices() {
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [detailsOrder, setDetailsOrder] = useState<DeliveryOrder | null>(null)
+  const [decisionInvoice, setDecisionInvoice] = useState<string | null>(null)
+  const [decisionChoice, setDecisionChoice] = useState<'first' | 'second' | 'both' | 'none' | null>(null)
+  const [decisionNote, setDecisionNote] = useState('')
   const [decidingOrderId, setDecidingOrderId] = useState<string | null>(null)
   const decidingRef = useRef(false)
 
@@ -115,6 +118,22 @@ export default function DuplicateInvoices() {
   }, [orders])
   // Every registration in a duplicated invoice must be decidable, including the earliest.
   const reviewableOrders = invoiceGroups.flatMap(group => group.entries)
+  const decisionGroup = invoiceGroups.find(group => group.invoice === decisionInvoice)
+
+  useEffect(() => {
+    if (!decisionInvoice) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDecisionInvoice(null)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [decisionInvoice])
+
+  function openUnifiedDecision(invoice: string) {
+    setDecisionChoice(null)
+    setDecisionNote('')
+    setDecisionInvoice(invoice)
+  }
 
   function matchesOrderFilters(order: DeliveryOrder) {
     const status = safeStatus(order)
@@ -232,6 +251,7 @@ export default function DuplicateInvoices() {
                     <h2 className="text-lg font-black text-slate-950">فاتورة {invoice}</h2>
                     <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">{entries.length} تسجيلات</span>
                     <span className="text-xs font-bold text-slate-500">ترتيب التسجيلات حسب وقت تسجيلها، وليس تأكيدًا لترتيب التوصيل الفعلي — يمكنك قبول أو رفض أي تسجيل بشكل مستقل</span>
+                    {entries.length === 2 && <button type="button" onClick={() => openUnifiedDecision(invoice)} className="rounded-xl bg-[#008E92] px-3 py-2 text-xs font-black text-white">قرار سريع للفاتورة (تجربة)</button>}
                   </div>
                   <div className="grid gap-3 lg:grid-cols-2">
                     {entries.map((order, index) => {
@@ -279,6 +299,57 @@ export default function DuplicateInvoices() {
           </div>
         )}
       </main>
+
+      {decisionGroup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3" onMouseDown={event => { if (event.target === event.currentTarget) setDecisionInvoice(null) }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="unified-decision-title" className="w-full max-w-xl space-y-4 rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 id="unified-decision-title" className="text-xl font-black text-slate-950">قرار سريع — فاتورة {decisionGroup.invoice}</h2>
+                <p className="mt-1 text-xs font-bold text-slate-500">اختار المستحق، وشوف النتيجة قبل أي حفظ</p>
+              </div>
+              <button type="button" onClick={() => setDecisionInvoice(null)} aria-label="إغلاق" className="rounded-xl bg-slate-100 p-2 text-slate-700"><XCircle size={20}/></button>
+            </div>
+            <div className="space-y-2 rounded-xl bg-slate-50 p-3 text-sm">
+              {decisionGroup.entries.map((entry, index) => (
+                <div key={entry.id} className="flex flex-wrap justify-between gap-2 border-b border-slate-200 py-1 last:border-0">
+                  <span className="font-black">{index + 1}. {riderMap.get(entry.rider_id)?.name || (entry as any).rider_name || 'مندوب غير محدد'}</span>
+                  <span className="text-slate-600">{formatCairoDateTime((entry as any).registered_at || (entry as any).created_at || orderDate(entry))}</span>
+                  {index === 1 && <span className="w-full text-xs text-slate-700">السبب: {duplicateReasonLabel(String((entry as any).duplicate_reason || ''))} — {(entry as any).duplicate_note || 'لا توجد ملاحظة'}</span>}
+                </div>
+              ))}
+            </div>
+            <fieldset className="space-y-2">
+              <legend className="mb-2 font-black">مين يستحق احتساب الأوردر؟</legend>
+              {([
+                ['first', 'المندوب الأول فقط'],
+                ['second', 'المندوب الثاني فقط'],
+                ['both', 'الاثنان — زيارتان مستقلتان'],
+                ['none', 'لا أحد — رفض التسجيلين'],
+              ] as const).map(([value, label]) => (
+                <label key={value} className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-sm font-black ${decisionChoice === value ? 'border-teal-500 bg-teal-50' : 'border-slate-200'}`}>
+                  <input type="radio" checked={decisionChoice === value} onChange={() => setDecisionChoice(value)} />{label}
+                </label>
+              ))}
+            </fieldset>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-900">
+              {!decisionChoice && <p>اختار قرارًا أولًا لعرض تأثيره على كل مندوب.</p>}
+              {decisionChoice && decisionGroup.entries.map((entry, index) => {
+                const approved = decisionChoice === 'both' || (decisionChoice === 'first' && index === 0) || (decisionChoice === 'second' && index === 1)
+                return <p key={entry.id} className="py-1">{riderMap.get(entry.rider_id)?.name || (entry as any).rider_name || 'المندوب'}: {approved ? 'اعتماد مقترح' : 'رفض مقترح'}</p>
+              })}
+              <p className="mt-2 text-xs">هذا عرض للقرار فقط؛ لا يغيّر عدد الأوردرات أو مستحقات المندوبين.</p>
+            </div>
+            <label className="block text-sm font-bold">ملاحظة إدارية (اختيارية)
+              <textarea value={decisionNote} onChange={event => setDecisionNote(event.target.value)} rows={2} placeholder="توضيح عند الحاجة" className="mt-2 w-full resize-y rounded-xl border border-slate-200 p-3" />
+            </label>
+            <div className="flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={() => setDecisionInvoice(null)} className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-black">إغلاق</button>
+              <span className="rounded-xl bg-teal-100 px-4 py-3 text-sm font-black text-teal-900">تجربة عرض فقط — الحفظ غير مفعل</span>
+            </div>
+          </section>
+        </div>
+      )}
 
       {detailsOrder && (
         <OrderDetailsModal
