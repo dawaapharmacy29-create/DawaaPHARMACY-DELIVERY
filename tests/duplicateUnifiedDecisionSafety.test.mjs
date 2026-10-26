@@ -40,3 +40,15 @@ test('uncertain network response reconciles both records without retrying a writ
   assert.match(manager, /تحقق من القرار/)
   assert.doesNotMatch(manager, /await loadAll\(\)\s*}\s*finally\s*{\s*decidingRef/)
 })
+
+test('manager decisions refresh affected rows without reloading the full cycle', () => {
+  assert.match(manager, /async function refreshDecidedOrders\(orderIds: string\[\]\)/)
+  assert.match(manager, /\.select\('\*'\)\.in\('id', orderIds\)/)
+  assert.match(manager, /setOrders\(current => current\.map\(order => updates\.get\(String\(order\.id\)\) \|\| order\)\)/)
+  assert.match(manager, /void refreshCommittedPair\(String\(first\.id\), String\(second\.id\)\)/)
+  assert.match(manager, /await refreshDecidedOrders\(\[orderId\]\)/)
+  assert.match(manager, /else setRefreshing\(true\)/)
+  assert.match(manager, /if \(requestId !== loadSequenceRef\.current\) return/)
+  assert.match(manager, /تحديث القائمة/)
+  assert.doesNotMatch(manager, /await loadAll\(\)/)
+})
