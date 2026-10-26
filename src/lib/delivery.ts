@@ -136,6 +136,13 @@ export async function createDeliveryOrder(params: {
   orderMultiplier?: number
   multiplierReason?: string | null
 }) {
+  // Historical direct REST insertion cannot protect the commercial identity
+  // against concurrent riders or cross-day duplicates. This exported legacy
+  // helper has no active in-repository callers. Keep it fail-closed until all
+  // order creation is routed through the guarded server-side gateway.
+  void params
+  throw new Error('تسجيل الفواتير من المسار القديم متوقف لحماية الفاتورة من التكرار. استخدم شاشة تسجيل الأوردر الآمنة.')
+  /* Legacy implementation retained for review; do not re-enable direct writes.
   const manual = !params.customer
   const fallback = params.manualCustomerText.trim() || 'عميل غير محدد'
   
@@ -191,6 +198,7 @@ export async function createDeliveryOrder(params: {
   const { data, error } = await supabase.from('delivery_orders').insert(payload).select('*').single()
   if (error) throw error
   return data as DeliveryOrder
+  */
 }
 
 export async function createInternalTrip(params: {
@@ -803,6 +811,9 @@ export async function rejectDuplicateInvoice(orderId: string, reason: string) {
     .update({
       duplicate_review_status: 'rejected',
       duplicate_rejection_reason: reason,
+      // The first registration may be treated as a normal countable order.
+      // Rejecting it must explicitly remove it from rider accounting too.
+      not_countable: true,
       needs_review: false
     })
     .eq('id', orderId)

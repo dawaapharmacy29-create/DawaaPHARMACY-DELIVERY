@@ -3,6 +3,15 @@ import { readFile, writeFile } from 'node:fs/promises'
 const file = new URL('../src/pages/admin/Reconciliation.tsx', import.meta.url)
 let source = await readFile(file, 'utf8')
 
+// The incremental import has already been materialized into the tracked page.
+// Re-running this historical patch against the newer verified matching logic
+// would fail its old anchors and must never overwrite the current algorithm.
+if (source.includes('selectVerifiedSystemInvoice(') &&
+    source.includes('const { data: accumulatedRows, error: accumulatedError }')) {
+  console.info('Incremental reconciliation already applied; preserving verified matching logic')
+  process.exit(0)
+}
+
 function replaceText(before, after, label, required = true) {
   if (source.includes(after)) return
   if (!source.includes(before)) {
@@ -152,7 +161,11 @@ replaceRegex(
             reconciliation_notes: nameMismatch ? \`الفاتورة تحتسب لأن الرقم مطابق، مع اختلاف اسم العميل: التطبيق (${'${(order as any).customer_name || order.customer_name_snapshot || \'—\'}'}) / السيستم (${'${match.customer_name || \'—\'}'})\` : (isMultiplier ? 'مطابقة ومحتاجة مراجعة قيمة ×1.5' : 'مطابقة مع ملف السيستم وتحتسب'),`,
   'countable mismatch patch',
 )
-replaceText("          needs_review: !Boolean((patch as any).is_countable),", "          needs_review: nameMismatch || !Boolean((patch as any).is_countable),", 'mismatch review flag')
+replaceText(
+  "          needs_review: adminExcluded ? false : manuallyApproved ? false : !Boolean((patch as any).is_countable),",
+  "          needs_review: adminExcluded ? false : manuallyApproved ? false : nameMismatch || !Boolean((patch as any).is_countable),",
+  'mismatch review flag',
+)
 replaceRegex(
   /if \(batchId && resultRows\.length\) \{\s+const \{ error: resultInsertError \} = await supabase\.from\('monthly_invoice_reconciliation_results'\)\.insert\(resultRows\)/,
   `if (batchId && resultRows.length) {

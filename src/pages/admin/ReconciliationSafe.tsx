@@ -200,7 +200,12 @@ async function writeChunk(tableName: string, mode: BulkWriteMode, rows: unknown[
 
   const run = () => {
     if (tableName === 'monthly_system_invoices') {
-      return Promise.resolve(table.upsert(preparedRows, { onConflict: 'invoice_cycle_key' }))
+      // Re-uploading a partial file must never silently replace invoice evidence
+      // already stored for this cycle and branch. Corrections need review.
+      return Promise.resolve(table.upsert(preparedRows, {
+        onConflict: 'invoice_cycle_key',
+        ignoreDuplicates: true,
+      }))
     }
     return Promise.resolve(mode === 'upsert' ? table.upsert(preparedRows, options) : table.insert(preparedRows, options))
   }
@@ -311,17 +316,18 @@ if (!client.__reconciliationNetworkPatched) {
   client.__reconciliationOriginalFrom = originalFrom
 
   client.rpc = async (functionName: string, args?: any, options?: unknown) => {
-    if (functionName === 'archive_monthly_rider_performance') {
-      const preciseResult: any = await withRetry(() => originalRpc('reconcile_delivery_orders_precise', {
-        p_period_start: args?.p_period_start,
-        p_period_end: args?.p_period_end,
-        p_batch_id: args?.p_batch_id,
-      }), 4)
-
-      if (preciseResult?.error) return preciseResult
-      const archiveResult: any = await withRetry(() => originalRpc(functionName, args, options), 4)
-      if (archiveResult?.error) return archiveResult
-      return { ...archiveResult, precise_summary: preciseResult?.data ?? null }
+    if (functionName === 'archive_monthly_rider_performance' ||
+        functionName === 'reconcile_delivery_orders_precise') {
+      // Fail closed while the database archive function still invokes legacy
+      // precise reconciliation and can exclude orders on incomplete coverage.
+      // This client guard is not a substitute for restricting the privileged RPC.
+      return {
+        data: null,
+        error: {
+          code: 'RECONCILIATION_ARCHIVE_REQUIRES_VERIFIED_COVERAGE',
+          message: 'الأرشفة متوقفة مؤقتًا لحماية حقوق المندوبين حتى تأمين مطابقة قاعدة البيانات والتحقق من اكتمال التغطية.',
+        },
+      }
     }
 
     const result: any = await withRetry(() => originalRpc(functionName, args, options), 4)

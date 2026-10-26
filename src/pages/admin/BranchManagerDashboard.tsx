@@ -239,12 +239,21 @@ export default function BranchManagerDashboard() {
       }
       if (modal.type === 'edit_invoice') {
         if (!newInvoiceNumber.trim()) throw new Error('اكتب رقم الفاتورة الصحيح')
-        const { data, error } = await supabase.rpc('branch_manager_update_order_invoice', {
-          p_order_id: modal.row.id,
-          p_new_invoice_number: newInvoiceNumber.trim(),
-          p_reason: reason,
-          p_actor_name: actor
-        })
+        const useProtectedCorrection = import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true'
+        const managerToken = getRiderSession().session_token
+        const { data, error } = useProtectedCorrection
+          ? await supabase.rpc('branch_manager_update_order_invoice_v2', {
+              p_token: managerToken || '',
+              p_order_id: String(modal.row.id),
+              p_new_invoice_number: newInvoiceNumber.trim(),
+              p_reason: reason,
+            })
+          : await supabase.rpc('branch_manager_update_order_invoice', {
+              p_order_id: modal.row.id,
+              p_new_invoice_number: newInvoiceNumber.trim(),
+              p_reason: reason,
+              p_actor_name: actor,
+            })
         if (error) throw error
         const result: any = Array.isArray(data) ? data[0] : data
         if (result?.success === false) throw new Error(result?.message || 'تعذر تعديل رقم الفاتورة')
