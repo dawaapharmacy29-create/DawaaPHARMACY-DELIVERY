@@ -12,11 +12,13 @@ test('manager never preselects a rejection explanation', () => {
   assert.match(manager, /سبب الرفض لم يُحدد/)
 })
 
-test('unified decision remains display-only until backend verification', () => {
-  assert.match(manager, /تجربة عرض فقط — الحفظ غير مفعل/)
+test('unified decision can be committed atomically through the manager gateway, but never double-credits', () => {
+  assert.match(manager, /rpc\('review_duplicate_invoice_pair_v1'/)
+  assert.match(manager, /اعتماد القرار النهائي/)
+  assert.match(manager, /savingPairDecision/)
   assert.match(manager, /بانتظار تحقق الحسابات/)
-  assert.match(reviewSql, /REVIEW ONLY; NOT APPLIED/)
   assert.match(reviewSql, /dual_approval_requires_accounting_verification/)
+  assert.match(reviewSql, /approved_order_has_other_exclusion/)
 })
 
 test('proposed transaction enforces manager access and an audit trail', () => {

@@ -64,6 +64,7 @@ export default function DuplicateInvoices() {
   const [decisionNote, setDecisionNote] = useState('')
   const [decisionRejectReason, setDecisionRejectReason] = useState('')
   const [decisionCustomReason, setDecisionCustomReason] = useState('')
+  const [savingPairDecision, setSavingPairDecision] = useState(false)
   const [decidingOrderId, setDecidingOrderId] = useState<string | null>(null)
   const decidingRef = useRef(false)
   const [pendingVisits, setPendingVisits] = useState<PendingVisit[]>([])
@@ -214,6 +215,50 @@ export default function DuplicateInvoices() {
     setDecisionCustomReason('')
     setDecisionInvoice(key)
   }
+
+  async function saveUnifiedDecision() {
+    if (savingPairDecision || decidingRef.current || !decisionGroup || decisionGroup.entries.length !== 2 || !decisionChoice) return
+    if (decisionChoice === 'both') {
+      toast.error('اعتماد زيارتين مستقلتين يحتاج مراجعة الزيارات، ولا يمكن احتساب الفاتورة مرتين')
+      return
+    }
+    const rejectionReason = decisionRejectReason === 'سبب آخر' ? decisionCustomReason.trim() : decisionRejectReason.trim()
+    if (rejectionReason.length < 5) {
+      toast.error('حدد سببًا واضحًا لرفض التسجيل غير المستحق')
+      return
+    }
+    const [first, second] = decisionGroup.entries
+    if (decisionGroup.key.startsWith('unresolved:') || !invoiceIdentityKey(first) || invoiceIdentityKey(first) !== invoiceIdentityKey(second)) {
+      toast.error('هوية الفاتورة أو الفرع غير محسومة، لا يمكن حفظ قرار موحد')
+      return
+    }
+    const token = getRiderSession().session_token || ''
+    if (!window.confirm(`تأكيد القرار النهائي لفاتورة ${decisionGroup.invoice}؟\nسيتم تسجيل قرار كل مندوب وحفظ السبب في سجل المراجعة. لا يمكن التراجع تلقائيًا عن قرار نهائي.`)) return
+    try {
+      decidingRef.current = true
+      setSavingPairDecision(true)
+      const { data, error } = await supabase.rpc('review_duplicate_invoice_pair_v1', {
+        p_token: token,
+        p_first_order_id: String(first.id),
+        p_second_order_id: String(second.id),
+        p_choice: decisionChoice,
+        p_rejection_reason: rejectionReason,
+        p_manager_note: decisionNote.trim() || null,
+      })
+      if (error) throw error
+      if (!(data as any)?.first_status || !(data as any)?.second_status) throw new Error('لم يتم تأكيد حفظ القرارين')
+      setDecisionInvoice(null)
+      toast.success('تم اعتماد القرار النهائي للتسجيلين بنجاح')
+      await loadAll()
+    } catch (error) {
+      console.error(error)
+      toast.error('تعذر حفظ القرار النهائي. لم يتم اعتماد أي نتيجة من الشاشة؛ راجع حالة التسجيلين قبل إعادة المحاولة')
+      await loadAll()
+    } finally {
+      decidingRef.current = false
+      setSavingPairDecision(false)
+    }
+  }
   function matchesOrderFilters(order: DeliveryOrder) {
     const status = safeStatus(order)
     const matchesFilter = filter === 'all' || status === filter
@@ -356,7 +401,7 @@ export default function DuplicateInvoices() {
                     <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{String((entries[0] as any).branch_name || (entries[0] as any).branch_id || 'فرع غير محسوم')}</span>
                     <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">{entries.length} تسجيلات</span>
                     <span className="text-xs font-bold text-slate-500">ترتيب التسجيلات حسب وقت تسجيلها، وليس تأكيدًا لترتيب التوصيل الفعلي — يمكنك قبول أو رفض أي تسجيل بشكل مستقل</span>
-                    {entries.length === 2 && !key.startsWith('unresolved:') && <button type="button" onClick={() => openUnifiedDecision(key)} className="rounded-xl bg-[#008E92] px-3 py-2 text-xs font-black text-white">قرار سريع للفاتورة (تجربة)</button>}
+                    {entries.length === 2 && !key.startsWith('unresolved:') && <button type="button" onClick={() => openUnifiedDecision(key)} className="rounded-xl bg-[#008E92] px-3 py-2 text-xs font-black text-white">مراجعة واعتماد قرار الفاتورة</button>}
                   </div>
                   <div className="grid gap-3 lg:grid-cols-2">
                     {entries.map((order, index) => {
@@ -479,15 +524,15 @@ export default function DuplicateInvoices() {
                 return <p key={entry.id} className="py-1">{riderMap.get(entry.rider_id)?.name || (entry as any).rider_name || 'المندوب'}: {approved ? 'اعتماد مقترح' : `رفض مقترح — ${decisionRejectReason === 'سبب آخر' ? (decisionCustomReason.trim() || 'اكتب السبب') : (decisionRejectReason || 'سبب الرفض لم يُحدد')}`}</p>
               })}
               {decisionChoice === 'both' && <p className="mt-2 text-xs text-rose-800">لا يمكن حفظ اعتماد زيارتين حتى نتأكد من عدم مضاعفة قيمة الفاتورة في التقارير والمستحقات.</p>}
-              <p className="mt-2 text-xs">هذا عرض للقرار فقط؛ لا يغيّر عدد الأوردرات أو مستحقات المندوبين.</p>
+              <p className="mt-2 text-xs">لن يُحفظ شيء قبل التأكيد. يعتمد الحفظ النهائي على تحقق قاعدة البيانات من هوية الفاتورة وحالة التسجيلين.</p>
             </div>
             <label className="block text-sm font-bold">ملاحظة إدارية (اختيارية)
               <textarea value={decisionNote} onChange={event => setDecisionNote(event.target.value)} rows={2} placeholder="توضيح عند الحاجة" className="mt-2 w-full resize-y rounded-xl border border-slate-200 p-2.5" />
             </label>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-white p-3 sm:px-5">
-              <button type="button" onClick={() => setDecisionInvoice(null)} className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-black">إغلاق</button>
-              <span className="rounded-xl bg-teal-100 px-4 py-3 text-sm font-black text-teal-900">تجربة عرض فقط — الحفظ غير مفعل</span>
+              <button type="button" disabled={savingPairDecision} onClick={() => setDecisionInvoice(null)} className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-black disabled:opacity-50">إغلاق</button>
+              <button type="button" disabled={savingPairDecision || !decisionChoice || decisionChoice === 'both' || (decisionRejectReason === 'سبب آخر' ? decisionCustomReason.trim().length < 5 : decisionRejectReason.trim().length < 5)} onClick={() => void saveUnifiedDecision()} className="rounded-xl bg-teal-700 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">{savingPairDecision ? 'جاري حفظ القرار...' : 'اعتماد القرار النهائي'}</button>
             </div>
           </section>
         </div>

@@ -1,4 +1,6 @@
--- REVIEW ONLY; NOT APPLIED. Atomic duplicate-invoice decision.
+-- Applied additively to Delivery Production (qlugjplnnkjzxcbhwopg) on 2026-10-26.
+-- No existing order decisions were changed during installation.
+-- Atomic duplicate-invoice decision; dual commercial approval remains blocked.
 -- Requires the existing dawaa_private.assert_delivery_reconciliation_manager_v1 guard.
 -- Legacy pair review only: do not use this as invoice creation or identity.
 -- Invoice identity is branch + normalized invoice number, regardless of day.
@@ -49,7 +51,7 @@ begin
     raise exception 'dual_approval_requires_accounting_verification' using errcode = '22023';
   end if;
 
-  if p_choice <> 'both' and coalesce(btrim(p_rejection_reason), '') = '' then
+  if p_choice <> 'both' and coalesce(length(btrim(p_rejection_reason)), 0) < 5 then
     raise exception 'rejection_reason_required' using errcode = '22023'; end if;
   if length(coalesce(p_rejection_reason, '')) > 500 or length(coalesce(p_manager_note, '')) > 1000
   then raise exception 'decision_note_too_long' using errcode = '22023'; end if;
@@ -93,6 +95,12 @@ begin
 
   v_first_status := case when p_choice = 'first' then 'approved' else 'rejected' end;
   v_second_status := case when p_choice = 'second' then 'approved' else 'rejected' end;
+
+  -- Do not present an order already excluded for another accounting reason
+  -- as newly eligible for rider credit via this duplicate-review gateway.
+  if (v_first_status = 'approved' and coalesce(v_first.not_countable, false))
+    or (v_second_status = 'approved' and coalesce(v_second.not_countable, false))
+  then raise exception 'approved_order_has_other_exclusion' using errcode = '22023'; end if;
 
   v_actor_id := auth.uid();
   v_actor_kind := case when v_actor_id is null then 'general_manager_session' else 'authenticated_admin' end;
