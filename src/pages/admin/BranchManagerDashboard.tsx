@@ -198,15 +198,24 @@ export default function BranchManagerDashboard() {
   async function applyAction() {
     if (!modal || !profile) return
     if (!reason.trim()) { toast.error('يجب كتابة سبب واضح للإجراء'); return }
-    if (import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true'
-      && ['reassign', 'delete', 'order_to_trip'].includes(modal.type)) {
-      toast.error('الإجراء المباشر متوقف لحماية الأوردرات والمستحقات. يلزم تنفيذ مسار المدير المعتمد.')
-      return
-    }
     setSaving(true)
     try {
       const actor = profile.display_name || 'مدير الفرع'
-      if (modal.type === 'reassign') {
+      const protectedAction = import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true'
+        && ['reassign', 'delete', 'order_to_trip'].includes(modal.type)
+      if (protectedAction) {
+        const token = getRiderSession().session_token
+        const { data, error } = await supabase.rpc('delivery_branch_manager_order_action_v1', {
+          p_token: token || '',
+          p_order_id: String(modal.row.id),
+          p_action: modal.type === 'delete' ? 'exclude' : modal.type,
+          p_reason: reason.trim(),
+          p_target_rider_id: modal.type === 'reassign' ? targetRiderId : null,
+        })
+        if (error) throw error
+        if (!(data as any)?.success) throw new Error('لم يتم اعتماد إجراء المدير')
+      }
+      if (!protectedAction && modal.type === 'reassign') {
         if (!targetRiderId) throw new Error('اختر المندوب الجديد')
         const target = riders.find(r => r.id === targetRiderId)
         const { error } = await supabase.from('delivery_orders').update({
@@ -223,7 +232,7 @@ export default function BranchManagerDashboard() {
         }).eq('id', modal.row.id)
         if (error) throw error
       }
-      if (modal.type === 'delete') {
+      if (!protectedAction && modal.type === 'delete') {
         const { error } = await supabase.from('delivery_orders').update({
           deleted_at: new Date().toISOString(), deleted_by_name: actor, deletion_reason: reason, is_countable: false,
           final_count_status: 'excluded_by_branch_manager', review_status: 'deleted_by_branch_manager', updated_at: new Date().toISOString()
@@ -239,7 +248,7 @@ export default function BranchManagerDashboard() {
         })
         if (error) throw error
       }
-      if (modal.type === 'order_to_trip') {
+      if (!protectedAction && modal.type === 'order_to_trip') {
         const { error } = await supabase.from('delivery_orders').update({
           review_status: 'converted_to_trip_request', approval_status: 'pending', review_reason: reason, is_countable: false, updated_at: new Date().toISOString()
         }).eq('id', modal.row.id)
