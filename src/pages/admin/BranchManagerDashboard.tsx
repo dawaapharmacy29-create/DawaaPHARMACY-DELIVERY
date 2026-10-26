@@ -144,6 +144,9 @@ export default function BranchManagerDashboard() {
         p_notes: 'تأكيد خروج الأوردر من لوحة مدير الفرع'
       })
       if (error) {
+        if (import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true') {
+          throw new Error('فشل تسجيل الخروج عبر المسار المعتمد؛ التعديل المباشر غير مسموح أثناء حماية الفواتير')
+        }
         const now = new Date().toISOString()
         const fallback = await supabase.from('delivery_orders').update({
           dispatched_at: row.dispatched_at || now,
@@ -195,6 +198,11 @@ export default function BranchManagerDashboard() {
   async function applyAction() {
     if (!modal || !profile) return
     if (!reason.trim()) { toast.error('يجب كتابة سبب واضح للإجراء'); return }
+    if (import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true'
+      && ['reassign', 'delete', 'order_to_trip'].includes(modal.type)) {
+      toast.error('الإجراء المباشر متوقف لحماية الأوردرات والمستحقات. يلزم تنفيذ مسار المدير المعتمد.')
+      return
+    }
     setSaving(true)
     try {
       const actor = profile.display_name || 'مدير الفرع'
