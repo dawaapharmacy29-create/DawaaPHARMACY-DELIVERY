@@ -969,6 +969,10 @@ export default function Reconciliation() {
 
   async function handleSaveOrderEdit() {
     if (!editingOrder) return
+    if (import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true') {
+      toast.error('تعديل الفاتورة من المطابقة متوقف أثناء تفعيل الحماية. استخدم تصحيح مدير الفرع المعتمد.')
+      return
+    }
     const reason = editForm.edit_reason.trim()
     if (reason.length < 5) {
       toast.error('اكتب سبب تعديل واضح عشان نحفظ سجل المراجعة')
