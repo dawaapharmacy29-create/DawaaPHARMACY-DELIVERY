@@ -174,11 +174,17 @@ export const TRIP_TYPE_LABELS: Record<string, string> = {
 }
 
 export const DUPLICATE_REASON_LABELS: Record<string, string> = {
-  return:              'مرتجع',
-  preparation_error:   'خطأ في تحضير الأوردر',
-  invoice_correction:  'تعديل على الفاتورة',
-  second_visit:        'روحت للعميل تاني',
+  customer_added_items: 'العميل زوّد أصناف بعد خروج الأوردر',
+  preparation_error:   'صنف أو تركيز غلط / خطأ تحضير',
+  return:              'مرتجع أو استبدال',
+  second_visit:        'زيارة ثانية أو إعادة توصيل بطلب العميل',
+  invoice_correction:  'تصحيح الفاتورة أو إعادة تسجيلها',
   other:               'سبب آخر',
+}
+
+export function duplicateReasonLabel(value: unknown): string {
+  const code = String(value ?? '').trim()
+  return DUPLICATE_REASON_LABELS[code] || (code || 'لم يسجل سبب')
 }
 
 export const ORDER_STATUS_LABELS: Record<string, string> = {
