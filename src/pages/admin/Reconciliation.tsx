@@ -852,9 +852,6 @@ export default function Reconciliation() {
         if (Object.keys(patch).length) updates.push(supabase.from('delivery_orders').update(patch).eq('id', order.id))
       }
 
-      const updateResults = await Promise.all(updates)
-      const failedUpdate = updateResults.find(result => result.error)
-      if (failedUpdate?.error) throw failedUpdate.error
       const bconnectOnly = bconnect.filter(row => !orderInvoices.has(row.invoice_number))
       resultRows.push(...bconnectOnly.map(row => ({
         batch_id: batchId,
@@ -900,6 +897,11 @@ export default function Reconciliation() {
         // invoices into exclusions before file coverage has been verified.
         // Monthly archive must be a separate, explicit, coverage-verified action.
       }
+
+      // Only project rider counts/earnings after a fully finalized source snapshot.
+      const updateResults = await Promise.all(updates)
+      const failedUpdate = updateResults.find(result => result.error)
+      if (failedUpdate?.error) throw failedUpdate.error
 
       setMissingFromRiders(bconnectOnly.slice(0, 300))
       try {
