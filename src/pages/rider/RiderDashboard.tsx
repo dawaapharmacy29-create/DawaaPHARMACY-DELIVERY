@@ -1959,11 +1959,7 @@ export default function RiderDashboard() {
       toast.error("اختار سبب التكرار");
       return;
     }
-    const effectiveDupNote = (dupNote.trim() || orderNotes.trim());
-    if (isDup && effectiveDupNote.length < 5) {
-      toast.error("اكتب ملاحظة واضحة للتكرار لا تقل عن 5 حروف");
-      return;
-    }
+    const effectiveDupNote = dupNote.trim();
 
     try {
       setSaving(true);
@@ -3770,7 +3766,7 @@ export default function RiderDashboard() {
         >
           <div className="rounded-2xl bg-amber-50 border border-amber-300 p-4">
             <p className="font-black text-amber-800">
-              الفاتورة دي متسجلة قبل كده لأي دليفري، ولازم سبب استثنائي واضح.
+              الفاتورة دي متسجلة قبل كده. اختار سبب التكرار الحقيقي، والملاحظة الإضافية اختيارية.
             </p>
             <p className="text-xs text-amber-600 mt-1">
               سُجلت في: {formatDateTime(dupWarning?.registered_at)}
@@ -3803,22 +3799,20 @@ export default function RiderDashboard() {
               placeholder="مثال: د/ أحمد أو د/ شيماء"
             />
           </Field>
-          <Field label="تفاصيل التكرار * (5 حروف على الأقل)">
+          <Field label="ملاحظة إضافية (اختيارية)">
             <textarea
               value={dupNote}
               onChange={(e) => setDupNote(e.target.value)}
               rows={3}
               className="dawaa-input text-right resize-none"
-              placeholder="اكتب تفاصيل التكرار، ويمكن استخدام ملاحظات الأوردر"
+              placeholder="تفاصيل تساعد الإدارة على اتخاذ القرار، لو احتجت"
             />
-            <p className="text-xs text-slate-400">{(dupNote.trim() || orderNotes.trim()).length}/5</p>
           </Field>
           <button
             onClick={() => handleSaveOrder(true)}
             disabled={
               saving ||
-              !dupReason ||
-              (dupNote.trim() || orderNotes.trim()).length < 5
+              !dupReason
             }
             className="w-full rounded-2xl bg-amber-500 py-4 font-black text-white disabled:opacity-50"
           >
