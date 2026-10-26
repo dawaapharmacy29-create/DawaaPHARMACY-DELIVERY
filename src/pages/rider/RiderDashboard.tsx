@@ -2578,23 +2578,43 @@ export default function RiderDashboard() {
   async function handlePickedUp(orderId: string) {
     if (!rider) return;
     try {
-      const pickedAt = new Date().toISOString();
-      const { data, error } = await supabase
-        .from("delivery_orders")
-        .update({
-          picked_up_at: pickedAt,
-          picked_up_by: rider.id,
-          picked_up_by_name: rider.name,
-          dispatch_status: "picked_up",
-          updated_at: pickedAt,
-        })
-        .eq("id", orderId)
-        .select("*")
-        .single();
-      if (error) throw error;
+      // Keep the existing production flow until the pickup RPC has been
+      // installed and the coordinated permission cutover is ready.
+      if (!VISIT_GATEWAY_ENABLED) {
+        const pickedAt = new Date().toISOString();
+        const { data: legacyOrder, error: legacyError } = await supabase
+          .from("delivery_orders")
+          .update({
+            picked_up_at: pickedAt,
+            picked_up_by: rider.id,
+            picked_up_by_name: rider.name,
+            dispatch_status: "picked_up",
+            updated_at: pickedAt,
+          })
+          .eq("id", orderId)
+          .select("*")
+          .single();
+        if (legacyError) throw legacyError;
+        setOrders((prev) => prev.map((o) => o.id === orderId ? legacyOrder as DeliveryOrder : o));
+        setCycleOrders((prev) => prev.map((o) => o.id === orderId ? legacyOrder as DeliveryOrder : o));
+        toast.success("تم تسجيل استلام الأوردر من الفرع ✅");
+        return;
+      }
+      const token = getStoredRiderToken();
+      if (!token) throw new Error("انتهت الجلسة");
+      const { data, error } = await supabase.rpc("rider_mark_order_picked_up_v1", {
+        p_token: token,
+        p_order_id: String(orderId),
+      });
+      const result = getRpcResult<any>(data);
+      if (error || !result?.success || !result.order) {
+        throw new Error(error?.message || result?.message || "تعذر تسجيل استلام الأوردر");
+      }
+      const updated = result.order as DeliveryOrder;
       setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? (data as DeliveryOrder) : o)),
+        prev.map((o) => (o.id === orderId ? updated : o)),
       );
+      setCycleOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)));
       toast.success("تم تسجيل استلام الأوردر من الفرع ✅");
     } catch {
       toast.error("تعذر تسجيل استلام الأوردر");
