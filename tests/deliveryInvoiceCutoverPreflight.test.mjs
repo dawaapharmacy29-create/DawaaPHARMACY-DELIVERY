@@ -11,5 +11,8 @@ test('cutover preflight is read-only and tests both invoice fields and private g
   assert.match(source, /historical_duplicate_keys/)
   assert.match(source, /duplicate_keys_involving_legacy_unreadable_digits/)
   assert.match(source, /rider_register_repeated_visit_v1/)
+  assert.match(source, /anon_can_update_orders/)
+  assert.match(source, /insert_guard_trigger_state/)
+  assert.match(source, /update_guard_trigger_state/)
   assert.doesNotMatch(source, /\b(insert|update|delete|truncate|drop|alter)\s+(into\s+|from\s+|table\s+)?(?:public|dawaa_private)\./i)
 })

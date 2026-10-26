@@ -40,6 +40,18 @@ select
   to_regclass('dawaa_private.delivery_invoice_visit_events_v1')::text as visit_events,
   to_regprocedure('public.rider_register_repeated_visit_v1(text,text,text,text,text)')::text as visit_rpc,
   to_regprocedure('public.branch_manager_update_order_invoice_v2(text,text,text,text)')::text as protected_manager_correction_rpc,
+  has_table_privilege('anon', 'public.delivery_orders', 'INSERT') as anon_can_insert_orders,
+  has_table_privilege('anon', 'public.delivery_orders', 'UPDATE') as anon_can_update_orders,
+  has_table_privilege('authenticated', 'public.delivery_orders', 'INSERT') as authenticated_can_insert_orders,
+  has_table_privilege('authenticated', 'public.delivery_orders', 'UPDATE') as authenticated_can_update_orders,
+  (select t.tgenabled from pg_catalog.pg_trigger t
+    where t.tgrelid = 'public.delivery_orders'::regclass
+      and t.tgname = 'trg_delivery_invoice_guard_before_insert_v1'
+      and not t.tgisinternal) as insert_guard_trigger_state,
+  (select t.tgenabled from pg_catalog.pg_trigger t
+    where t.tgrelid = 'public.delivery_orders'::regclass
+      and t.tgname = 'trg_delivery_invoice_guard_before_update_v1'
+      and not t.tgisinternal) as update_guard_trigger_state,
   case when to_regprocedure('public.branch_manager_update_order_invoice(uuid,text,text,text)') is not null
     then has_function_privilege('anon',
       to_regprocedure('public.branch_manager_update_order_invoice(uuid,text,text,text)'), 'EXECUTE')
