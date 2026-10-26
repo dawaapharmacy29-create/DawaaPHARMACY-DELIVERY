@@ -4,7 +4,7 @@ import { CheckCircle2, Eye, Search, XCircle, CopyCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { DeliveryOrder, Rider } from '../../lib/types'
 import { approveDuplicateInvoice, getRiders, rejectDuplicateInvoice } from '../../lib/delivery'
-import { duplicateReasonLabel, formatTime, getOperationalPeriod } from '../../lib/helpers'
+import { duplicateReasonLabel, formatCairoDateTime, getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
 import CycleSelector from '../../components/CycleSelector'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
@@ -212,7 +212,7 @@ export default function DuplicateInvoices() {
                       <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
                         <div><p className="text-slate-500">الدليفري</p><p className="font-bold">{rider?.name || 'غير محدد'}</p></div>
                         <div><p className="text-slate-500">العميل</p><p className="font-bold">{order.customer_name_snapshot || 'غير محدد'}</p></div>
-                        <div><p className="text-slate-500">تاريخ التسجيل</p><p className="font-bold">{formatTime((order as any).registered_at || orderDate(order))}</p></div>
+                        <div><p className="text-slate-500">تاريخ ووقت التسجيل (القاهرة)</p><p className="font-bold">{formatCairoDateTime((order as any).registered_at || orderDate(order))}</p></div>
                         <div><p className="text-slate-500">قيمة الفاتورة</p><p className="font-bold">{(order as any).invoice_amount || '—'}</p></div>
                         <div><p className="text-slate-500">الدكتور/المحضّر</p><p className="font-bold">{doctorName}</p></div>
                         <div><p className="text-slate-500">كود العميل</p><p className="font-bold">{(order as any).customer_code_snapshot || '—'}</p></div>
