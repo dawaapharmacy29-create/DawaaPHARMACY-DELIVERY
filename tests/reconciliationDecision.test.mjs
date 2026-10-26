@@ -128,3 +128,14 @@ test('duplicate invoices inside a single source file cannot silently discard a c
   assert.match(parser, /throw new Error\(`الملف يحتوي فاتورة مكررة ببيانات متعارضة/)
   assert.doesNotMatch(parser, /if \(!invoice \|\| seen\.has\(dedupeKey\)\) continue/)
 })
+
+test('reconciliation results are append-only and visible only after batch completion', () => {
+  const page = readFileSync(new URL('../src/pages/admin/Reconciliation.tsx', import.meta.url), 'utf8')
+  const panel = readFileSync(new URL('../src/components/CustomerNameMismatchPanel.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(page, /from\('monthly_invoice_reconciliation_results'\)\.delete\(/)
+  assert.match(page, /from\('monthly_invoice_reconciliation_results'\)\.insert\(resultRows\)/)
+  assert.ok(page.indexOf("from('monthly_invoice_reconciliation_results').insert(resultRows)") < page.indexOf(".update({ status: 'matched'"))
+  assert.match(page, /\.eq\('id', batchId\)\.eq\('status', 'started'\)/)
+  assert.match(panel, /\.eq\('status', 'matched'\)/)
+  assert.match(panel, /query = query\.eq\('batch_id', latestBatch\.id\)/)
+})
