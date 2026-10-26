@@ -6,6 +6,8 @@ const files = [
   'src/pages/admin/Reconciliation.tsx',
   'src/pages/admin/RiderPerformanceDetailFast.tsx',
   'src/pages/rider/RiderDashboardV3.tsx',
+  'src/pages/admin/RiderPerformanceDetail.tsx',
+  'src/pages/admin/InvoiceNotebook.tsx',
 ]
 
 test('legacy invoice editors are disabled when protected visit gateway is enabled', () => {
