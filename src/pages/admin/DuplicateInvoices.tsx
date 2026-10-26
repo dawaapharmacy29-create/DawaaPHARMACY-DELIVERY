@@ -19,7 +19,10 @@ function orderDate(order: any) {
 }
 
 function safeStatus(order: any) {
-  return String(order.duplicate_review_status || (order.is_duplicate_invoice ? 'pending' : 'pending'))
+  const status = String(order.duplicate_review_status || 'not_required')
+  // "not_required" is normal for the first registration, but on this page
+  // it still needs an explicit manager decision once the invoice is duplicated.
+  return status === 'not_required' ? 'pending' : status
 }
 
 export default function DuplicateInvoices() {
@@ -110,7 +113,8 @@ export default function DuplicateInvoices() {
       }),
     })).sort((a, b) => String(orderDate(b.entries[b.entries.length - 1])).localeCompare(String(orderDate(a.entries[a.entries.length - 1]))))
   }, [orders])
-  const reviewableOrders = invoiceGroups.flatMap(group => group.entries.filter((order, index) => index > 0 || Boolean((order as any).is_duplicate_invoice)))
+  // Every registration in a duplicated invoice must be decidable, including the earliest.
+  const reviewableOrders = invoiceGroups.flatMap(group => group.entries)
 
   function matchesOrderFilters(order: DeliveryOrder) {
     const status = safeStatus(order)
@@ -126,19 +130,21 @@ export default function DuplicateInvoices() {
     return matchesFilter && matchesSearch && matchesRider && matchesBranch
   }
   // A filtered group still shows every sibling: hiding the earlier delivery would mislead the reviewer.
-  const filteredGroups = invoiceGroups.filter(group => group.entries.some((order, index) =>
-    (filter === 'all' || index > 0 || Boolean((order as any).is_duplicate_invoice)) && matchesOrderFilters(order)
-  ))
+  const filteredGroups = invoiceGroups.filter(group => group.entries.some(matchesOrderFilters))
 
   async function handleApprove(orderId: string) {
     if (decidingRef.current) return
     const order = orders.find(o => o.id === orderId)
-    const duplicateReason = String((order as any)?.duplicate_reason || '').trim()
-    if (!duplicateReason) {
-      toast.error('لا يمكن اعتماد الفاتورة المكررة بدون سبب تكرار محدد')
+    if (!order) return
+    const group = invoiceGroups.find(g => g.entries.some(entry => entry.id === orderId))
+    const isLaterRegistration = Boolean(group && group.entries.findIndex(entry => entry.id === orderId) > 0)
+    const duplicateReason = String((order as any).duplicate_reason || '').trim()
+    if (isLaterRegistration && !duplicateReason) {
+      toast.error('سبب التكرار غير مسجل لهذا التسجيل اللاحق؛ لا يمكن اعتماده قبل استكمال السبب')
       return
     }
-    if (!order || !window.confirm(`اعتماد تسجيل هذا المندوب فقط؟\nفاتورة ${normalizeInvoice(order)} — ${riderMap.get(order.rider_id)?.name || (order as any).rider_name || 'مندوب غير محدد'}\nهذا القرار لا يعتمد باقي التسجيلات تلقائيًا.`)) return
+    const otherApproved = group?.entries.some(entry => entry.id !== orderId && safeStatus(entry) === 'approved')
+    if (!window.confirm(`اعتماد تسجيل هذا المندوب فقط؟\nفاتورة ${normalizeInvoice(order)} — ${riderMap.get(order.rider_id)?.name || (order as any).rider_name || 'مندوب غير محدد'}\n${otherApproved ? 'تنبيه: يوجد تسجيل آخر معتمد لنفس الفاتورة؛ تأكد من وجود زيارتين فعليتين مستقلتين.\n' : ''}هذا القرار لا يعتمد باقي التسجيلات ولا يضاعف قيمة الفاتورة تلقائيًا.`)) return
     try {
       decidingRef.current = true
       setDecidingOrderId(orderId)
@@ -225,7 +231,7 @@ export default function DuplicateInvoices() {
                   <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-slate-100 pb-3">
                     <h2 className="text-lg font-black text-slate-950">فاتورة {invoice}</h2>
                     <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">{entries.length} تسجيلات</span>
-                    <span className="text-xs font-bold text-slate-500">ترتيب التسجيلات حسب وقت تسجيلها، وليس تأكيدًا لترتيب التوصيل الفعلي</span>
+                    <span className="text-xs font-bold text-slate-500">ترتيب التسجيلات حسب وقت تسجيلها، وليس تأكيدًا لترتيب التوصيل الفعلي — يمكنك قبول أو رفض أي تسجيل بشكل مستقل</span>
                   </div>
                   <div className="grid gap-3 lg:grid-cols-2">
                     {entries.map((order, index) => {
@@ -234,7 +240,7 @@ export default function DuplicateInvoices() {
                       const reason = String((order as any).duplicate_reason || '').trim()
                       const note = String((order as any).duplicate_note || '').trim()
                       const isLater = index > 0
-                      const actionable = isLater || Boolean((order as any).is_duplicate_invoice)
+                      const missingRequiredReason = isLater && !reason
                       return (
                         <div key={order.id} className={`rounded-xl border p-3 ${isLater ? 'border-amber-200 bg-amber-50/40' : 'border-slate-200 bg-slate-50'}`}>
                           <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -249,20 +255,19 @@ export default function DuplicateInvoices() {
                           </div>
                           <div className="mt-3 rounded-xl border border-amber-200 bg-white p-3 text-sm">
                             <p className="text-xs font-black text-amber-800">سبب {isLater || (order as any).is_duplicate_invoice ? 'التكرار' : 'التسجيل'}</p>
-                            <p className="mt-1 font-black text-slate-950">{!reason && !isLater && !(order as any).is_duplicate_invoice ? 'التسجيل الأسبق — لا يلزم منه سبب تكرار' : duplicateReasonLabel(reason)}</p>
+                            <p className="mt-1 font-black text-slate-950">{!reason && !isLater ? 'التسجيل الأسبق — لا يلزم منه سبب تكرار' : duplicateReasonLabel(reason)}</p>
                             <p className="mt-2 text-xs font-black text-amber-800">ملاحظة المندوب</p>
                             <p className="mt-1 whitespace-pre-wrap break-words font-bold text-slate-800">{note || 'لا توجد ملاحظة إضافية'}</p>
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2">
                             <button onClick={() => setDetailsOrder(order)} className="flex items-center gap-1 rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white"><Eye size={16} /> تفاصيل التسجيل</button>
-                            {status === 'pending' && actionable && (
+                            {status === 'pending' && (
                               <>
-                                <button onClick={() => void handleApprove(order.id)} disabled={!reason || decidingOrderId !== null} title={!reason ? 'سبب التكرار غير مسجل؛ يحتاج مراجعة' : 'اعتماد هذا التسجيل فقط'} className="flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-40"><CheckCircle2 size={16} /> اعتماد هذا التسجيل</button>
+                                <button onClick={() => void handleApprove(order.id)} disabled={missingRequiredReason || decidingOrderId !== null} title={missingRequiredReason ? 'سبب التكرار غير مسجل للتسجيل اللاحق' : 'اعتماد هذا التسجيل فقط'} className="flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-40"><CheckCircle2 size={16} /> اعتماد هذا التسجيل</button>
                                 <button onClick={() => void handleReject(order.id)} disabled={decidingOrderId !== null} className="flex items-center gap-1 rounded-xl bg-rose-100 px-3 py-2 text-xs font-black text-rose-800 disabled:opacity-40"><XCircle size={16} /> رفض هذا التسجيل</button>
                               </>
                             )}
-                            {status === 'pending' && !actionable && <span className="self-center text-xs font-bold text-slate-500">تسجيل مرجعي للمقارنة — لا قرار تكرار مطلوب هنا</span>}
-                            {status === 'pending' && actionable && !reason && <span className="self-center text-xs font-bold text-rose-700">سبب التكرار غير مسجل، الاعتماد متوقف</span>}
+                            {status === 'pending' && missingRequiredReason && <span className="self-center text-xs font-bold text-rose-700">سبب التكرار غير مسجل، الاعتماد متوقف لهذا التسجيل اللاحق فقط</span>}
                           </div>
                         </div>
                       )
