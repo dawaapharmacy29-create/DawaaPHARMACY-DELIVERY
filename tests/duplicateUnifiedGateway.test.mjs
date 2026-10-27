@@ -14,8 +14,9 @@ test('RPC sends one atomic request, never two independent row updates', () => {
 
 test('unsafe requests fail closed before write', () => {
   assert.match(source, /input.firstOrderId === input.secondOrderId/)
-  assert.match(source, /input.choice === 'both'/)
-  assert.match(source, /!input.rejectionReason.trim\(\)/)
+  assert.match(source, /input.choice === 'both' && !dualVisitEnabled/)
+  assert.match(source, /input.choice === 'both' && input.managerNote.trim\(\).length < 10/)
+  assert.match(source, /input.choice !== 'both' && input.rejectionReason.trim\(\).length < 5/)
   assert.match(source, /استجابة الحفظ غير مكتملة/)
 })
 

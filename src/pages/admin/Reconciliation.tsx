@@ -801,10 +801,11 @@ export default function Reconciliation() {
         // exclusions and approvals across repeated or partial B-Connect uploads.
         const adminExcluded = isConfirmedAdminExclusion(order as any)
         const manuallyApproved = order.bconnect_match_status === 'manually_approved'
+        const duplicateDecisionFinal = ['approved', 'rejected'].includes(String((order as any).duplicate_review_status || ''))
 
         if (preserveHumanDecision(order as any)) {
-          reconciliationStatus = adminExcluded ? 'admin_excluded' : 'manual_override'
-          differenceReason = adminExcluded ? 'استبعاد مؤكد بواسطة الإدارة' : 'اعتماد يدوي محفوظ'
+          reconciliationStatus = adminExcluded ? 'admin_excluded' : duplicateDecisionFinal ? 'duplicate_manager_decision_saved' : 'manual_override'
+          differenceReason = adminExcluded ? 'استبعاد مؤكد بواسطة الإدارة' : duplicateDecisionFinal ? 'قرار الزيارة المحفوظ لا يُلغيه إعادة استيراد الفواتير' : 'اعتماد يدوي محفوظ'
           patch = {}
         } else if (isFailed) {
           reconciliationStatus = match ? 'matched_failed_excluded' : 'app_only_failed'
@@ -876,7 +877,7 @@ export default function Reconciliation() {
           app_branch_name: (order as any).branch_name || null,
           system_branch_name: match?.branch_name ?? null,
           is_countable: Boolean((patch as any).is_countable ?? (order as any).is_countable),
-          needs_review: adminExcluded ? false : manuallyApproved ? false : nameMismatch || !Boolean((patch as any).is_countable),
+          needs_review: adminExcluded || manuallyApproved || duplicateDecisionFinal ? false : nameMismatch || !Boolean((patch as any).is_countable),
           raw_json: { order, system: match || null },
         })
 

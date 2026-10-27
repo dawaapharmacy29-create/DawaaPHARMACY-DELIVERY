@@ -4,8 +4,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { formatMoney, getOperationalPeriod } from '../../lib/helpers'
 import CycleSelector from '../../components/CycleSelector'
 import { aggregateCanonicalRiders, loadCanonicalDeliveryData, type CanonicalDeliveryData } from '../../lib/canonicalDeliveryData'
-import { isDelivered, isFailed, isMultiplier, num } from '../../lib/deliveryAnalytics'
+import { isDelivered, isFailed, isMultiplier } from '../../lib/deliveryAnalytics'
 import ReportsAdminTabs from '../../components/ReportsAdminTabs'
+import { uniqueDeliveryInvoiceValue } from '../../lib/duplicateVisitAccounting'
 
 type CycleSummary = {
   orders: number
@@ -52,7 +53,7 @@ export default function CycleArchiveLite() {
     const delivered = data.orders.filter(isDelivered).length
     const failed = data.orders.filter(isFailed).length
     const multiplier = data.orders.filter(isMultiplier).length
-    const value = data.orders.reduce((sum, order) => sum + num(order.invoice_amount || order.invoice_value), 0)
+    const value = uniqueDeliveryInvoiceValue(data.orders.filter(isDelivered))
     return { orders: data.orders.length, delivered, failed, multiplier, value }
   }, [data.orders])
 
@@ -123,7 +124,7 @@ export default function CycleArchiveLite() {
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-xl font-black text-[#061827]">ملخص الدورة حسب المندوب</h2>
-              <p className="text-xs font-bold text-slate-400">يظهر فقط المناديب النشطون الذين لديهم أوردرات خلال الفترة</p>
+              <p className="text-xs font-bold text-slate-400">قيمة تقديرية للفواتير غير المكررة داخل الفرع؛ المرجع المالي النهائي BConnect. يظهر المناديب النشطون فقط.</p>
             </div>
             <div className="rounded-2xl bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-700">{formatMoney(summary.value)}</div>
           </div>

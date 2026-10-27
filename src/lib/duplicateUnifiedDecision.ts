@@ -9,25 +9,29 @@ export interface DuplicateDecisionInput {
   managerNote: string
 }
 
-/** Transactional gateway, deliberately not enabled in the UI until the
+/** Transactional gateway; dual approval must be enabled only after the
  * production RPC and financial-counting contract pass integration tests. */
 export async function submitUnifiedDuplicateDecision(
   rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message?: string } | null }>,
   input: DuplicateDecisionInput,
+  dualVisitEnabled = false,
 ) {
   if (!input.firstOrderId || !input.secondOrderId || input.firstOrderId === input.secondOrderId) {
     throw new Error('اختيار تسجيلين مختلفين مطلوب')
   }
-  if (input.choice === 'both') {
-    throw new Error('اعتماد الزيارتين متوقف لحين التحقق من منع احتساب قيمة الفاتورة مرتين')
+  if (input.choice === 'both' && !dualVisitEnabled) {
+    throw new Error('اعتماد الزيارتين ينتظر تفعيل ضمانات قاعدة البيانات')
   }
-  if (!input.rejectionReason.trim()) throw new Error('سبب الرفض مطلوب')
+  if (input.choice === 'both' && input.managerNote.trim().length < 10) {
+    throw new Error('ملحوظة توضح سبب الزيارتين المستقلتين مطلوبة')
+  }
+  if (input.choice !== 'both' && input.rejectionReason.trim().length < 5) throw new Error('سبب الرفض مطلوب')
   const { data, error } = await rpc('review_duplicate_invoice_pair_v1', {
     p_token: input.token,
     p_first_order_id: input.firstOrderId,
     p_second_order_id: input.secondOrderId,
     p_choice: input.choice,
-    p_rejection_reason: input.rejectionReason.trim(),
+    p_rejection_reason: input.choice === 'both' ? null : input.rejectionReason.trim(),
     p_manager_note: input.managerNote.trim() || null,
   })
   if (error) throw new Error(error.message || 'تعذر حفظ قرار الفاتورة')

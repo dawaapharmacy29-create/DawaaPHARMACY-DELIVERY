@@ -6,9 +6,10 @@ import CycleSelector from '../../components/CycleSelector'
 import { displayBranchName } from '../../lib/branchUtils'
 import { fetchAllRows } from '../../lib/fetchAllRows'
 import CustomerAdminTabs from '../../components/CustomerAdminTabs'
+import { deliveryCommercialInvoiceKey } from '../../lib/duplicateVisitAccounting'
 
 type OrderRow = Record<string, any>
-const orderColumns = 'id,customer_id,customer_code,customer_code_snapshot,customer_phone,customer_phone_snapshot,customer_name,customer_name_snapshot,branch_name,branch,invoice_number,invoice_no,invoice_amount,invoice_value,amount,delivery_date,work_date,registered_at,created_at'
+const orderColumns = 'id,customer_id,customer_code,customer_code_snapshot,customer_phone,customer_phone_snapshot,customer_name,customer_name_snapshot,branch_name,branch,invoice_number,invoice_no,invoice_amount,invoice_value,amount,delivery_date,work_date,registered_at,created_at,status,deleted_at'
 type RangeMode = 'cycle' | 'quarter' | 'all'
 type Segment = 'VIP' | 'متكرر' | 'مرة واحدة'
 type CustomerRow = {
@@ -136,6 +137,7 @@ export default function CustomerAnalyticsUnified() {
 
   const customers = useMemo(() => {
     const grouped = new Map<string, CustomerRow>()
+    const seenInvoices = new Set<string>()
     orders.forEach(order => {
       const key = customerKey(order)
       const current = grouped.get(key) || {
@@ -151,9 +153,13 @@ export default function CustomerAnalyticsUnified() {
         segment: 'مرة واحدة' as Segment,
         orders: [],
       }
-      current.invoices += 1
-      current.sales += amount(order)
-      current.average = current.sales / current.invoices
+      const invoiceKey = deliveryCommercialInvoiceKey(order)
+      if (invoiceKey && !seenInvoices.has(invoiceKey) && !order.deleted_at && !['failed', 'cancelled', 'canceled'].includes(String(order.status || '').toLowerCase())) {
+        seenInvoices.add(invoiceKey)
+        current.invoices += 1
+        current.sales += amount(order)
+      }
+      current.average = current.invoices ? current.sales / current.invoices : 0
       current.orders.push(order)
       const date = orderDate(order)
       if (date > current.lastOrder) current.lastOrder = date

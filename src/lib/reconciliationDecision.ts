@@ -19,8 +19,10 @@ export function isConfirmedAdminExclusion(order: {
 export function preserveHumanDecision(order: {
   count_exclusion_reason?: string | null
   bconnect_match_status?: string | null
+  duplicate_review_status?: string | null
 }): boolean {
-  return isConfirmedAdminExclusion(order) || order.bconnect_match_status === 'manually_approved'
+  return isConfirmedAdminExclusion(order) || order.bconnect_match_status === 'manually_approved' ||
+    ['approved', 'rejected'].includes(String(order.duplicate_review_status || ''))
 }
 
 export function classifyMissingSystemInvoice(): ReconciliationDecision {

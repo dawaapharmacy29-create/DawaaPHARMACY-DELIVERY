@@ -13,15 +13,18 @@ test('manager never preselects a rejection explanation', () => {
   assert.match(manager, /اختار سبب الرفض أولًا/)
 })
 
-test('unified decision can be committed atomically through the manager gateway, but never double-credits', () => {
+test('unified decision can approve two verified visits only after controlled rollout', () => {
   assert.match(manager, /rpc\('review_duplicate_invoice_pair_v1'/)
   assert.match(manager, /اعتماد القرار النهائي/)
   assert.match(manager, /savingPairDecision/)
-  assert.match(manager, /بانتظار تحقق الحسابات/)
-  assert.match(reviewSql, /dual_approval_requires_accounting_verification/)
+  assert.match(manager, /DUAL_VISIT_APPROVAL_ENABLED/)
+  assert.match(manager, /decisionNote\.trim\(\)\.length < 10/)
+  assert.match(reviewSql, /dual_visits_require_two_deliveries_and_bconnect_match/)
+  assert.match(reviewSql, /independent_visit_evidence_required/)
+  assert.match(reviewSql, /counted_duplicate_visit_approved/)
   assert.match(reviewSql, /approved_order_has_other_exclusion/)
-  assert.match(manager, /disabled=\{value === 'both'\}/)
-  assert.match(manager, /الملاحظة الإدارية اختيارية ولن تفتح الاختيار/)
+  assert.match(manager, /disabled=\{value === 'both' && !DUAL_VISIT_APPROVAL_ENABLED\}/)
+  assert.match(reviewSql, /commercial_invoice_created', false/)
 })
 
 test('proposed transaction enforces manager access and an audit trail', () => {
@@ -38,6 +41,7 @@ test('uncertain network response reconciles both records without retrying a writ
   assert.match(manager, /isUnifiedDecisionCommitted\(String\(first\.id\), String\(second\.id\), decisionChoice\)/)
   assert.match(manager, /order\?\.duplicate_review_status === \(shouldApprove \? 'approved' : 'rejected'\)/)
   assert.match(manager, /order\.not_countable === !shouldApprove && order\.needs_review === false/)
+  assert.match(manager, /choice !== 'both' \|\| order\.is_countable === true/)
   assert.match(manager, /setDecisionUncertain\(true\)/)
   assert.match(manager, /decisionUncertain \|\| !decisionGroup/)
   assert.match(manager, /تحقق من القرار/)

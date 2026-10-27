@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import TeamAdminTabs from '../../components/TeamAdminTabs'
 import { getRiderSession } from '../../lib/auth'
+import { isRiderOrderCountable, riderOrderEarning } from '../../lib/duplicateVisitAccounting'
 
 type Row = Record<string, any>
 type BonusType = 'monthly' | 'quarterly'
@@ -156,12 +157,11 @@ export default function RiderCompensationCenter() {
   const pendingPenaltyRows = useMemo(() => penaltyRows.filter(item => String(item.status || '').toLowerCase() !== 'approved'), [penaltyRows])
 
   const summary = useMemo(() => {
-    const countedOrders = orders.filter(order => !['failed', 'cancelled', 'canceled'].includes(status(order)) && (order.is_countable === true || String(order.final_count_status || '').startsWith('counted')))
+    const countedOrders = orders.filter(isRiderOrderCountable)
     const normal = countedOrders.filter(order => Number(order.order_multiplier ?? 1) < 1.5)
     const multiplier = countedOrders.filter(order => Number(order.order_multiplier ?? 1) >= 1.5)
     const approvedTrips = trips.filter(trip => ['approved', 'completed'].includes(status(trip)))
-    const orderValue = normal.reduce((sum, order) => sum + Number(order.order_earning ?? orderRate), 0)
-      + multiplier.reduce((sum, order) => sum + Number(order.order_earning ?? Number(orderRate) * Number(order.order_multiplier ?? 1.5)), 0)
+    const orderValue = countedOrders.reduce((sum, order) => sum + riderOrderEarning(order, Number(orderRate)), 0)
     const tripValue = approvedTrips.reduce((sum, trip) => sum + Number(trip.trip_earning ?? tripRate), 0)
     const rewards = adjustments.filter(item => item.adjustment_type === 'reward' && String(item.status || '').toLowerCase() === 'approved').reduce((sum, item) => sum + Math.abs(Number(item.final_amount ?? item.amount ?? 0)), 0)
     const penalties = adjustments.filter(item => item.adjustment_type === 'penalty' && String(item.status || '').toLowerCase() === 'approved').reduce((sum, item) => sum + Math.abs(Number(item.final_amount ?? item.amount ?? 0)), 0)

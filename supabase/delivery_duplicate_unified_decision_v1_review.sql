@@ -1,11 +1,12 @@
--- Applied additively to Delivery Production (qlugjplnnkjzxcbhwopg) on 2026-10-26.
--- No existing order decisions were changed during installation.
--- Atomic duplicate-invoice decision; dual commercial approval remains blocked.
+-- The original guarded v1 was installed on 2026-10-26.
+-- This amended dual-visit version is NOT APPLIED; deploy and verify separately.
+-- REVIEW ONLY update: first/second/both/none are *rider visit* decisions.
+-- Apply and verify transactionally before enabling the dual-visit UI flag.
 -- Requires the existing dawaa_private.assert_delivery_reconciliation_manager_v1 guard.
 -- Legacy pair review only: do not use this as invoice creation or identity.
 -- Invoice identity is branch + normalized invoice number, regardless of day.
--- The "both" choice is deliberately blocked until visit events are separated
--- from the invoice's unique commercial value.
+-- Both rider visits may count independently; this function never creates a
+-- BConnect invoice or duplicates its commercial amount.
 
 create schema if not exists dawaa_private;
 
@@ -39,6 +40,8 @@ declare
   v_second_status text;
   v_actor_id uuid;
   v_actor_kind text;
+  v_first_countable boolean;
+  v_second_countable boolean;
 begin
   perform dawaa_private.assert_delivery_reconciliation_manager_v1(p_token);
   if p_first_order_id is null or p_second_order_id is null
@@ -46,13 +49,10 @@ begin
     or p_choice is null or p_choice not in ('first', 'second', 'both', 'none')
   then raise exception 'invalid_duplicate_decision' using errcode = '22023'; end if;
 
-  -- Prevent accidental double counting in invoice-value reporting until verified.
-  if p_choice = 'both' then
-    raise exception 'dual_approval_requires_accounting_verification' using errcode = '22023';
-  end if;
-
   if p_choice <> 'both' and coalesce(length(btrim(p_rejection_reason)), 0) < 5 then
     raise exception 'rejection_reason_required' using errcode = '22023'; end if;
+  if p_choice = 'both' and coalesce(length(btrim(p_manager_note)), 0) < 10 then
+    raise exception 'independent_visit_evidence_required' using errcode = '22023'; end if;
   if length(coalesce(p_rejection_reason, '')) > 500 or length(coalesce(p_manager_note, '')) > 1000
   then raise exception 'decision_note_too_long' using errcode = '22023'; end if;
 
@@ -92,15 +92,35 @@ begin
   if coalesce(v_second.is_duplicate_invoice, false) is not true
     or coalesce(btrim(v_second.duplicate_reason), '') = ''
   then raise exception 'later_duplicate_reason_missing' using errcode = '22023'; end if;
+  if p_choice = 'both' and coalesce(length(btrim(v_second.duplicate_note)), 0) < 5 then
+    raise exception 'later_duplicate_visit_note_missing' using errcode = '22023'; end if;
 
-  v_first_status := case when p_choice = 'first' then 'approved' else 'rejected' end;
-  v_second_status := case when p_choice = 'second' then 'approved' else 'rejected' end;
+  v_first_status := case when p_choice in ('first', 'both') then 'approved' else 'rejected' end;
+  v_second_status := case when p_choice in ('second', 'both') then 'approved' else 'rejected' end;
 
   -- Do not present an order already excluded for another accounting reason
   -- as newly eligible for rider credit via this duplicate-review gateway.
   if (v_first_status = 'approved' and coalesce(v_first.not_countable, false))
     or (v_second_status = 'approved' and coalesce(v_second.not_countable, false))
+    or (v_first_status = 'approved' and coalesce(v_first.excluded_from_incentive, false))
+    or (v_second_status = 'approved' and coalesce(v_second.excluded_from_incentive, false))
+    or (v_first_status = 'approved' and coalesce(v_first.count_exclusion_reason, '') not in ('', 'duplicate_requires_admin_approval'))
+    or (v_second_status = 'approved' and coalesce(v_second.count_exclusion_reason, '') not in ('', 'duplicate_requires_admin_approval'))
   then raise exception 'approved_order_has_other_exclusion' using errcode = '22023'; end if;
+
+  v_first_countable := v_first_status = 'approved'
+    and coalesce(v_first.bconnect_match_status, '') = 'matched'
+    and (lower(coalesce(v_first.status, '')) in ('delivered', 'completed') or v_first.delivered_at is not null);
+  v_second_countable := v_second_status = 'approved'
+    and coalesce(v_second.bconnect_match_status, '') = 'matched'
+    and (lower(coalesce(v_second.status, '')) in ('delivered', 'completed') or v_second.delivered_at is not null
+      or (lower(coalesce(v_second.status, '')) = 'returned' and v_second.duplicate_reason = 'return'));
+
+  -- Two paid visits need evidence of BOTH completed visits and a single
+  -- already-matched source invoice. Approval is not invoice creation.
+  if p_choice = 'both' and (v_first_countable is not true or v_second_countable is not true) then
+    raise exception 'dual_visits_require_two_deliveries_and_bconnect_match' using errcode = '22023';
+  end if;
 
   v_actor_id := auth.uid();
   v_actor_kind := case when v_actor_id is null then 'general_manager_session' else 'authenticated_admin' end;
@@ -118,6 +138,11 @@ begin
     duplicate_review_status = v_first_status,
     review_reason = case when v_first_status = 'rejected' then btrim(p_rejection_reason) else review_reason end,
     not_countable = case when v_first_status = 'rejected' then true else not_countable end,
+    is_countable = case when v_first_status = 'rejected' then false when v_first_countable then true else is_countable end,
+    final_count_status = case when v_first_status = 'rejected' then 'excluded_duplicate_rejected'
+      when v_first_countable then 'counted_duplicate_visit_approved' else final_count_status end,
+    count_exclusion_reason = case when v_first_status = 'rejected' then 'duplicate_rejected_by_manager'
+      when count_exclusion_reason = 'duplicate_requires_admin_approval' then null else count_exclusion_reason end,
     needs_review = false,
     duplicate_reviewed_by = auth.uid(),
     duplicate_reviewed_at = now()
@@ -127,6 +152,11 @@ begin
     duplicate_review_status = v_second_status,
     review_reason = case when v_second_status = 'rejected' then btrim(p_rejection_reason) else review_reason end,
     not_countable = case when v_second_status = 'rejected' then true else not_countable end,
+    is_countable = case when v_second_status = 'rejected' then false when v_second_countable then true else is_countable end,
+    final_count_status = case when v_second_status = 'rejected' then 'excluded_duplicate_rejected'
+      when v_second_countable then 'counted_duplicate_visit_approved' else final_count_status end,
+    count_exclusion_reason = case when v_second_status = 'rejected' then 'duplicate_rejected_by_manager'
+      when count_exclusion_reason = 'duplicate_requires_admin_approval' then null else count_exclusion_reason end,
     needs_review = false,
     duplicate_reviewed_by = auth.uid(),
     duplicate_reviewed_at = now()
@@ -141,7 +171,9 @@ begin
       case when v_second_status = 'rejected' then btrim(p_rejection_reason) end, nullif(btrim(p_manager_note), ''), v_actor_id, v_actor_kind);
 
   return jsonb_build_object('invoice_number', v_first.invoice_number,
-    'first_status', v_first_status, 'second_status', v_second_status);
+    'first_status', v_first_status, 'second_status', v_second_status,
+    'first_countable', v_first_countable, 'second_countable', v_second_countable,
+    'commercial_invoice_created', false);
 end;
 $body$;
 
