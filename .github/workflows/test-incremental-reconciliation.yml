@@ -5,7 +5,11 @@ on:
     paths:
       - 'src/pages/admin/Reconciliation.tsx'
       - 'src/pages/admin/ReconciliationSafe.tsx'
+      - 'src/lib/reconciliationDecision.ts'
+      - 'src/lib/reconciliationBatchWrite.ts'
       - 'src/components/CustomerNameMismatchPanel.tsx'
+      - 'tests/adminDecisionSafety.test.mjs'
+      - 'tests/incrementalReconciliationContract.test.mjs'
       - 'scripts/patch-incremental-reconciliation.mjs'
       - 'scripts/patch-incremental-reconciliation-db-fields.mjs'
       - 'scripts/patch-reconciliation-mismatch-panel.mjs'
@@ -30,23 +34,12 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Apply all build patches once
-        run: |
-          node scripts/patch-reconciliation-pagination.mjs
-          node scripts/patch-incremental-reconciliation.mjs
-          node scripts/patch-incremental-reconciliation-db-fields.mjs
-          node scripts/patch-reconciliation-mismatch-panel.mjs
-          node scripts/patch-order-receipt-storage.mjs
-      - name: Typecheck diagnostics
-        continue-on-error: true
-        shell: bash
-        run: pnpm exec tsc --noEmit --pretty false 2>&1 | tee typecheck-output.txt
-      - name: Build patched source
+      # Incremental reconciliation is now tracked source with stricter matching,
+      # immutable batch snapshots and confirmation guards. The old one-shot patch
+      # scripts target pre-migration text and must not rewrite current source in CI.
+      - name: Verify committed reconciliation contract and approval safety
+        run: pnpm exec node --test tests/incrementalReconciliationContract.test.mjs tests/adminDecisionSafety.test.mjs
+      - name: Typecheck committed source
+        run: pnpm exec tsc --noEmit --pretty false
+      - name: Build committed source
         run: pnpm exec vite build
-      - name: Upload typecheck diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: incremental-reconciliation-typecheck-${{ github.run_id }}
-          path: typecheck-output.txt
-          if-no-files-found: ignore
