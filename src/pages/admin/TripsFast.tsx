@@ -5,12 +5,14 @@ import { toast } from 'sonner'
 import { getRiders } from '../../lib/delivery'
 import { getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
+import { confirmedTripDecisions } from '../../lib/confirmedTripDecisions'
 import type { Rider } from '../../lib/types'
 import CycleSelector from '../../components/CycleSelector'
 import OperationsAdminTabs from '../../components/OperationsAdminTabs'
 
 type StatusFilter = 'all' | 'pending_approval' | 'approved' | 'rejected'
 type ProofFilter = 'all' | 'with_photo' | 'without_photo'
+type DecisionStatus = 'approved' | 'rejected' | 'pending_approval'
 
 const labels: Record<string,string> = { branch_to_branch:'بين الفروع', warehouse:'مخزن', supplies:'مستلزمات', pharmacy:'صيدلية', shipment_pickup:'استلام شحن', accessories:'إكسسوار', purchase_missing_item:'شراء نواقص', supplier:'مورد', returns:'مرتجع', collection:'تحصيل', visit_again:'زيارة تانية', other:'أخرى' }
 const statusText: Record<string,string> = { pending_approval:'مستني اعتماد', approved:'معتمد', rejected:'مرفوض', completed:'تم', cancelled:'ملغي' }
@@ -46,7 +48,10 @@ export default function TripsFast(){
   const [loading,setLoading]=useState(true)
   const [busy,setBusy]=useState<Set<string>>(new Set())
   const [selected,setSelected]=useState<Set<string>>(new Set())
-  const [statusFilter,setStatusFilter]=useState<StatusFilter>('all')
+  const [statusFilter,setStatusFilter]=useState<StatusFilter>(()=>{
+    const requested=searchParams.get('status')
+    return requested==='all'||requested==='pending_approval'||requested==='approved'||requested==='rejected'?requested:'pending_approval'
+  })
   const [proofFilter,setProofFilter]=useState<ProofFilter>('all')
   const [typeFilter,setTypeFilter]=useState('all')
   const [riderFilter,setRiderFilter]=useState('all')
@@ -59,7 +64,10 @@ export default function TripsFast(){
   const [isImageDragging,setIsImageDragging]=useState(false)
   const [rejectTrip,setRejectTrip]=useState<any|null>(null)
   const [rejectReason,setRejectReason]=useState('')
+  const [bulkBusy,setBulkBusy]=useState(false)
+  const inFlightRef=useRef(new Set<string>())
   const requestSeq=useRef(0)
+  const decisionRevisionRef=useRef(0)
   const imageViewportRef=useRef<HTMLDivElement|null>(null)
   const imageDragRef=useRef({pointerId:-1,x:0,y:0,scrollLeft:0,scrollTop:0})
 
@@ -81,6 +89,7 @@ export default function TripsFast(){
 
   async function load(){
     const seq=++requestSeq.current
+    const revisionAtStart=decisionRevisionRef.current
     try{
       setLoading(true)
       const {data,error}=await supabase.rpc('admin_trips_fast',{
@@ -88,7 +97,7 @@ export default function TripsFast(){
         p_rider_id:riderFilter==='all'?null:riderFilter,p_search:debouncedSearch||null,p_limit:pageSize,p_offset:page*pageSize,
       })
       if(error)throw error
-      if(seq!==requestSeq.current)return
+      if(seq!==requestSeq.current||revisionAtStart!==decisionRevisionRef.current)return
       const result=rpcResult(data)
       if(!result?.success)throw new Error(result?.message||'تعذر تحميل المشاوير')
       setRows(Array.isArray(result.rows)?result.rows:[])
@@ -119,16 +128,55 @@ export default function TripsFast(){
     setSelected(prev=>{const next=new Set(prev);next.delete(id);return next});setDetails((current: any)=>current?.id===id?null:current)
   }
 
-  async function changeStatus(trip:any,status:'approved'|'rejected'|'pending_approval',reason?:string){
-    const previous={...trip},previousStatus=String(trip.status||'')
-    const patch=status==='approved'?{status:'approved',review_status:'approved',approved_at:new Date().toISOString(),rejection_reason:null,needs_review:false,review_reason:null}:status==='rejected'?{status:'rejected',review_status:'rejected',approved_at:null,rejection_reason:reason||'تم الرفض إداريًا',needs_review:false,review_reason:null}:{status:'pending_approval',review_status:'pending_approval',approved_at:null,rejection_reason:null,needs_review:true,review_reason:'إعادة للمراجعة الإدارية'}
-    setBusyId(trip.id,true);patchLocal(trip.id,patch)
+  async function confirmedTripRows(ids:string[],status:DecisionStatus){
+    const {data,error}=await supabase.from('internal_trips')
+      .select('id,status,review_status,approved_at,rejection_reason,needs_review,review_reason')
+      .in('id',ids)
+    if(error)throw error
+    return confirmedTripDecisions(data,ids,status)
+  }
+
+  async function writeTripDecisions(ids:string[],status:DecisionStatus,patch:Record<string,unknown>,previousStatus:string){
+    // A conditional write avoids silently overwriting a decision taken in another tab.
+    const {data,error}=await supabase.from('internal_trips')
+      .update(patch).in('id',ids).eq('status',previousStatus)
+      .select('id,status,review_status,approved_at,rejection_reason,needs_review,review_reason')
+    if(!error)return confirmedTripDecisions(data,ids,status)
+    // The reply can time out AFTER commit. Read only; never replay the write.
     try{
-      const {error}=await supabase.from('internal_trips').update(patch).eq('id',trip.id);if(error)throw error
-      updateSummaryStatus(previousStatus,status);removeIfOutsideStatusFilter(trip.id,status)
+      const committed=await confirmedTripRows(ids,status)
+      if(committed.length)return committed
+    }catch{ /* preserve the original uncertain failure */ }
+    throw new Error('تعذر تأكيد حفظ القرار. افحص الحالة قبل إعادة المحاولة؛ لن نكرر الحفظ تلقائيًا.')
+  }
+
+  function applyConfirmedBulk(ids:string[],confirmed:any[],fromStatus:string,toStatus:DecisionStatus){
+    const saved=new Set(confirmed.map(row=>String(row.id)))
+    if(saved.size)decisionRevisionRef.current+=1
+    const byId=new Map(confirmed.map(row=>[String(row.id),row]))
+    setRows(prev=>prev.filter(row=>statusFilter==='all'||statusFilter===toStatus||!saved.has(row.id))
+      .map(row=>byId.has(row.id)?{...row,...byId.get(row.id)}:row))
+    if(statusFilter!=='all'&&statusFilter!==toStatus)setTotalFiltered(prev=>Math.max(0,prev-saved.size))
+    setSelected(prev=>new Set([...prev].filter(id=>!saved.has(id))))
+    setDetails((current:any)=>current&&byId.has(current.id)?{...current,...byId.get(current.id)}:current)
+    updateSummaryStatus(fromStatus,toStatus,saved.size)
+    return saved.size===ids.length
+  }
+
+  async function changeStatus(trip:any,status:'approved'|'rejected'|'pending_approval',reason?:string){
+    if(inFlightRef.current.has(trip.id))return
+    inFlightRef.current.add(trip.id)
+    const previousStatus=String(trip.status||'')
+    const patch=status==='approved'?{status:'approved',review_status:'approved',approved_at:new Date().toISOString(),rejection_reason:null,needs_review:false,review_reason:null}:status==='rejected'?{status:'rejected',review_status:'rejected',approved_at:null,rejection_reason:reason||'تم الرفض إداريًا',needs_review:false,review_reason:null}:{status:'pending_approval',review_status:'pending_approval',approved_at:null,rejection_reason:null,needs_review:true,review_reason:'إعادة للمراجعة الإدارية'}
+    setBusyId(trip.id,true)
+    try{
+      const confirmed=await writeTripDecisions([trip.id],status,patch,previousStatus)
+      if(confirmed.length!==1)throw new Error('الحالة تغيرت من جهاز آخر أو لم تُحفظ. حدّث القائمة وراجعها.')
+      decisionRevisionRef.current+=1
+      patchLocal(trip.id,confirmed[0]);updateSummaryStatus(previousStatus,status);removeIfOutsideStatusFilter(trip.id,status)
       toast.success(status==='approved'?'تم اعتماد المشوار':status==='rejected'?'تم رفض المشوار':'تمت إعادة المشوار للمراجعة')
-    }catch(error){patchLocal(trip.id,previous);toast.error('تعذر حفظ القرار وتمت إعادة الحالة السابقة')}
-    finally{setBusyId(trip.id,false)}
+    }catch(error:any){toast.error(error?.message||'تعذر تأكيد حفظ القرار')}
+    finally{inFlightRef.current.delete(trip.id);setBusyId(trip.id,false)}
   }
 
   function toggle(id:string){setSelected(prev=>{const next=new Set(prev);next.has(id)?next.delete(id):next.add(id);return next})}
@@ -136,18 +184,29 @@ export default function TripsFast(){
   const allPendingSelected=pendingVisible.length>0&&pendingVisible.every(r=>selected.has(r.id))
   function toggleAllPending(){setSelected(prev=>{const next=new Set(prev);allPendingSelected?pendingVisible.forEach(r=>next.delete(r.id)):pendingVisible.forEach(r=>next.add(r.id));return next})}
   async function bulkApprove(){
+    if(bulkBusy)return
     const ids=[...selected].filter(id=>rows.some(r=>r.id===id&&r.status==='pending_approval'));if(!ids.length)return toast.error('اختر مشاوير مستنية اعتماد')
-    const now=new Date().toISOString();const {error}=await supabase.from('internal_trips').update({status:'approved',review_status:'approved',approved_at:now,rejection_reason:null,needs_review:false,review_reason:null}).in('id',ids)
-    if(error)return toast.error('فشل اعتماد المجموعة')
-    setRows(prev=>statusFilter==='pending_approval'?prev.filter(row=>!ids.includes(row.id)):prev.map(row=>ids.includes(row.id)?{...row,status:'approved',review_status:'approved',approved_at:now,rejection_reason:null,needs_review:false,review_reason:null}:row))
-    if(statusFilter==='pending_approval')setTotalFiltered(prev=>Math.max(0,prev-ids.length));updateSummaryStatus('pending_approval','approved',ids.length);setSelected(new Set());toast.success(`تم اعتماد ${ids.length} مشوار`)
+    setBulkBusy(true)
+    try{
+      const now=new Date().toISOString()
+      const confirmed=await writeTripDecisions(ids,'approved',{status:'approved',review_status:'approved',approved_at:now,rejection_reason:null,needs_review:false,review_reason:null},'pending_approval')
+      const complete=applyConfirmedBulk(ids,confirmed,'pending_approval','approved')
+      if(complete)toast.success(`تم اعتماد ${confirmed.length} مشوار`)
+      else toast.warning(`تأكد اعتماد ${confirmed.length} من ${ids.length} فقط. راجع الباقي قبل إعادة المحاولة.`)
+    }catch(error:any){toast.error(error?.message||'تعذر تأكيد اعتماد المجموعة')}
+    finally{setBulkBusy(false)}
   }
   async function bulkReject(reason:string){
+    if(bulkBusy)return
     const ids=[...selected].filter(id=>rows.some(r=>r.id===id&&r.status==='pending_approval'));if(!ids.length)return toast.error('اختر مشاوير مستنية اعتماد')
-    const {error}=await supabase.from('internal_trips').update({status:'rejected',review_status:'rejected',approved_at:null,rejection_reason:reason,needs_review:false,review_reason:null}).in('id',ids)
-    if(error)return toast.error('فشل رفض المجموعة')
-    setRows(prev=>statusFilter==='pending_approval'?prev.filter(row=>!ids.includes(row.id)):prev.map(row=>ids.includes(row.id)?{...row,status:'rejected',review_status:'rejected',approved_at:null,rejection_reason:reason,needs_review:false,review_reason:null}:row))
-    if(statusFilter==='pending_approval')setTotalFiltered(prev=>Math.max(0,prev-ids.length));updateSummaryStatus('pending_approval','rejected',ids.length);setSelected(new Set());toast.success(`تم رفض ${ids.length} مشوار`)
+    setBulkBusy(true)
+    try{
+      const confirmed=await writeTripDecisions(ids,'rejected',{status:'rejected',review_status:'rejected',approved_at:null,rejection_reason:reason,needs_review:false,review_reason:null},'pending_approval')
+      const complete=applyConfirmedBulk(ids,confirmed,'pending_approval','rejected')
+      if(complete)toast.success(`تم رفض ${confirmed.length} مشوار`)
+      else toast.warning(`تأكد رفض ${confirmed.length} من ${ids.length} فقط. راجع الباقي قبل إعادة المحاولة.`)
+    }catch(error:any){toast.error(error?.message||'تعذر تأكيد رفض المجموعة')}
+    finally{setBulkBusy(false)}
   }
 
   function handleCycleApply(from:string,to:string){

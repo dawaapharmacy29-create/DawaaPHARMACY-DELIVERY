@@ -29,6 +29,8 @@ test('a later import cannot override human decisions', () => {
   assert.equal(preserveHumanDecision({ bconnect_match_status: 'manually_approved' }), true)
   assert.equal(preserveHumanDecision({ count_exclusion_reason: 'marked_not_found_by_admin' }), true)
   assert.equal(preserveHumanDecision({ bconnect_match_status: 'pending' }), false)
+  assert.equal(preserveHumanDecision({ duplicate_review_status: 'approved', bconnect_match_status: 'matched' }), true)
+  assert.equal(preserveHumanDecision({ duplicate_review_status: 'rejected', bconnect_match_status: 'matched' }), true)
 })
 
 test('the same number in two source branches needs review', () => {

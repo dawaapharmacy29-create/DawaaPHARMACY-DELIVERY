@@ -1,4 +1,4 @@
-import { useEffect, useRef, type FormEvent } from 'react'
+import { useRef, type FormEvent } from 'react'
 import * as XLSX from 'xlsx'
 import { toast } from 'sonner'
 import Reconciliation from './Reconciliation'
@@ -7,16 +7,9 @@ import OperationsAdminTabs from '../../components/OperationsAdminTabs'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const BULK_WRITE_TABLES = new Set(['monthly_system_invoices', 'monthly_invoice_reconciliation_results'])
-const RETRYABLE_MESSAGE = /(timeout|network|fetch|connection|statement timeout|انتهى|شبكة)/i
-const INLINE_ACTION_LABELS = [
-  'اعتماد يدوي',
-  'استبعاد',
-  'حذف مع حفظ البيان',
-  'استعادة',
-  'تحويل لمندوب',
-  'حفظ التعديل',
-  'تعديل البيانات',
-]
+// Only a rejected HTTP payload can be split safely. A timeout is ambiguous:
+// the database may already have committed the write before the reply was lost.
+const SAFE_SPLIT_MESSAGE = /(payload too large|request entity too large|http 413|status 413)/i
 
 type BulkWriteMode = 'insert' | 'upsert'
 
@@ -108,36 +101,11 @@ function findBatchId(value: unknown): string | null {
   return null
 }
 
-function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
 function messageOf(error: unknown): string {
   if (!error) return ''
   if (typeof error === 'string') return error
   const value = error as Record<string, unknown>
   return String(value.message || value.details || value.hint || '')
-}
-
-async function withRetry<T>(run: () => Promise<T>, attempts = 4): Promise<T> {
-  let lastError: unknown
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      const result: any = await run()
-      if (result?.error) {
-        const text = messageOf(result.error)
-        if (!RETRYABLE_MESSAGE.test(text) || attempt === attempts - 1) return result
-        lastError = result.error
-      } else {
-        return result
-      }
-    } catch (error) {
-      lastError = error
-      if (!RETRYABLE_MESSAGE.test(messageOf(error)) || attempt === attempts - 1) throw error
-    }
-    await sleep(700 * Math.pow(2, attempt))
-  }
-  throw lastError
 }
 
 function createGate(maxConcurrent: number) {
@@ -175,7 +143,8 @@ function wrapBuilder(builder: any): any {
     get(target, property, receiver) {
       if (property === 'then') {
         return (resolve: (value: unknown) => void, reject: (reason: unknown) => void) => {
-          runLimited(() => withRetry(() => Promise.resolve(target), 4)).then(resolve, reject)
+          // A write must be sent once; retrying an ambiguous timeout can repeat it.
+          runLimited(() => Promise.resolve(target)).then(resolve, reject)
         }
       }
 
@@ -210,10 +179,10 @@ async function writeChunk(tableName: string, mode: BulkWriteMode, rows: unknown[
     return Promise.resolve(mode === 'upsert' ? table.upsert(preparedRows, options) : table.insert(preparedRows, options))
   }
 
-  const result: any = await withRetry(run, 4)
+  const result: any = await run()
   if (!result?.error) return result
 
-  const retryable = RETRYABLE_MESSAGE.test(messageOf(result.error))
+  const retryable = SAFE_SPLIT_MESSAGE.test(messageOf(result.error))
   if (!retryable || rows.length === 1) return result
 
   const middle = Math.ceil(rows.length / 2)
@@ -330,7 +299,9 @@ if (!client.__reconciliationNetworkPatched) {
       }
     }
 
-    const result: any = await withRetry(() => originalRpc(functionName, args, options), 4)
+    // Global RPC retries are unsafe: this includes approval and accounting writes.
+    // Keep the archive safety guard above, but never replay an unknown RPC.
+    const result: any = await originalRpc(functionName, args, options)
     if (functionName !== 'save_monthly_invoice_import_batch' || result?.error) return result
 
     const batchId = findBatchId(result?.data)
@@ -365,10 +336,6 @@ if (!client.__reconciliationNetworkPatched) {
           }
         }
 
-        if (property === 'update' && tableName === 'delivery_orders') {
-          return (...args: unknown[]) => wrapBuilder((target as any).update(...args))
-        }
-
         const value = Reflect.get(target, property, receiver)
         return typeof value === 'function' ? value.bind(target) : value
       },
@@ -378,89 +345,8 @@ if (!client.__reconciliationNetworkPatched) {
   client.__reconciliationNetworkPatched = true
 }
 
-function isInlineAction(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false
-  const button = target.closest('button')
-  if (!button) return false
-  const label = (button.textContent || '').replace(/\s+/g, ' ').trim()
-  return INLINE_ACTION_LABELS.some(action => label.includes(action))
-}
-
 export default function ReconciliationSafe() {
-  const rootRef = useRef<HTMLDivElement>(null)
-  const cleanupRef = useRef<(() => void) | null>(null)
   const normalizingFileRef = useRef(false)
-
-  useEffect(() => () => cleanupRef.current?.(), [])
-
-  useEffect(() => {
-    const root = rootRef.current
-    if (!root) return
-
-    const keepViewStable = (event: Event) => {
-      if (!isInlineAction(event.target)) return
-      if (root.dataset.actionBusy === 'true') return
-
-      cleanupRef.current?.()
-      root.dataset.actionBusy = 'true'
-
-      const scrollY = window.scrollY
-      const minHeight = Math.max(root.scrollHeight, root.getBoundingClientRect().height)
-      const snapshot = root.cloneNode(true) as HTMLDivElement
-      snapshot.removeAttribute('data-action-busy')
-      snapshot.setAttribute('aria-hidden', 'true')
-      snapshot.style.position = 'absolute'
-      snapshot.style.inset = '0'
-      snapshot.style.zIndex = '20'
-      snapshot.style.background = '#eef7f7'
-      snapshot.style.pointerEvents = 'auto'
-      snapshot.style.overflow = 'hidden'
-
-      const badge = document.createElement('div')
-      badge.textContent = 'جارٍ حفظ التعديل…'
-      badge.style.position = 'fixed'
-      badge.style.left = '24px'
-      badge.style.bottom = '24px'
-      badge.style.zIndex = '9999'
-      badge.style.background = '#078f91'
-      badge.style.color = '#fff'
-      badge.style.padding = '10px 16px'
-      badge.style.borderRadius = '999px'
-      badge.style.fontWeight = '700'
-      badge.style.boxShadow = '0 8px 24px rgba(0,0,0,.18)'
-
-      const previousPosition = root.style.position
-      const previousMinHeight = root.style.minHeight
-      root.style.position = 'relative'
-      root.style.minHeight = `${minHeight}px`
-      root.appendChild(snapshot)
-      document.body.appendChild(badge)
-
-      let frames = 0
-      const restoreScroll = () => {
-        window.scrollTo({ top: scrollY, behavior: 'auto' })
-        frames += 1
-        if (frames < 120) requestAnimationFrame(restoreScroll)
-      }
-      requestAnimationFrame(restoreScroll)
-
-      const cleanup = () => {
-        snapshot.remove()
-        badge.remove()
-        root.style.position = previousPosition
-        root.style.minHeight = previousMinHeight
-        delete root.dataset.actionBusy
-        window.scrollTo({ top: scrollY, behavior: 'auto' })
-        cleanupRef.current = null
-      }
-
-      cleanupRef.current = cleanup
-      window.setTimeout(cleanup, 3200)
-    }
-
-    root.addEventListener('click', keepViewStable, true)
-    return () => root.removeEventListener('click', keepViewStable, true)
-  }, [])
 
   async function handleFileChangeCapture(event: FormEvent<HTMLDivElement>) {
     const input = event.target as HTMLInputElement | null
@@ -493,7 +379,7 @@ export default function ReconciliationSafe() {
   }
 
   return (
-    <div ref={rootRef} onChangeCapture={handleFileChangeCapture}>
+    <div onChangeCapture={handleFileChangeCapture}>
       <div className="mb-4"><OperationsAdminTabs /></div>
       <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800" dir="rtl">
         المطابقة الدقيقة مفعلة: رقم الفاتورة + الفرع الصحيح من قاعدة البيانات، مع مراجعة التاريخ وكود العميل والقيمة والتكرارات قبل الاحتساب.

@@ -3,6 +3,7 @@ import { Bell, Printer, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import ReportsAdminTabs from '../../components/ReportsAdminTabs'
+import { isRiderOrderCountable, riderOrderEarning } from '../../lib/duplicateVisitAccounting'
 
 type Row = Record<string, any>
 type AdjustmentType = 'reward' | 'penalty'
@@ -88,7 +89,7 @@ export default function RiderMonthlyReports() {
   useEffect(() => { void loadReport() }, [riderId, from, to])
 
   const summary = useMemo(() => {
-    const validOrders = orders.filter(o => !['failed', 'cancelled', 'canceled'].includes(statusOf(o)))
+    const validOrders = orders.filter(isRiderOrderCountable)
     const normalOrders = validOrders.filter(o => orderMultiplier(o) < 1.5)
     const multiplierOrders = validOrders.filter(o => orderMultiplier(o) >= 1.5)
     const failedOrders = orders.filter(o => statusOf(o) === 'failed')
@@ -96,8 +97,8 @@ export default function RiderMonthlyReports() {
     const pendingTrips = trips.filter(t => statusOf(t) === 'pending_approval')
     const orderRate = Number(rider?.order_rate || 0)
     const tripRate = Number(rider?.trip_rate || 0)
-    const normalOrdersValue = normalOrders.reduce((sum, o) => sum + Number(o.order_earning ?? orderRate), 0)
-    const multiplierOrdersValue = multiplierOrders.reduce((sum, o) => sum + Number(o.order_earning ?? orderRate * orderMultiplier(o)), 0)
+    const normalOrdersValue = normalOrders.reduce((sum, o) => sum + riderOrderEarning(o, orderRate), 0)
+    const multiplierOrdersValue = multiplierOrders.reduce((sum, o) => sum + riderOrderEarning(o, orderRate), 0)
     const tripsValue = approvedTrips.reduce((sum, t) => sum + Number(t.trip_earning ?? tripRate), 0)
     const rewardsTotal = adjustments.filter(a => a.adjustment_type === 'reward' && String(a.status || '').toLowerCase() === 'approved').reduce((sum, a) => sum + Math.abs(Number(a.final_amount ?? a.amount ?? 0)), 0)
     const penaltiesTotal = adjustments.filter(a => a.adjustment_type === 'penalty' && String(a.status || '').toLowerCase() === 'approved').reduce((sum, a) => sum + Math.abs(Number(a.final_amount ?? a.amount ?? 0)), 0)

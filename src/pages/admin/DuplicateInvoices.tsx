@@ -6,7 +6,9 @@ import { DeliveryOrder, Rider } from '../../lib/types'
 import { approveDuplicateInvoice, getRiders, rejectDuplicateInvoice } from '../../lib/delivery'
 import { duplicateReasonLabel, formatCairoDateTime, getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
+import { fetchAllRows } from '../../lib/fetchAllRows'
 import { getRiderSession } from '../../lib/auth'
+import { canReviewDuplicatePair, isDuplicateReviewPending, patchCommittedDuplicateOrders } from '../../lib/duplicateInvoiceReviewState'
 import CycleSelector from '../../components/CycleSelector'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
 import OperationsAdminTabs from '../../components/OperationsAdminTabs'
@@ -38,6 +40,8 @@ function safeStatus(order: any) {
 }
 
 const VISIT_GATEWAY_ENABLED = import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENABLED === 'true'
+// Enable only after the revised production RPC and reporting checks are verified.
+const DUAL_VISIT_APPROVAL_ENABLED = import.meta.env.VITE_DELIVERY_DUAL_DUPLICATE_APPROVAL_V1_ENABLED === 'true'
 const DECISION_REQUEST_TIMEOUT_MS = 20000
 
 async function boundedDecisionRequest<T>(request: PromiseLike<T>, timeoutMs = DECISION_REQUEST_TIMEOUT_MS): Promise<T> {
@@ -74,7 +78,9 @@ export default function DuplicateInvoices() {
   const [refreshing, setRefreshing] = useState(false)
   const loadedPeriodRef = useRef<string | null>(null)
   const loadSequenceRef = useRef(0)
-  const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
+  const decisionRevisionRef = useRef(0)
+  // The manager's landing view is an actionable queue, not an archive of old decisions.
+  const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending')
   const [searchTerm, setSearchTerm] = useState('')
   const [detailsOrder, setDetailsOrder] = useState<DeliveryOrder | null>(null)
   const [decisionInvoice, setDecisionInvoice] = useState<string | null>(null)
@@ -107,22 +113,28 @@ export default function DuplicateInvoices() {
 
   async function loadAll() {
     const requestId = ++loadSequenceRef.current
+    const revisionAtStart = decisionRevisionRef.current
     const periodKey = `${selectedFrom}:${selectedTo}`
     const isNewPeriod = loadedPeriodRef.current !== periodKey
     try {
       if (isNewPeriod) setLoading(true)
       else setRefreshing(true)
       const [byDeliveryDate, byWorkDate, ridersData] = await Promise.allSettled([
-        supabase.from('delivery_orders').select('*').gte('delivery_date', selectedFrom).lte('delivery_date', selectedTo).order('registered_at', { ascending: false }).limit(50000),
-        supabase.from('delivery_orders').select('*').gte('work_date', selectedFrom).lte('work_date', selectedTo).order('registered_at', { ascending: false }).limit(50000),
+        fetchAllRows<DeliveryOrder>({ table: 'delivery_orders', orderColumn: 'registered_at', ascending: false,
+          filters: [{column:'delivery_date',operator:'gte',value:selectedFrom},{column:'delivery_date',operator:'lte',value:selectedTo}] }),
+        // Work-date fallback is only for legacy rows without delivery_date.
+        // These two datasets are disjoint, so the browser does not download
+        // the same wide invoice rows twice.
+        fetchAllRows<DeliveryOrder>({ table: 'delivery_orders', orderColumn: 'registered_at', ascending: false,
+          filters: [{column:'delivery_date',operator:'is',value:null},{column:'work_date',operator:'gte',value:selectedFrom},{column:'work_date',operator:'lte',value:selectedTo}] }),
         getRiders(),
       ])
 
-      if ([byDeliveryDate, byWorkDate].some(result => result.status === 'rejected' || (result.status === 'fulfilled' && result.value.error))) {
+      if ([byDeliveryDate, byWorkDate].some(result => result.status === 'rejected')) {
         throw new Error('تعذر تحميل كل تسجيلات الدورة؛ لا يمكن اتخاذ قرار من بيانات ناقصة')
       }
 
-      const rows = [byDeliveryDate, byWorkDate].flatMap((res: any) => res.status === 'fulfilled' && !res.value.error ? (res.value.data || []) : []) as DeliveryOrder[]
+      const rows = [byDeliveryDate, byWorkDate].flatMap(res => res.status === 'fulfilled' ? res.value : []) as DeliveryOrder[]
       const unique = new Map<string, DeliveryOrder>()
       rows.forEach((order, index) => unique.set(String((order as any).id || index), order))
       const allOrders = Array.from(unique.values())
@@ -139,7 +151,7 @@ export default function DuplicateInvoices() {
         return Boolean((order as any).is_duplicate_invoice || (key && (invoiceCounts.get(key) || 0) > 1))
       })
 
-      if (requestId !== loadSequenceRef.current) return
+      if (requestId !== loadSequenceRef.current || revisionAtStart !== decisionRevisionRef.current) return
 
       setOrders(duplicateOrders.sort((a: any, b: any) => String(orderDate(b)).localeCompare(String(orderDate(a)))))
       loadedPeriodRef.current = periodKey
@@ -169,6 +181,18 @@ export default function DuplicateInvoices() {
     }
     const updates = new Map(data.map(row => [String(row.id), row as DeliveryOrder]))
     setOrders(current => current.map(order => updates.get(String(order.id)) || order))
+  }
+
+  function applyCommittedSingle(orderId: string, status: 'approved' | 'rejected') {
+    decisionRevisionRef.current += 1
+    setOrders(current => patchCommittedDuplicateOrders(current, new Map([[orderId, status]])))
+  }
+
+  function refreshSingleInBackground(orderId: string) {
+    void refreshDecidedOrders([orderId]).catch(error => {
+      console.warn('Decision committed but row display refresh was delayed', error)
+      toast.warning('القرار محفوظ، لكن تحديث بعض التفاصيل اتأخر.')
+    })
   }
 
   async function loadVisitQueue() {
@@ -255,6 +279,11 @@ export default function DuplicateInvoices() {
   }, [decisionInvoice])
 
   function openUnifiedDecision(key: string) {
+    const group = invoiceGroups.find(item => item.key === key)
+    if (!group || !canReviewDuplicatePair(group.entries)) {
+      toast.info('القرار الموحد غير متاح لهذه الحالة؛ أكمل مراجعة التسجيل المعلق بشكل فردي')
+      return
+    }
     setDecisionChoice(null)
     setDecisionNote('')
     setDecisionRejectReason('')
@@ -263,17 +292,18 @@ export default function DuplicateInvoices() {
     setDecisionInvoice(key)
   }
 
-  async function isUnifiedDecisionCommitted(firstId: string, secondId: string, choice: 'first' | 'second' | 'none'): Promise<boolean> {
+  async function isUnifiedDecisionCommitted(firstId: string, secondId: string, choice: 'first' | 'second' | 'both' | 'none', timeoutMs = 10000): Promise<boolean> {
     const { data, error } = await boundedDecisionRequest(supabase.from('delivery_orders')
-      .select('id,duplicate_review_status,not_countable,needs_review')
-      .in('id', [firstId, secondId]), 10000)
+      .select('id,duplicate_review_status,not_countable,needs_review,is_countable')
+      .in('id', [firstId, secondId]), timeoutMs)
     if (error || !data || data.length !== 2) return false
     const byId = new Map(data.map(row => [String(row.id), row]))
     return ([firstId, secondId] as const).every((id, index) => {
-      const shouldApprove = (choice === 'first' && index === 0) || (choice === 'second' && index === 1)
+      const shouldApprove = choice === 'both' || (choice === 'first' && index === 0) || (choice === 'second' && index === 1)
       const order = byId.get(id)
       return order?.duplicate_review_status === (shouldApprove ? 'approved' : 'rejected') &&
-        order.not_countable === !shouldApprove && order.needs_review === false
+        order.not_countable === !shouldApprove && order.needs_review === false &&
+        (choice !== 'both' || order.is_countable === true)
     })
   }
 
@@ -286,15 +316,46 @@ export default function DuplicateInvoices() {
     }
   }
 
+  function applyCommittedPair(firstId: string, secondId: string, firstStatus: string, secondStatus: string) {
+    if (!['approved', 'rejected'].includes(firstStatus) || !['approved', 'rejected'].includes(secondStatus)) return
+    decisionRevisionRef.current += 1
+    const statuses = new Map<string, 'approved' | 'rejected'>([[firstId, firstStatus as 'approved' | 'rejected'], [secondId, secondStatus as 'approved' | 'rejected']])
+    setOrders(current => patchCommittedDuplicateOrders(current, statuses))
+  }
+
+  // Supabase can commit a transaction before its HTTP response reaches the browser.
+  // Small read-only checks let the manager continue as soon as BOTH final states are visible.
+  async function observeCommittedPair(firstId: string, secondId: string, choice: 'first' | 'second' | 'both' | 'none', isFinished: () => boolean) {
+    for (const waitMs of [900, 1800, 2700]) {
+      await new Promise<void>(resolve => setTimeout(resolve, waitMs))
+      if (isFinished()) return null
+      try {
+        if (await isUnifiedDecisionCommitted(firstId, secondId, choice, 2500)) {
+          return {
+            first_status: choice === 'both' || choice === 'first' ? 'approved' : 'rejected',
+            second_status: choice === 'both' || choice === 'second' ? 'approved' : 'rejected',
+          }
+        }
+      } catch {
+        // Read-only probe failure must never initiate or repeat a write.
+      }
+    }
+    return null
+  }
+
   async function saveUnifiedDecision() {
     if (savingPairDecision || decidingRef.current || decisionUncertain || !decisionGroup || decisionGroup.entries.length !== 2 || !decisionChoice) return
-    if (decisionChoice === 'both') {
-      toast.error('اعتماد زيارتين مستقلتين يحتاج مراجعة الزيارات، ولا يمكن احتساب الفاتورة مرتين')
+    if (decisionChoice === 'both' && !DUAL_VISIT_APPROVAL_ENABLED) {
+      toast.error('تفعيل اعتماد الزيارتين ينتظر نشر ضوابط الحسابات على قاعدة البيانات')
       return
     }
     const rejectionReason = decisionRejectReason === 'سبب آخر' ? decisionCustomReason.trim() : decisionRejectReason.trim()
-    if (rejectionReason.length < 5) {
+    if (decisionChoice !== 'both' && rejectionReason.length < 5) {
       toast.error('حدد سببًا واضحًا لرفض التسجيل غير المستحق')
+      return
+    }
+    if (decisionChoice === 'both' && decisionNote.trim().length < 10) {
+      toast.error('اكتب ملحوظة إدارية توضح سبب الزيارتين المستقلتين')
       return
     }
     const [first, second] = decisionGroup.entries
@@ -303,24 +364,32 @@ export default function DuplicateInvoices() {
       return
     }
     const token = getRiderSession().session_token || ''
-    if (!window.confirm(`تأكيد القرار النهائي لفاتورة ${decisionGroup.invoice}؟\nسيتم تسجيل قرار كل مندوب وحفظ السبب في سجل المراجعة. لا يمكن التراجع تلقائيًا عن قرار نهائي.`)) return
+    if (!window.confirm(`تأكيد القرار النهائي لفاتورة ${decisionGroup.invoice}؟\n${decisionChoice === 'both' ? 'سيُحسب مشواران مستقلان، كل زيارة بمعاملها المسجّل، وقيمة الفاتورة مرة واحدة فقط.' : 'سيتم تسجيل قرار كل مندوب وحفظ سبب الرفض.'}\nلا يمكن التراجع تلقائيًا عن قرار نهائي.`)) return
+    let responseReceived = false
     try {
       decidingRef.current = true
       setSavingPairDecision(true)
-      const { data, error } = await boundedDecisionRequest(supabase.rpc('review_duplicate_invoice_pair_v1', {
+      const rpc = boundedDecisionRequest(supabase.rpc('review_duplicate_invoice_pair_v1', {
         p_token: token,
         p_first_order_id: String(first.id),
         p_second_order_id: String(second.id),
         p_choice: decisionChoice,
-        p_rejection_reason: rejectionReason,
+        p_rejection_reason: decisionChoice === 'both' ? null : rejectionReason,
         p_manager_note: decisionNote.trim() || null,
-      }))
-      if (error) throw error
+      }), 12000).then(result => {
+        if (result.error) throw result.error
+        return result.data
+      })
+      const observed = observeCommittedPair(String(first.id), String(second.id), decisionChoice, () => responseReceived)
+      const data = await Promise.race([rpc, observed.then(value => value || rpc)])
       if (!(data as any)?.first_status || !(data as any)?.second_status) throw new Error('لم يتم تأكيد حفظ القرارين')
+      responseReceived = true
+      applyCommittedPair(String(first.id), String(second.id), (data as any).first_status, (data as any).second_status)
       setDecisionInvoice(null)
       toast.success('تم اعتماد القرار النهائي للتسجيلين بنجاح')
       void refreshCommittedPair(String(first.id), String(second.id))
     } catch (error) {
+      responseReceived = true
       console.error(error)
       // A timed-out HTTP response does not imply the PostgreSQL transaction failed.
       // Reconcile both committed order states before ever inviting another write.
@@ -331,6 +400,7 @@ export default function DuplicateInvoices() {
         console.warn('Could not reconcile duplicate decision after request error', reconcileError)
       }
       if (committed) {
+        applyCommittedPair(String(first.id), String(second.id), decisionChoice === 'both' || decisionChoice === 'first' ? 'approved' : 'rejected', decisionChoice === 'both' || decisionChoice === 'second' ? 'approved' : 'rejected')
         setDecisionInvoice(null)
         toast.success('القرار محفوظ بالفعل في قاعدة البيانات وتم تأكيده للتسجيلين')
         void refreshCommittedPair(String(first.id), String(second.id))
@@ -345,11 +415,12 @@ export default function DuplicateInvoices() {
   }
 
   async function recheckUnifiedDecision() {
-    if (!decisionGroup || decisionGroup.entries.length !== 2 || !decisionChoice || decisionChoice === 'both' || savingPairDecision) return
+    if (!decisionGroup || decisionGroup.entries.length !== 2 || !decisionChoice || savingPairDecision) return
     setSavingPairDecision(true)
     try {
       const committed = await isUnifiedDecisionCommitted(String(decisionGroup.entries[0].id), String(decisionGroup.entries[1].id), decisionChoice)
       if (committed) {
+        applyCommittedPair(String(decisionGroup.entries[0].id), String(decisionGroup.entries[1].id), decisionChoice === 'both' || decisionChoice === 'first' ? 'approved' : 'rejected', decisionChoice === 'both' || decisionChoice === 'second' ? 'approved' : 'rejected')
         setDecisionInvoice(null)
         toast.success('تم التأكد: القرار النهائي محفوظ للتسجيلين')
         void refreshCommittedPair(String(decisionGroup.entries[0].id), String(decisionGroup.entries[1].id))
@@ -376,7 +447,11 @@ export default function DuplicateInvoices() {
     return matchesFilter && matchesSearch && matchesRider && matchesBranch
   }
   // A filtered group still shows every sibling: hiding the earlier delivery would mislead the reviewer.
-  const filteredGroups = invoiceGroups.filter(group => group.entries.some(matchesOrderFilters))
+  const filteredGroups = invoiceGroups.filter(group => {
+    // Pending is a GROUP decision, and a finalized pair must leave the queue.
+    if (filter === 'pending' && !group.entries.some(isDuplicateReviewPending)) return false
+    return group.entries.some(matchesOrderFilters)
+  })
 
   async function handleApprove(orderId: string) {
     if (decidingRef.current) return
@@ -395,9 +470,9 @@ export default function DuplicateInvoices() {
       decidingRef.current = true
       setDecidingOrderId(orderId)
       await approveDuplicateInvoice(orderId)
+      applyCommittedSingle(orderId, 'approved')
       toast.success('تم اعتماد هذا التسجيل فقط')
-      try { await refreshDecidedOrders([orderId]) }
-      catch { toast.warning('القرار محفوظ، لكن تحديث عرضه تعذر. اضغط تحديث القائمة لاحقًا.') }
+      refreshSingleInBackground(orderId)
     } catch (error) {
       console.error(error)
       toast.error('فشل اعتماد الفاتورة')
@@ -420,9 +495,9 @@ export default function DuplicateInvoices() {
       decidingRef.current = true
       setDecidingOrderId(orderId)
       await rejectDuplicateInvoice(orderId, reason)
+      applyCommittedSingle(orderId, 'rejected')
       toast.success('تم رفض هذا التسجيل فقط')
-      try { await refreshDecidedOrders([orderId]) }
-      catch { toast.warning('القرار محفوظ، لكن تحديث عرضه تعذر. اضغط تحديث القائمة لاحقًا.') }
+      refreshSingleInBackground(orderId)
     } catch (error) {
       console.error(error)
       toast.error('فشل رفض الفاتورة')
@@ -485,8 +560,8 @@ export default function DuplicateInvoices() {
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => setFilter('all')} className={`rounded-full px-4 py-2 text-sm font-black ${filter === 'all' ? 'bg-[#008E92] text-white' : 'bg-white text-slate-700'}`}>كل الفواتير ({invoiceGroups.length})</button>
-            <button onClick={() => setFilter('pending')} className={`rounded-full px-4 py-2 text-sm font-black ${filter === 'pending' ? 'bg-amber-500 text-white' : 'bg-white text-slate-700'}`}>قيد المراجعة ({reviewableOrders.filter(o => safeStatus(o) === 'pending').length} تسجيل)</button>
+            <button onClick={() => setFilter('pending')} className={`rounded-full px-4 py-2 text-sm font-black ${filter === 'pending' ? 'bg-amber-500 text-white' : 'bg-white text-slate-700'}`}>تحتاج قرار ({invoiceGroups.filter(group => group.entries.some(isDuplicateReviewPending)).length} فاتورة)</button>
+            <button onClick={() => setFilter('all')} className={`rounded-full px-4 py-2 text-sm font-black ${filter === 'all' ? 'bg-[#008E92] text-white' : 'bg-white text-slate-700'}`}>كل الفواتير والسجل ({invoiceGroups.length})</button>
             <button onClick={() => setFilter('approved')} className={`rounded-full px-4 py-2 text-sm font-black ${filter === 'approved' ? 'bg-emerald-500 text-white' : 'bg-white text-slate-700'}`}>معتمدة ({reviewableOrders.filter(o => safeStatus(o) === 'approved').length} تسجيل)</button>
             <button onClick={() => setFilter('rejected')} className={`rounded-full px-4 py-2 text-sm font-black ${filter === 'rejected' ? 'bg-rose-500 text-white' : 'bg-white text-slate-700'}`}>مرفوضة ({reviewableOrders.filter(o => safeStatus(o) === 'rejected').length} تسجيل)</button>
           </div>
@@ -498,7 +573,7 @@ export default function DuplicateInvoices() {
 
         {filteredGroups.length === 0 ? (
           <div className="rounded-3xl border border-dashed p-8 text-center font-bold text-slate-500">
-            {orders.length === 0 ? 'مفيش فواتير مكررة في الفترة المختارة' : 'مفيش نتائج مطابقة للبحث'}
+            {orders.length === 0 ? 'مفيش فواتير مكررة في الفترة المختارة' : filter === 'pending' && !searchTerm ? 'تمت مراجعة كل الفواتير المكررة في الدورة دي ✅' : 'مفيش نتائج مطابقة للبحث'}
           </div>
         ) : (
           <div className="space-y-3">
@@ -510,7 +585,8 @@ export default function DuplicateInvoices() {
                     <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{String((entries[0] as any).branch_name || (entries[0] as any).branch_id || 'فرع غير محسوم')}</span>
                     <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">{entries.length} تسجيلات</span>
                     <span className="text-xs font-bold text-slate-500">ترتيب التسجيلات حسب وقت تسجيلها، وليس تأكيدًا لترتيب التوصيل الفعلي — يمكنك قبول أو رفض أي تسجيل بشكل مستقل</span>
-                    {entries.length === 2 && !key.startsWith('unresolved:') && <button type="button" onClick={() => openUnifiedDecision(key)} className="rounded-xl bg-[#008E92] px-3 py-2 text-xs font-black text-white">مراجعة واعتماد قرار الفاتورة</button>}
+                    {entries.every(entry => !isDuplicateReviewPending(entry)) && <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800">تم إغلاق المراجعة</span>}
+                    {canReviewDuplicatePair(entries) && !key.startsWith('unresolved:') && <button type="button" disabled={savingPairDecision || decidingOrderId !== null} onClick={() => openUnifiedDecision(key)} className="rounded-xl bg-[#008E92] px-3 py-2 text-xs font-black text-white disabled:opacity-40">مراجعة واعتماد قرار الفاتورة</button>}
                   </div>
                   <div className="grid gap-3 lg:grid-cols-2">
                     {entries.map((order, index) => {
@@ -594,7 +670,7 @@ export default function DuplicateInvoices() {
               {decisionGroup.entries.map((entry, index) => (
                 <div key={entry.id} className="flex flex-wrap justify-between gap-2 border-b border-slate-200 py-1 last:border-0">
                   <span className="font-black">{index + 1}. {riderMap.get(entry.rider_id)?.name || (entry as any).rider_name || 'مندوب غير محدد'}</span>
-                  <span className="text-slate-600">{formatCairoDateTime((entry as any).registered_at || (entry as any).created_at || orderDate(entry))}</span>
+                  <span className="text-slate-600">{formatCairoDateTime((entry as any).registered_at || (entry as any).created_at || orderDate(entry))} — ×{Number((entry as any).order_multiplier || 1).toLocaleString('en-US')}</span>
                   {index === 1 && <span className="w-full text-xs text-slate-700">السبب: {duplicateReasonLabel(String((entry as any).duplicate_reason || ''))} — {(entry as any).duplicate_note || 'لا توجد ملاحظة'}</span>}
                 </div>
               ))}
@@ -604,14 +680,15 @@ export default function DuplicateInvoices() {
               {([
                 ['first', `${riderMap.get(decisionGroup.entries[0].rider_id)?.name || (decisionGroup.entries[0] as any).rider_name || 'المندوب الأول'} فقط`],
                 ['second', `${riderMap.get(decisionGroup.entries[1].rider_id)?.name || (decisionGroup.entries[1] as any).rider_name || 'المندوب الثاني'} فقط`],
-                ['both', 'الاثنان — زيارتان مستقلتان (بانتظار تحقق الحسابات)'],
+                ['both', DUAL_VISIT_APPROVAL_ENABLED ? 'الاثنان — زيارتان مستقلتان بمستحقين منفصلين' : 'الاثنان — بانتظار تفعيل ضمانات الحسابات'],
                 ['none', 'لا أحد — رفض التسجيلين'],
               ] as const).map(([value, label]) => (
-                <label key={value} className={`flex cursor-pointer items-center gap-2 rounded-xl border p-2.5 text-sm font-black ${decisionChoice === value ? 'border-teal-500 bg-teal-50' : 'border-slate-200'}`}>
-                  <input type="radio" checked={decisionChoice === value} onChange={() => setDecisionChoice(value)} />{label}
+                <label key={value} className={`flex items-center gap-2 rounded-xl border p-2.5 text-sm font-black ${value === 'both' && !DUAL_VISIT_APPROVAL_ENABLED ? 'cursor-not-allowed border-amber-200 bg-amber-50 text-amber-900' : 'cursor-pointer'} ${decisionChoice === value ? 'border-teal-500 bg-teal-50' : value === 'both' ? '' : 'border-slate-200'}`}>
+                  <input type="radio" checked={decisionChoice === value} disabled={value === 'both' && !DUAL_VISIT_APPROVAL_ENABLED} onChange={() => setDecisionChoice(value)} />{label}
                 </label>
               ))}
             </fieldset>
+            <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-900" role="note">كل زيارة فعلية تُحتسب بمعاملها المسجّل (×1 أو ×1.5)، لكن نفس فاتورة BConnect لها قيمة بيع واحدة فقط. {DUAL_VISIT_APPROVAL_ENABLED ? 'اعتماد الاثنين يحتاج تسليمًا مثبتًا للتسجيلين ومطابقة الفاتورة وملحوظة إدارية.' : 'اعتماد الاثنين محجوب لحين التحقق من تحديث قاعدة البيانات؛ إضافة ملحوظة وحدها لا تفعّله.'}</p>
             {decisionChoice && decisionChoice !== 'both' && (
               <fieldset className="space-y-2 rounded-xl border border-slate-200 p-3">
                 <legend className="px-1 text-sm font-black">سبب رفض {decisionChoice === 'none' ? 'التسجيلين' : decisionChoice === 'first' ? (riderMap.get(decisionGroup.entries[1].rider_id)?.name || (decisionGroup.entries[1] as any).rider_name || 'المندوب الثاني') : (riderMap.get(decisionGroup.entries[0].rider_id)?.name || (decisionGroup.entries[0] as any).rider_name || 'المندوب الأول')}</legend>
@@ -632,18 +709,18 @@ export default function DuplicateInvoices() {
                 const approved = decisionChoice === 'both' || (decisionChoice === 'first' && index === 0) || (decisionChoice === 'second' && index === 1)
                 return <p key={entry.id} className="py-1">{riderMap.get(entry.rider_id)?.name || (entry as any).rider_name || 'المندوب'}: {approved ? 'اعتماد مقترح' : `رفض مقترح — ${decisionRejectReason === 'سبب آخر' ? (decisionCustomReason.trim() || 'اكتب السبب') : (decisionRejectReason || 'سبب الرفض لم يُحدد')}`}</p>
               })}
-              {decisionChoice === 'both' && <p className="mt-2 text-xs text-rose-800">لا يمكن حفظ اعتماد زيارتين حتى نتأكد من عدم مضاعفة قيمة الفاتورة في التقارير والمستحقات.</p>}
+              {decisionChoice === 'both' && <p className="mt-2 text-xs text-emerald-900">مشواران مستحقان بمعاملين مسجّلين، وفاتورة بيع واحدة. بدون احتساب تلقائي لأي زيارة غير مسلّمة أو غير مطابقة لـBConnect.</p>}
               <p className="mt-2 text-xs">لن يُحفظ شيء قبل التأكيد. يعتمد الحفظ النهائي على تحقق قاعدة البيانات من هوية الفاتورة وحالة التسجيلين.</p>
             </div>
-            <label className="block text-sm font-bold">ملاحظة إدارية (اختيارية)
-              <textarea value={decisionNote} onChange={event => setDecisionNote(event.target.value)} rows={2} placeholder="توضيح عند الحاجة" className="mt-2 w-full resize-y rounded-xl border border-slate-200 p-2.5" />
+            <label className="block text-sm font-bold">ملاحظة إدارية {decisionChoice === 'both' ? '(إجبارية — 10 أحرف على الأقل)' : '(اختيارية)'}
+              <textarea value={decisionNote} onChange={event => setDecisionNote(event.target.value)} rows={2} placeholder={decisionChoice === 'both' ? 'مثال: المندوب عاد مرة ثانية لتسليم صنف ناقص / استلام مرتجع' : 'توضيح عند الحاجة'} className="mt-2 w-full resize-y rounded-xl border border-slate-200 p-2.5" />
             </label>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-white p-3 sm:px-5">
               {decisionUncertain && <p role="alert" className="w-full text-sm font-bold text-amber-900">النتيجة غير مؤكدة بسبب تأخر الاتصال. لا تعِد الحفظ؛ اضغط «تحقق من القرار» لمراجعة الحالة الفعلية.</p>}
               <button type="button" disabled={savingPairDecision} onClick={() => setDecisionInvoice(null)} className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-black disabled:opacity-50">إغلاق</button>
               {decisionUncertain && <button type="button" disabled={savingPairDecision} onClick={() => void recheckUnifiedDecision()} className="rounded-xl bg-amber-600 px-4 py-3 text-sm font-black text-white disabled:opacity-40">تحقق من القرار</button>}
-              <button type="button" disabled={savingPairDecision || decisionUncertain || !decisionChoice || decisionChoice === 'both' || (decisionRejectReason === 'سبب آخر' ? decisionCustomReason.trim().length < 5 : decisionRejectReason.trim().length < 5)} onClick={() => void saveUnifiedDecision()} className="rounded-xl bg-teal-700 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">{savingPairDecision ? 'جاري حفظ القرار...' : 'اعتماد القرار النهائي'}</button>
+              <button type="button" disabled={savingPairDecision || decisionUncertain || !decisionChoice || (decisionChoice === 'both' ? !DUAL_VISIT_APPROVAL_ENABLED || decisionNote.trim().length < 10 : (decisionRejectReason === 'سبب آخر' ? decisionCustomReason.trim().length < 5 : decisionRejectReason.trim().length < 5))} onClick={() => void saveUnifiedDecision()} className="rounded-xl bg-teal-700 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">{savingPairDecision ? 'جاري حفظ القرار...' : decisionChoice === 'both' && !DUAL_VISIT_APPROVAL_ENABLED ? 'اعتماد الاثنين ينتظر نشر ضمانات الحسابات' : decisionChoice === 'both' ? (decisionNote.trim().length < 10 ? 'اكتب سبب الزيارتين أولًا' : 'اعتماد الزيارتين المستقلتين') : decisionChoice && (decisionRejectReason === 'سبب آخر' ? decisionCustomReason.trim().length < 5 : decisionRejectReason.trim().length < 5) ? 'اختار سبب الرفض أولًا' : 'اعتماد القرار النهائي'}</button>
             </div>
           </section>
         </div>
@@ -662,3 +739,4 @@ export default function DuplicateInvoices() {
     </div>
   )
 }
+

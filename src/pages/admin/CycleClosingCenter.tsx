@@ -3,10 +3,11 @@ import { AlertTriangle, Archive, CheckCircle2, FileCheck2, LockKeyhole, PackageC
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import CycleSelector from '../../components/CycleSelector'
 import { loadCanonicalDeliveryData } from '../../lib/canonicalDeliveryData'
-import { isDelivered, isFailed, isMultiplier, num } from '../../lib/deliveryAnalytics'
+import { isDelivered, isFailed, isMultiplier } from '../../lib/deliveryAnalytics'
 import { cycleForDate, CYCLE_STATUS_LABELS, type DeliveryCycleStatus } from '../../lib/deliveryCycles'
 import { supabase } from '../../lib/supabase'
 import OperationsAdminTabs from '../../components/OperationsAdminTabs'
+import { uniqueDeliveryInvoiceValue } from '../../lib/duplicateVisitAccounting'
 
 type CycleDbRow = {
   id: string
@@ -31,7 +32,6 @@ type RiderSummary = {
   approvedTrips: number
   rejectedTrips: number
   pendingTrips: number
-  deliveredValue: number
 }
 
 const FINAL_ORDER_STATUSES = new Set(['delivered', 'failed', 'cancelled', 'canceled'])
@@ -138,7 +138,7 @@ export default function CycleClosingCenter() {
     const rejectedTrips = trips.filter(trip => REJECTED_TRIP_STATUSES.has(tripStatus(trip)) || trip.is_countable === false)
     const pendingTrips = trips.filter(trip => !APPROVED_TRIP_STATUSES.has(tripStatus(trip)) && !REJECTED_TRIP_STATUSES.has(tripStatus(trip)) && !trip.duplicate_of)
     const missingProofTrips = trips.filter(trip => !trip.duplicate_of && !String(trip.proof_image_path || trip.proof_image_url || '').trim())
-    const deliveredValue = deliveredOrders.reduce((sum, order) => sum + num(order.invoice_amount ?? order.invoice_value ?? order.amount), 0)
+    const deliveredValue = uniqueDeliveryInvoiceValue(deliveredOrders)
     return {
       totalOrders: orders.length,
       deliveredOrders: deliveredOrders.length,
@@ -177,7 +177,6 @@ export default function CycleClosingCenter() {
         approvedTrips: riderTrips.filter(trip => APPROVED_TRIP_STATUSES.has(tripStatus(trip)) && trip.is_countable !== false).length,
         rejectedTrips: riderTrips.filter(trip => REJECTED_TRIP_STATUSES.has(tripStatus(trip)) || trip.is_countable === false).length,
         pendingTrips: riderTrips.filter(trip => !APPROVED_TRIP_STATUSES.has(tripStatus(trip)) && !REJECTED_TRIP_STATUSES.has(tripStatus(trip))).length,
-        deliveredValue: deliveredOrders.reduce((sum, order) => sum + num(order.invoice_amount ?? order.invoice_value ?? order.amount), 0),
       }
     }).sort((a, b) => b.delivered - a.delivered || a.riderName.localeCompare(b.riderName, 'ar'))
   }, [orders, trips, riders])
@@ -228,7 +227,7 @@ export default function CycleClosingCenter() {
         <Metric icon={<Route/>} label="مشاوير معتمدة" value={summary.approvedTrips} hint={`${summary.totalTrips} إجمالي`} tone="emerald" />
         <Metric icon={<AlertTriangle/>} label="مشاوير مرفوضة" value={summary.rejectedTrips} hint={`${summary.pendingTrips} تنتظر`} tone="rose" />
         <Metric icon={<Users/>} label="الدليفري النشطون" value={riderRows.length} hint="لهم حركة في الدورة" tone="sky" />
-        <Metric icon={<FileCheck2/>} label="قيمة المسلّم" value={money(summary.deliveredValue)} hint={`${summary.failedOrders} أوردر فاشل`} tone="violet" />
+        <Metric icon={<FileCheck2/>} label="قيمة فواتير التسليم (تقديرية)" value={money(summary.deliveredValue)} hint="بدون تكرار رقم الفاتورة داخل الفرع — المرجع النهائي BConnect" tone="violet" />
       </section>
 
       <section className="grid gap-4 lg:grid-cols-4">
@@ -249,14 +248,14 @@ export default function CycleClosingCenter() {
 
       <section className="overflow-hidden rounded-[30px] border bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b p-5">
-          <div><h2 className="text-xl font-black">تقرير الدورة حسب الدليفري</h2><p className="text-xs font-bold text-slate-400">الأساس الذي سيُحوّل لاحقًا إلى Snapshot معتمد قبل الأرشفة.</p></div>
+          <div><h2 className="text-xl font-black">تقرير الدورة حسب الدليفري</h2><p className="text-xs font-bold text-slate-400">المشاوير تُنسب لكل مندوب؛ قيمة نفس الفاتورة لا تُنسب كمبيعات مرتين إذا نفذها مندوبان. مرجع المبيعات BConnect.</p></div>
           <div className="flex gap-2"><button type="button" onClick={() => navigate(`/admin/reconciliation?from=${selectedFrom}&to=${selectedTo}`)} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black">فتح المطابقة</button><button type="button" onClick={() => navigate('/admin/cash-flow')} className="rounded-2xl bg-[#008E92] px-4 py-2 text-sm font-black text-white">فتح الحساب الشهري</button></div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1050px] text-sm">
-            <thead className="bg-slate-50 text-xs text-slate-500"><tr><th className="p-4 text-right">الدليفري</th><th className="p-3">الفرع</th><th className="p-3">×1</th><th className="p-3">×1.5</th><th className="p-3">مسلم</th><th className="p-3">فاشل</th><th className="p-3">مشاوير معتمدة</th><th className="p-3">مرفوضة</th><th className="p-3">تنتظر</th><th className="p-3">قيمة المسلّم</th></tr></thead>
-            <tbody>{riderRows.map(row => <tr key={row.riderId} className="border-t text-center hover:bg-slate-50"><td className="p-4 text-right"><button type="button" onClick={() => navigate(`/admin/riders/${row.riderId}/performance`)} className="font-black text-[#008E92] hover:underline">{row.riderName}</button></td><td className="p-3 text-slate-500">{row.branchName}</td><td className="p-3 font-black">{english(row.orders1x)}</td><td className="p-3 font-black text-amber-700">{english(row.orders15x)}</td><td className="p-3 text-emerald-700">{english(row.delivered)}</td><td className="p-3 text-rose-700">{english(row.failed)}</td><td className="p-3 font-black text-emerald-700">{english(row.approvedTrips)}</td><td className="p-3 text-rose-700">{english(row.rejectedTrips)}</td><td className={row.pendingTrips ? 'p-3 font-black text-amber-700' : 'p-3'}>{english(row.pendingTrips)}</td><td className="p-3 font-black">{money(row.deliveredValue)}</td></tr>)}
-            {!riderRows.length && <tr><td colSpan={10} className="p-12 text-center font-bold text-slate-400">لا توجد حركة خلال الفترة المحددة.</td></tr>}</tbody>
+            <thead className="bg-slate-50 text-xs text-slate-500"><tr><th className="p-4 text-right">الدليفري</th><th className="p-3">الفرع</th><th className="p-3">×1</th><th className="p-3">×1.5</th><th className="p-3">مسلم</th><th className="p-3">فاشل</th><th className="p-3">مشاوير معتمدة</th><th className="p-3">مرفوضة</th><th className="p-3">تنتظر</th></tr></thead>
+            <tbody>{riderRows.map(row => <tr key={row.riderId} className="border-t text-center hover:bg-slate-50"><td className="p-4 text-right"><button type="button" onClick={() => navigate(`/admin/riders/${row.riderId}/performance`)} className="font-black text-[#008E92] hover:underline">{row.riderName}</button></td><td className="p-3 text-slate-500">{row.branchName}</td><td className="p-3 font-black">{english(row.orders1x)}</td><td className="p-3 font-black text-amber-700">{english(row.orders15x)}</td><td className="p-3 text-emerald-700">{english(row.delivered)}</td><td className="p-3 text-rose-700">{english(row.failed)}</td><td className="p-3 font-black text-emerald-700">{english(row.approvedTrips)}</td><td className="p-3 text-rose-700">{english(row.rejectedTrips)}</td><td className={row.pendingTrips ? 'p-3 font-black text-amber-700' : 'p-3'}>{english(row.pendingTrips)}</td></tr>)}
+            {!riderRows.length && <tr><td colSpan={9} className="p-12 text-center font-bold text-slate-400">لا توجد حركة خلال الفترة المحددة.</td></tr>}</tbody>
           </table>
         </div>
       </section>

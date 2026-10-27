@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Upload, CheckCircle2, XCircle, Search, AlertTriangle, FileSpreadsheet, Trash2, RotateCcw, Printer, Download, Pencil, Eye } from 'lucide-react'
@@ -251,6 +251,8 @@ export default function Reconciliation() {
   const selectedFrom = searchParams.get('from') || period.start
   const selectedTo = searchParams.get('to') || period.end
   const [orders, setOrders] = useState<DeliveryOrder[]>([])
+  const loadSequenceRef = useRef(0)
+  const decisionRevisionRef = useRef(0)
   const [trips, setTrips] = useState<InternalTrip[]>([])
   const [attendanceRows, setAttendanceRows] = useState<Attendance[]>([])
   const [riderActions, setRiderActions] = useState<any[]>([])
@@ -346,6 +348,8 @@ export default function Reconciliation() {
   }
 
   async function loadAll() {
+    const requestId = ++loadSequenceRef.current
+    const revisionAtStart = decisionRevisionRef.current
     try {
       setLoading(true)
       const fromDate = searchParams.get('date') === 'today'
@@ -400,6 +404,8 @@ export default function Reconciliation() {
           .maybeSingle(),
       ])
 
+      // An old full-page result must never resurrect a just-approved order.
+      if (requestId !== loadSequenceRef.current || revisionAtStart !== decisionRevisionRef.current) return
       if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value)
       else console.error('Failed to load all reconciliation orders', ordersRes.reason)
 
@@ -425,8 +431,30 @@ export default function Reconciliation() {
       console.error(error)
       toast.error('فشل تحميل بيانات المطابقة')
     } finally {
-      setLoading(false)
+      if (requestId === loadSequenceRef.current) setLoading(false)
     }
+  }
+
+  async function updateOrderWithConfirmation(orderId: string, patch: Record<string, unknown>): Promise<DeliveryOrder> {
+    const query = supabase.from('delivery_orders').update(patch).eq('id', orderId).select('*').maybeSingle()
+    const { data, error } = await query
+    let saved = data
+    if (error) {
+      // The database can commit before a network timeout. Verify once, read-only;
+      // never resend a potentially completed approval or administrative edit.
+      const check = await supabase.from('delivery_orders').select('*').eq('id', orderId).maybeSingle()
+      if (!check.error && check.data && Object.entries(patch).every(([key, value]) =>
+        value === null ? (check.data as any)[key] === null : String((check.data as any)[key] ?? '') === String(value))) {
+        saved = check.data
+      } else {
+        throw new Error('لم نتمكن من تأكيد نتيجة الحفظ. راجع سجل الأوردر قبل إعادة القرار.')
+      }
+    }
+    if (!saved) throw new Error('لم يتم تحديث الأوردر. قد تكون الصلاحيات أو حالة السجل تغيرت.')
+    decisionRevisionRef.current += 1
+    setOrders(prev => prev.map(order => order.id === orderId ? saved as DeliveryOrder : order))
+    setDetailsOrder(prev => prev?.id === orderId ? saved as DeliveryOrder : prev)
+    return saved as DeliveryOrder
   }
 
   const riderMap = new Map(riders.map(r => [r.id, r]))
@@ -773,10 +801,11 @@ export default function Reconciliation() {
         // exclusions and approvals across repeated or partial B-Connect uploads.
         const adminExcluded = isConfirmedAdminExclusion(order as any)
         const manuallyApproved = order.bconnect_match_status === 'manually_approved'
+        const duplicateDecisionFinal = ['approved', 'rejected'].includes(String((order as any).duplicate_review_status || ''))
 
         if (preserveHumanDecision(order as any)) {
-          reconciliationStatus = adminExcluded ? 'admin_excluded' : 'manual_override'
-          differenceReason = adminExcluded ? 'استبعاد مؤكد بواسطة الإدارة' : 'اعتماد يدوي محفوظ'
+          reconciliationStatus = adminExcluded ? 'admin_excluded' : duplicateDecisionFinal ? 'duplicate_manager_decision_saved' : 'manual_override'
+          differenceReason = adminExcluded ? 'استبعاد مؤكد بواسطة الإدارة' : duplicateDecisionFinal ? 'قرار الزيارة المحفوظ لا يُلغيه إعادة استيراد الفواتير' : 'اعتماد يدوي محفوظ'
           patch = {}
         } else if (isFailed) {
           reconciliationStatus = match ? 'matched_failed_excluded' : 'app_only_failed'
@@ -848,7 +877,7 @@ export default function Reconciliation() {
           app_branch_name: (order as any).branch_name || null,
           system_branch_name: match?.branch_name ?? null,
           is_countable: Boolean((patch as any).is_countable ?? (order as any).is_countable),
-          needs_review: adminExcluded ? false : manuallyApproved ? false : nameMismatch || !Boolean((patch as any).is_countable),
+          needs_review: adminExcluded || manuallyApproved || duplicateDecisionFinal ? false : nameMismatch || !Boolean((patch as any).is_countable),
           raw_json: { order, system: match || null },
         })
 
@@ -1003,7 +1032,7 @@ export default function Reconciliation() {
       const previousNotes = String(editingOrder.reconciliation_notes || '')
       const editNote = `تعديل إداري (${new Date().toLocaleString('ar-EG')}): ${reason}${changes.length ? ' — ' + changes.join(' | ') : ''}`
 
-      const { error } = await supabase.from('delivery_orders').update({
+      await updateOrderWithConfirmation(editingOrder.id, {
         invoice_number: invoiceNumber,
         // Legacy screens read invoice_no while reconciliation reads invoice_number.
         // An administrative correction must never leave two different identities.
@@ -1021,9 +1050,7 @@ export default function Reconciliation() {
         matched_amount: 0,
         reconciliation_notes: previousNotes ? `${previousNotes}\n${editNote}` : editNote,
         updated_at: new Date().toISOString(),
-      }).eq('id', editingOrder.id)
-
-      if (error) throw error
+      })
 
       // نحاول نحفظ سجل تعديل مستقل لو الجدول موجود، ولو فشل لا نعطل التعديل الأساسي.
       try {
@@ -1047,7 +1074,6 @@ export default function Reconciliation() {
 
       toast.success('تم تعديل بيانات الأوردر وإرجاعه للمطابقة')
       setEditingOrder(null)
-      await loadAll()
     } catch (error: any) {
       console.error(error)
       toast.error('فشل تعديل الأوردر: ' + (error?.message ?? ''))
@@ -1073,20 +1099,7 @@ export default function Reconciliation() {
         reconciliation_notes: isMultiplier ? 'اعتماد يدوي — أوردر ×1.5 ما زال للمراجعة الإدارية' : 'اعتماد يدوي بواسطة الإدارة',
         updated_at: new Date().toISOString(),
       }
-      const { data, error } = await supabase
-        .from('delivery_orders')
-        .update(patch)
-        .eq('id', orderId)
-        .select('*')
-        .maybeSingle()
-      if (error) throw error
-
-      setOrders(prev => prev.map(item =>
-        item.id === orderId ? ({ ...item, ...patch, ...(data || {}) } as DeliveryOrder) : item
-      ))
-      setDetailsOrder(prev =>
-        prev?.id === orderId ? ({ ...prev, ...patch, ...(data || {}) } as DeliveryOrder) : prev
-      )
+      await updateOrderWithConfirmation(orderId, patch)
       toast.success('تمت المطابقة اليدوية بدون إعادة تحميل الصفحة')
     } catch (error: any) {
       console.error(error)
@@ -1114,28 +1127,7 @@ export default function Reconciliation() {
         updated_at: updatedAt,
       } as const
 
-      const { data, error } = await supabase
-        .from('delivery_orders')
-        .update(patch)
-        .eq('id', orderId)
-        .select('*')
-        .maybeSingle()
-
-      if (error) throw error
-
-      // Keep the current reconciliation screen mounted. A full loadAll() used to
-      // flip the page-level loading state and reload the entire cycle after every
-      // single exclusion. Update just the affected row instead.
-      setOrders(prev => prev.map(order =>
-        order.id === orderId
-          ? ({ ...order, ...patch, ...(data || {}) } as DeliveryOrder)
-          : order
-      ))
-      setDetailsOrder(prev =>
-        prev?.id === orderId
-          ? ({ ...prev, ...patch, ...(data || {}) } as DeliveryOrder)
-          : prev
-      )
+      await updateOrderWithConfirmation(orderId, patch)
 
       toast.success('تم استبعاد الفاتورة من الحساب بدون إعادة تحميل الصفحة')
       return true
@@ -1154,7 +1146,7 @@ export default function Reconciliation() {
       return
     }
     try {
-      await supabase.from('delivery_orders').update({
+      await updateOrderWithConfirmation(order.id, {
         deleted_at: new Date().toISOString(),
         deleted_by_name: 'مدير الفرع',
         deletion_reason: reason.trim(),
@@ -1162,9 +1154,8 @@ export default function Reconciliation() {
         final_count_status: 'deleted_not_counted',
         count_exclusion_reason: 'soft_deleted_by_manager',
         updated_at: new Date().toISOString(),
-      }).eq('id', order.id)
+      })
       toast.success('تم حذف الأوردر من الحساب مع حفظ البيان')
-      await loadAll()
     } catch (error: any) {
       console.error(error)
       toast.error('فشل حذف الأوردر: ' + (error?.message ?? ''))
@@ -1178,7 +1169,7 @@ export default function Reconciliation() {
       return
     }
     try {
-      await supabase.from('delivery_orders').update({
+      await updateOrderWithConfirmation(order.id, {
         deleted_at: null,
         restored_at: new Date().toISOString(),
         restored_by_name: 'مدير الفرع',
@@ -1186,9 +1177,8 @@ export default function Reconciliation() {
         final_count_status: 'pending_reconciliation',
         count_exclusion_reason: null,
         updated_at: new Date().toISOString(),
-      }).eq('id', order.id)
+      })
       toast.success('تمت استعادة الأوردر للمراجعة')
-      await loadAll()
     } catch (error: any) {
       console.error(error)
       toast.error('فشل الاستعادة: ' + (error?.message ?? ''))
@@ -1212,7 +1202,7 @@ export default function Reconciliation() {
       return
     }
     try {
-      await supabase.from('delivery_orders').update({
+      await updateOrderWithConfirmation(order.id, {
         reassigned_from_rider_id: order.rider_id,
         reassigned_to_rider_id: target.id,
         reassignment_reason: reason.trim(),
@@ -1225,9 +1215,8 @@ export default function Reconciliation() {
         final_count_status: 'pending_reconciliation',
         is_countable: false,
         updated_at: new Date().toISOString(),
-      }).eq('id', order.id)
+      })
       toast.success('تم تحويل الأوردر للمندوب الجديد')
-      await loadAll()
     } catch (error: any) {
       console.error(error)
       toast.error('فشل التحويل: ' + (error?.message ?? ''))

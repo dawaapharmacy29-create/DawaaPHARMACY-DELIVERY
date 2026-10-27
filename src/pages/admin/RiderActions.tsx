@@ -159,21 +159,37 @@ export default function RiderActions() {
     try {
       setSaving(true)
       const reviewer = await getReviewerName()
+      const reviewedAt = new Date().toISOString()
       const payload: Record<string, unknown> = {
         review_status: decision,
         final_action_type: decision === 'approved' ? finalActionType : 'none',
         final_amount: decision === 'approved' && finalAmount ? Number(finalAmount) : 0,
         general_manager_note: managerNote.trim(),
         reviewed_by_name: reviewer,
-        reviewed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        reviewed_at: reviewedAt,
+        updated_at: reviewedAt,
       }
-      const { error } = await supabase.from('rider_shift_actions').update(payload).eq('id', selected.id)
-      if (error) throw error
+      const { data, error } = await supabase.from('rider_shift_actions')
+        .update(payload).eq('id', selected.id).eq('review_status', 'pending_general_manager')
+        .select('id,review_status,final_action_type,final_amount,general_manager_note,reviewed_by_name,reviewed_at')
+        .maybeSingle()
+      let saved = data
+      if (error) {
+        // An interrupted response may follow a successful commit. Check the
+        // exact decision timestamp; never submit the same decision twice.
+        const check = await supabase.from('rider_shift_actions')
+          .select('id,review_status,final_action_type,final_amount,general_manager_note,reviewed_by_name,reviewed_at')
+          .eq('id', selected.id).maybeSingle()
+        if (!check.error && check.data?.review_status === decision && check.data.reviewed_at === reviewedAt) saved = check.data
+        else throw new Error('حالة الحفظ غير مؤكدة. راجع القرار قبل إعادة إرساله.')
+      }
+      if (!saved || saved.review_status !== decision || saved.reviewed_at !== reviewedAt) {
+        throw new Error('لم يتم تأكيد تحديث القرار، ربما تغير من جهاز آخر. حدّث القائمة.')
+      }
+      setItems(prev => prev.map(item => item.id === selected.id ? { ...item, ...saved } : item))
       toast.success(decision === 'approved' ? 'تم اعتماد القرار' : 'تم رفض الطلب')
       setReviewOpen(false)
       setSelected(null)
-      await loadItems()
     } catch (error: any) {
       console.error(error)
       toast.error(error?.message || 'فشل حفظ قرار المدير العام')
