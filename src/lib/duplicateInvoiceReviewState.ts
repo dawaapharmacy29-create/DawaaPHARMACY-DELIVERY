@@ -5,6 +5,11 @@ export function isDuplicateReviewPending(order: { duplicate_review_status?: unkn
   return status === 'pending' || status === 'not_required'
 }
 
+export function canReviewDuplicatePair(entries: Array<{ duplicate_review_status?: unknown }>): boolean {
+  return entries.length === 2 && isDuplicateReviewPending(entries[0]) &&
+    String(entries[1].duplicate_review_status || 'pending') === 'pending'
+}
+
 export function patchCommittedDuplicateOrders<T extends { id: string }>(
   orders: T[],
   decisions: ReadonlyMap<string, FinalDuplicateDecision>,
