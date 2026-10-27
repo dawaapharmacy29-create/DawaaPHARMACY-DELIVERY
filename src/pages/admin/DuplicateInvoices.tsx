@@ -6,6 +6,7 @@ import { DeliveryOrder, Rider } from '../../lib/types'
 import { approveDuplicateInvoice, getRiders, rejectDuplicateInvoice } from '../../lib/delivery'
 import { duplicateReasonLabel, formatCairoDateTime, getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
+import { fetchAllRows } from '../../lib/fetchAllRows'
 import { getRiderSession } from '../../lib/auth'
 import { canReviewDuplicatePair, isDuplicateReviewPending, patchCommittedDuplicateOrders } from '../../lib/duplicateInvoiceReviewState'
 import CycleSelector from '../../components/CycleSelector'
@@ -117,16 +118,21 @@ export default function DuplicateInvoices() {
       if (isNewPeriod) setLoading(true)
       else setRefreshing(true)
       const [byDeliveryDate, byWorkDate, ridersData] = await Promise.allSettled([
-        supabase.from('delivery_orders').select('*').gte('delivery_date', selectedFrom).lte('delivery_date', selectedTo).order('registered_at', { ascending: false }).limit(50000),
-        supabase.from('delivery_orders').select('*').gte('work_date', selectedFrom).lte('work_date', selectedTo).order('registered_at', { ascending: false }).limit(50000),
+        fetchAllRows<DeliveryOrder>({ table: 'delivery_orders', orderColumn: 'registered_at', ascending: false,
+          filters: [{column:'delivery_date',operator:'gte',value:selectedFrom},{column:'delivery_date',operator:'lte',value:selectedTo}] }),
+        // Work-date fallback is only for legacy rows without delivery_date.
+        // These two datasets are disjoint, so the browser does not download
+        // the same wide invoice rows twice.
+        fetchAllRows<DeliveryOrder>({ table: 'delivery_orders', orderColumn: 'registered_at', ascending: false,
+          filters: [{column:'delivery_date',operator:'is',value:null},{column:'work_date',operator:'gte',value:selectedFrom},{column:'work_date',operator:'lte',value:selectedTo}] }),
         getRiders(),
       ])
 
-      if ([byDeliveryDate, byWorkDate].some(result => result.status === 'rejected' || (result.status === 'fulfilled' && result.value.error))) {
+      if ([byDeliveryDate, byWorkDate].some(result => result.status === 'rejected')) {
         throw new Error('تعذر تحميل كل تسجيلات الدورة؛ لا يمكن اتخاذ قرار من بيانات ناقصة')
       }
 
-      const rows = [byDeliveryDate, byWorkDate].flatMap((res: any) => res.status === 'fulfilled' && !res.value.error ? (res.value.data || []) : []) as DeliveryOrder[]
+      const rows = [byDeliveryDate, byWorkDate].flatMap(res => res.status === 'fulfilled' ? res.value : []) as DeliveryOrder[]
       const unique = new Map<string, DeliveryOrder>()
       rows.forEach((order, index) => unique.set(String((order as any).id || index), order))
       const allOrders = Array.from(unique.values())

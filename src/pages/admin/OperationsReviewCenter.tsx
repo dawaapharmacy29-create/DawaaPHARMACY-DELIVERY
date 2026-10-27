@@ -8,7 +8,7 @@ import { supabase } from '../../lib/supabase'
 import { useAdminAccess } from '../../hooks/useAdminAccess'
 
 type Counts = {
-  pendingOrders: number
+  awaitingReconciliation: number
   notFound: number
   duplicatePending: number
   duplicateExcluded: number
@@ -38,7 +38,7 @@ export default function OperationsReviewCenter() {
   const period = useMemo(() => getOperationalPeriod(), [])
   const selectedFrom = searchParams.get('from') || period.start
   const selectedTo = searchParams.get('to') || period.end
-  const [counts,setCounts] = useState<Counts>({pendingOrders:0,notFound:0,duplicatePending:0,duplicateExcluded:0,failed:0,pendingTrips:0,tripsWithoutInvoice:0})
+  const [counts,setCounts] = useState<Counts>({awaitingReconciliation:0,notFound:0,duplicatePending:0,duplicateExcluded:0,failed:0,pendingTrips:0,tripsWithoutInvoice:0})
   const [loading,setLoading] = useState(true)
   const [error,setError] = useState('')
 
@@ -51,28 +51,38 @@ export default function OperationsReviewCenter() {
         setError('')
         const canReadOrders = canAccess('reconciliation') || canAccess('duplicate_invoices')
         const canReadTrips = canAccess('trips') || canAccess('trips_without_invoice')
-        const [ordersRes,tripsRes] = await Promise.all([
-          canReadOrders
-            ? supabase.from('delivery_orders').select('final_count_status,status,is_countable,is_duplicate_invoice,deleted_at').gte('delivery_date',selectedFrom).lte('delivery_date',selectedTo).is('deleted_at',null)
-            : Promise.resolve({ data: [], error: null }),
-          canReadTrips
-            ? supabase.from('internal_trips').select('status,review_status,has_invoice_reference,related_invoice_number,duplicate_of').gte('trip_date',selectedFrom).lte('trip_date',selectedTo)
-            : Promise.resolve({ data: [], error: null }),
+        // Exact server counts avoid the Data API row limit and transferring
+        // entire operational lists merely to render seven summary numbers.
+        const orderCount = () => supabase.from('delivery_orders')
+          .select('id', { count: 'exact', head: true })
+          .gte('delivery_date',selectedFrom).lte('delivery_date',selectedTo).is('deleted_at',null)
+        const tripCount = () => supabase.from('internal_trips')
+          .select('id', { count: 'exact', head: true })
+          .gte('trip_date',selectedFrom).lte('trip_date',selectedTo)
+        const empty = Promise.resolve({ count: 0, error: null })
+        const results = await Promise.all([
+          canReadOrders ? orderCount().like('final_count_status','pending%') : empty,
+          canReadOrders ? orderCount().eq('final_count_status','excluded_invoice_not_found') : empty,
+          canReadOrders ? orderCount().eq('duplicate_review_status','pending') : empty,
+          canReadOrders ? orderCount().eq('final_count_status','excluded_duplicate_already_counted') : empty,
+          canReadOrders ? orderCount().or('final_count_status.eq.excluded_failed,status.eq.failed') : empty,
+          canReadTrips ? tripCount().in('status',['pending','pending_approval']) : empty,
+          canReadTrips ? tripCount().is('duplicate_of',null).eq('has_invoice_reference',false).or('related_invoice_number.is.null,related_invoice_number.eq.') : empty,
         ])
         if(!alive)return
-        if (ordersRes.error) throw ordersRes.error
-        if (tripsRes.error) throw tripsRes.error
-        const orders = (ordersRes.data||[]) as any[]
-        const trips = (tripsRes.data||[]) as any[]
-        const status=(row:any)=>String(row.final_count_status||'')
+        const values = results.map((result) => {
+          if (result.error) throw result.error
+          if (result.count === null) throw new Error('لم يتم تأكيد عدد حالات المراجعة من قاعدة البيانات')
+          return result.count
+        })
         setCounts({
-          pendingOrders: orders.filter(row => status(row).startsWith('pending')).length,
-          notFound: orders.filter(row => status(row)==='excluded_invoice_not_found').length,
-          duplicatePending: orders.filter(row => status(row)==='pending_duplicate_review').length,
-          duplicateExcluded: orders.filter(row => status(row)==='excluded_duplicate_already_counted').length,
-          failed: orders.filter(row => status(row)==='excluded_failed' || String(row.status||'')==='failed').length,
-          pendingTrips: trips.filter(row => ['pending','pending_approval',''].includes(String(row.review_status||row.status||''))).length,
-          tripsWithoutInvoice: trips.filter(row => !row.duplicate_of && row.has_invoice_reference===false && !String(row.related_invoice_number||'').trim()).length,
+          awaitingReconciliation: values[0],
+          notFound: values[1],
+          duplicatePending: values[2],
+          duplicateExcluded: values[3],
+          failed: values[4],
+          pendingTrips: values[5],
+          tripsWithoutInvoice: values[6],
         })
       } catch (loadError: any) {
         if (alive) setError(loadError?.message || 'تعذر تحميل بيانات مراجعة الدورة')
@@ -95,7 +105,7 @@ export default function OperationsReviewCenter() {
   }
 
   const decisionTotal =
-    (canAccess('reconciliation') ? counts.pendingOrders : 0) +
+    (canAccess('duplicate_invoices') ? counts.duplicatePending : 0) +
     (canAccess('trips') ? counts.pendingTrips : 0)
   return <div className="space-y-5" dir="rtl">
     <OperationsAdminTabs />
@@ -104,16 +114,16 @@ export default function OperationsReviewCenter() {
     <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
       <p className="text-xs font-black text-[#008E92]">التشغيل والمراجعة</p>
       <div className="mt-1 flex flex-wrap items-start justify-between gap-4">
-        <div><h1 className="text-2xl font-black text-[#061827]">مركز مراجعة الدورة</h1><p className="mt-2 max-w-2xl text-sm font-bold leading-7 text-slate-500">اعرف ما يحتاج قرارًا قبل الإغلاق، ثم انتقل مباشرة لصفحة المطابقة أو المشاوير أو الإغلاق المناسبة.</p></div>
-        <div className={`rounded-2xl px-5 py-3 text-center ${decisionTotal ? 'bg-amber-50 text-amber-900':'bg-emerald-50 text-emerald-900'}`}><p className="text-3xl font-black">{loading?'—':decisionTotal}</p><p className="text-[11px] font-black">قرارات معلقة</p></div>
+        <div><h1 className="text-2xl font-black text-[#061827]">مركز مراجعة الدورة</h1><p className="mt-2 max-w-2xl text-sm font-bold leading-7 text-slate-500">افصل قرارات المكرر والمشاوير عن الأوردرات المنتظرة لرفع ومطابقة ملف BConnect.</p></div>
+        <div className={`rounded-2xl px-5 py-3 text-center ${decisionTotal ? 'bg-amber-50 text-amber-900':'bg-emerald-50 text-emerald-900'}`}><p className="text-3xl font-black">{loading?'—':decisionTotal}</p><p className="text-[11px] font-black">قرارات المكرر والمشاوير المعلقة</p></div>
       </div>
       <p className="mt-3 text-xs font-bold text-slate-400">الدورة {selectedFrom} → {selectedTo}</p>
     </section>
 
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {accessReady && canAccess('reconciliation') && <QueueCard title="مطابقة تحتاج قرار" text="الحالات المعلقة داخل مطابقة الأوردرات." value={loading?'—':counts.pendingOrders} to={withCycle('/admin/reconciliation?filter=pending')} icon={<GitCompareArrows size={19}/>} />}
-      {accessReady && canAccess('duplicate_invoices') && <QueueCard title="مكرر يحتاج قرار" text="المكرر الذي لم يُعتمد أو يُرفض بعد." value={loading?'—':counts.duplicatePending} to={withCycle('/admin/reconciliation?filter=duplicate&review_status=pending')} icon={<CopyCheck size={19}/>} tone="amber" />}
-      {accessReady && canAccess('trips') && <QueueCard title="مشاوير تنتظر" text="مشاوير لم يصدر عليها قرار نهائي." value={loading?'—':counts.pendingTrips} to={withCycle('/admin/trips')} icon={<Route size={19}/>} tone="amber" />}
+      {accessReady && canAccess('reconciliation') && <QueueCard title="بانتظار مطابقة BConnect" text="أوردرات تنتظر تحقق السيستم؛ ليست كلها قرارات يدوية." value={loading?'—':counts.awaitingReconciliation} to={withCycle('/admin/reconciliation?filter=pending')} icon={<GitCompareArrows size={19}/>} />}
+      {accessReady && canAccess('duplicate_invoices') && <QueueCard title="مكرر يحتاج قرار" text="التسجيلات المكررة التي لم تُعتمد أو تُرفض بعد." value={loading?'—':counts.duplicatePending} to={withCycle('/admin/duplicate-invoices?status=pending')} icon={<CopyCheck size={19}/>} tone="amber" />}
+      {accessReady && canAccess('trips') && <QueueCard title="مشاوير تنتظر" text="مشاوير لم يصدر عليها قرار نهائي." value={loading?'—':counts.pendingTrips} to={withCycle('/admin/trips?status=pending_approval')} icon={<Route size={19}/>} tone="amber" />}
       {accessReady && canAccess('reconciliation') && <QueueCard title="غير موجود في المبيعات" text="أوردرات تحتاج إثبات أو استبعاد إداري." value={loading?'—':counts.notFound} to={withCycle('/admin/reconciliation?filter=not_found')} icon={<FileQuestion size={19}/>} tone="rose" />}
     </section>
 

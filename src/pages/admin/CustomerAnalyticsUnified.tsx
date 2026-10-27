@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ExternalLink, RefreshCw, Search, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -8,6 +8,7 @@ import { fetchAllRows } from '../../lib/fetchAllRows'
 import CustomerAdminTabs from '../../components/CustomerAdminTabs'
 
 type OrderRow = Record<string, any>
+const orderColumns = 'id,customer_id,customer_code,customer_code_snapshot,customer_phone,customer_phone_snapshot,customer_name,customer_name_snapshot,branch_name,branch,invoice_number,invoice_no,invoice_amount,invoice_value,amount,delivery_date,work_date,registered_at,created_at'
 type RangeMode = 'cycle' | 'quarter' | 'all'
 type Segment = 'VIP' | 'متكرر' | 'مرة واحدة'
 type CustomerRow = {
@@ -90,12 +91,14 @@ export default function CustomerAnalyticsUnified() {
   const [segment, setSegment] = useState<'all' | Segment>('all')
   const [invoiceFilter, setInvoiceFilter] = useState<'all' | 'one' | 'repeat' | 'five' | 'high'>('all')
   const [branch, setBranch] = useState('all')
-  const [sort, setSort] = useState<'sales' | 'invoices' | 'latest' | 'average' | 'name'>('sales')
+  const [sort, setSort] = useState<'sales' | 'invoices' | 'latest' | 'average' | 'name'>('invoices')
   const [selected, setSelected] = useState<CustomerRow | null>(null)
+  const loadSequence = useRef(0)
 
   const range = useMemo(() => mode === 'quarter' ? quarterRange(cycle.start) : mode === 'all' ? { start: '', end: '' } : cycle, [mode, cycle])
 
   async function load() {
+    const sequence = ++loadSequence.current
     try {
       setLoading(true)
       setError('')
@@ -103,36 +106,33 @@ export default function CustomerAnalyticsUnified() {
         { column: 'delivery_date', operator: 'gte' as const, value: range.start },
         { column: 'delivery_date', operator: 'lte' as const, value: range.end },
       ] : []
-      const deliveryRows = await fetchAllRows<OrderRow>({ table: 'delivery_orders', filters, orderColumn: 'delivery_date', ascending: false })
-
-      // بعض السجلات القديمة تعتمد work_date فقط؛ تُحمّل بشكل مستقل ثم تُدمج بالـ id بدون تكرار.
-      let workRows: OrderRow[] = []
-      try {
-        const workFilters = range.start ? [
+      // Legacy records without delivery_date need a work_date fallback only.
+      // Fetch the two disjoint sets concurrently and avoid selecting 191 columns.
+      const workFilters = range.start ? [
+          { column: 'delivery_date', operator: 'is' as const, value: null },
           { column: 'work_date', operator: 'gte' as const, value: range.start },
           { column: 'work_date', operator: 'lte' as const, value: range.end },
         ] : []
-        workRows = await fetchAllRows<OrderRow>({ table: 'delivery_orders', filters: workFilters, orderColumn: 'work_date', ascending: false })
-      } catch {
-        workRows = []
-      }
+      const [deliveryRows,workRows] = await Promise.all([
+        fetchAllRows<OrderRow>({ table: 'delivery_orders', select: orderColumns, filters, orderColumn: 'delivery_date', ascending: false }),
+        range.start ? fetchAllRows<OrderRow>({ table: 'delivery_orders', select: orderColumns, filters: workFilters, orderColumn: 'work_date', ascending: false }) : Promise.resolve([] as OrderRow[]),
+      ])
 
       const merged = mergeRows([deliveryRows, workRows]).filter(row => {
         if (!range.start) return true
         const date = orderDate(row)
         return date >= range.start && date <= range.end
       })
-      setOrders(merged)
+      if(sequence===loadSequence.current)setOrders(merged)
     } catch (err: any) {
       const message = err?.message || String(err)
-      setError(message)
-      toast.error(`تعذر تحميل تحليل العملاء: ${message}`)
+      if(sequence===loadSequence.current){setError(message);toast.error(`تعذر تحميل تحليل العملاء: ${message}`)}
     } finally {
-      setLoading(false)
+      if(sequence===loadSequence.current)setLoading(false)
     }
   }
 
-  useEffect(() => { void load() }, [mode, range.start, range.end])
+  useEffect(() => { void load();return()=>{loadSequence.current+=1} }, [mode, range.start, range.end])
 
   const customers = useMemo(() => {
     const grouped = new Map<string, CustomerRow>()
@@ -187,7 +187,9 @@ export default function CustomerAnalyticsUnified() {
     vip: customers.filter(row => row.segment === 'VIP').length,
     one: customers.filter(row => row.invoices === 1).length,
     repeat: customers.filter(row => row.invoices >= 2).length,
+    amountsRecorded: orders.filter(row => amount(row) > 0).length,
   }), [orders, customers])
+  const hasRecordedAmounts = stats.amountsRecorded > 0
 
   function applyMode(next: RangeMode) {
     setMode(next)
@@ -209,7 +211,7 @@ export default function CustomerAnalyticsUnified() {
   return <div className="space-y-5 text-right" dir="rtl">
     <CustomerAdminTabs />
     <section className="flex flex-wrap items-center justify-between gap-3 rounded-[30px] bg-white p-5 shadow-sm">
-      <div><p className="text-xs font-black text-[#008E92]">العملاء والمناطق</p><h1 className="mt-1 text-2xl font-black">تحليل العملاء</h1><p className="mt-1 font-bold text-slate-500">تحليل كامل من جميع فواتير التوصيل بدون حد 1000 سجل.</p></div>
+      <div><p className="text-xs font-black text-[#008E92]">العملاء والمناطق</p><h1 className="mt-1 text-2xl font-black">تحليل العملاء</h1><p className="mt-1 font-bold text-slate-500">تحليل تسجيلات التوصيل دون حد 1000 سجل. القيم المالية المسجلة ليست بديلًا عن مبيعات BConnect المعتمدة.</p></div>
       <div className="flex flex-wrap gap-2">
         <button onClick={() => applyMode('cycle')} className={`rounded-2xl px-4 py-3 font-black ${mode === 'cycle' ? 'bg-[#008E92] text-white' : 'bg-slate-50'}`}>دورة واحدة</button>
         <button onClick={() => applyMode('quarter')} className={`rounded-2xl px-4 py-3 font-black ${mode === 'quarter' ? 'bg-[#008E92] text-white' : 'bg-slate-50'}`}>آخر 3 دورات</button>
@@ -221,12 +223,15 @@ export default function CustomerAnalyticsUnified() {
     {mode !== 'all' && <CycleSelector from={cycle.start} to={cycle.end} onApply={applyCycle}/>} 
     <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4 font-black text-emerald-800">الفترة الحالية: {mode === 'all' ? 'طوال المدة' : `${range.start} إلى ${range.end}`}. الدورة تبدأ يوم 26 وتنتهي يوم 25.</div>
     {error && <div className="rounded-3xl border border-rose-200 bg-rose-50 p-4 font-black text-rose-700">تعذر تحميل البيانات: {error}</div>}
+    {!loading && !hasRecordedAmounts && orders.length>0 && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-900">قيمة المبيعات غير متاحة لهذه الفترة في تسجيلات الدليفري؛ صفر في حقل الأوردر لا يعني صفر مبيعات. استخدم BConnect للتحليل المالي المعتمد.</div>}
+    {!loading && hasRecordedAmounts && stats.amountsRecorded<orders.length && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-900">القيمة مسجلة في {stats.amountsRecorded} من {orders.length} أوردر فقط. إجمالي القيم ومتوسطها غير مكتملين، وليسا مبيعات BConnect النهائية.</div>}
+    {!loading && orders.length>0 && <p className="text-xs font-bold text-slate-500">عدد الأوردرات هنا هو عدد التسجيلات التشغيلية، وقد يشمل المكرر والفاشل قبل اعتماد المطابقة. وتصنيف VIP مبدئي حتى اكتمال البيانات المالية.</p>}
 
     <section className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
       {[
-        ['فواتير الفترة', stats.invoices, () => setInvoiceFilter('all')],
+        ['تسجيلات الفترة', stats.invoices, () => setInvoiceFilter('all')],
         ['عملاء نشطين', stats.customers, () => { setSegment('all'); setInvoiceFilter('all') }],
-        ['إجمالي المبيعات', money(stats.sales), () => setSort('sales')],
+        ['قيمة الأوردرات المسجلة', hasRecordedAmounts ? money(stats.sales) : 'غير متاحة', () => setSort(hasRecordedAmounts ? 'sales' : 'invoices')],
         ['عملاء VIP', stats.vip, () => setSegment('VIP')],
         ['مرة واحدة', stats.one, () => setInvoiceFilter('one')],
         ['متكررون', stats.repeat, () => setInvoiceFilter('repeat')],
@@ -237,7 +242,7 @@ export default function CustomerAnalyticsUnified() {
       <div className="grid gap-3 lg:grid-cols-[1.7fr_repeat(4,1fr)]">
         <div className="relative"><Search className="absolute right-4 top-3 text-slate-400" size={20}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="بحث بالكود أو الاسم أو الهاتف" className="w-full rounded-2xl border bg-slate-50 py-3 pr-12 font-bold"/></div>
         <select value={segment} onChange={e => setSegment(e.target.value as any)} className="rounded-2xl border bg-slate-50 p-3 font-black"><option value="all">كل التصنيفات</option><option value="VIP">VIP</option><option value="متكرر">متكرر</option><option value="مرة واحدة">مرة واحدة</option></select>
-        <select value={invoiceFilter} onChange={e => setInvoiceFilter(e.target.value as any)} className="rounded-2xl border bg-slate-50 p-3 font-black"><option value="all">كل الفواتير</option><option value="one">فاتورة واحدة</option><option value="repeat">2 فأكثر</option><option value="five">5 فأكثر</option><option value="high">8000 ج.م فأكثر</option></select>
+        <select value={invoiceFilter} onChange={e => setInvoiceFilter(e.target.value as any)} className="rounded-2xl border bg-slate-50 p-3 font-black"><option value="all">كل الفواتير</option><option value="one">فاتورة واحدة</option><option value="repeat">2 فأكثر</option><option value="five">5 فأكثر</option><option value="high" disabled={!hasRecordedAmounts}>8000 ج.م فأكثر (قيمة مسجلة)</option></select>
         <select value={branch} onChange={e => setBranch(e.target.value)} className="rounded-2xl border bg-slate-50 p-3 font-black">{branches.map(item => <option key={item} value={item}>{item === 'all' ? 'كل الفروع' : item}</option>)}</select>
         <select value={sort} onChange={e => setSort(e.target.value as any)} className="rounded-2xl border bg-slate-50 p-3 font-black"><option value="sales">الأعلى مبيعات</option><option value="invoices">الأكثر فواتير</option><option value="latest">الأحدث</option><option value="average">أعلى متوسط</option><option value="name">الاسم</option></select>
       </div>
@@ -245,7 +250,7 @@ export default function CustomerAnalyticsUnified() {
     </section>
 
     <section className="overflow-hidden rounded-3xl bg-white shadow-sm">
-      <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{['العميل','الكود','الهاتف','الفرع','الفواتير','المبيعات','المتوسط','آخر طلب','التصنيف'].map(h => <th key={h} className="p-3 text-right">{h}</th>)}</tr></thead><tbody>{filtered.slice(0, 1000).map(row => <tr key={row.key} onClick={() => setSelected(row)} className="cursor-pointer border-t hover:bg-slate-50"><td className="p-3 font-black">{row.name}</td><td className="p-3">{row.code || '—'}</td><td className="p-3">{row.phone || '—'}</td><td className="p-3">{row.branch || '—'}</td><td className="p-3 font-black">{row.invoices}</td><td className="p-3 font-black text-emerald-700">{money(row.sales)} ج.م</td><td className="p-3">{money(row.average)}</td><td className="p-3">{row.lastOrder || '—'}</td><td className="p-3"><span className="rounded-full bg-teal-50 px-3 py-1 font-black text-teal-700">{row.segment}</span></td></tr>)}</tbody></table></div>
+      <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{['العميل','الكود','الهاتف','الفرع','الفواتير','قيمة مسجلة','المتوسط المسجل','آخر طلب','التصنيف'].map(h => <th key={h} className="p-3 text-right">{h}</th>)}</tr></thead><tbody>{filtered.slice(0, 1000).map(row => <tr key={row.key} onClick={() => setSelected(row)} className="cursor-pointer border-t hover:bg-slate-50"><td className="p-3 font-black">{row.name}</td><td className="p-3">{row.code || '—'}</td><td className="p-3">{row.phone || '—'}</td><td className="p-3">{row.branch || '—'}</td><td className="p-3 font-black">{row.invoices}</td><td className="p-3 font-black text-emerald-700">{hasRecordedAmounts ? `${money(row.sales)} ج.م` : '—'}</td><td className="p-3">{hasRecordedAmounts ? money(row.average) : '—'}</td><td className="p-3">{row.lastOrder || '—'}</td><td className="p-3"><span className="rounded-full bg-teal-50 px-3 py-1 font-black text-teal-700">{row.segment}</span></td></tr>)}</tbody></table></div>
       {filtered.length > 1000 && <div className="border-t p-4 text-center font-bold text-slate-500">تم عرض أول 1000 عميل لحماية سرعة الصفحة؛ استخدم البحث للوصول لأي عميل آخر.</div>}
     </section>
 

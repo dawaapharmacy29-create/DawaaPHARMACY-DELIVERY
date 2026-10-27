@@ -35,5 +35,6 @@ test('rollout remains gated, including immutable-key updates', () => {
 })
 
 test('reconciliation invoice corrections keep both legacy invoice fields aligned', () => {
-  assert.match(reconciliationPage, /\.from\('delivery_orders'\)\.update\(\{\s*invoice_number: invoiceNumber,\s*(?:\/\/[^\n]*\n\s*)*invoice_no: invoiceNumber,/)
+  assert.match(reconciliationPage, /updateOrderWithConfirmation\(editingOrder\.id, \{\s*invoice_number: invoiceNumber,\s*(?:\/\/[^\n]*\n\s*)*invoice_no: invoiceNumber,/)
+  assert.match(reconciliationPage, /\.from\('delivery_orders'\)\.update\(patch\)\.eq\('id', orderId\)\.select\('\*'\)\.maybeSingle\(\)/)
 })
