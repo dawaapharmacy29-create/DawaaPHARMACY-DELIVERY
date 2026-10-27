@@ -7,7 +7,7 @@ import { approveDuplicateInvoice, getRiders, rejectDuplicateInvoice } from '../.
 import { duplicateReasonLabel, formatCairoDateTime, getOperationalPeriod } from '../../lib/helpers'
 import { supabase } from '../../lib/supabase'
 import { getRiderSession } from '../../lib/auth'
-import { isDuplicateReviewPending, patchCommittedDuplicateOrders } from '../../lib/duplicateInvoiceReviewState'
+import { canReviewDuplicatePair, isDuplicateReviewPending, patchCommittedDuplicateOrders } from '../../lib/duplicateInvoiceReviewState'
 import CycleSelector from '../../components/CycleSelector'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
 import OperationsAdminTabs from '../../components/OperationsAdminTabs'
@@ -272,8 +272,8 @@ export default function DuplicateInvoices() {
 
   function openUnifiedDecision(key: string) {
     const group = invoiceGroups.find(item => item.key === key)
-    if (!group || group.entries.every(entry => !isDuplicateReviewPending(entry))) {
-      toast.info('قرار الفاتورة مقفول بالفعل؛ راجعه من سجل كل الفواتير')
+    if (!group || !canReviewDuplicatePair(group.entries)) {
+      toast.info('القرار الموحد غير متاح لهذه الحالة؛ أكمل مراجعة التسجيل المعلق بشكل فردي')
       return
     }
     setDecisionChoice(null)
@@ -573,7 +573,7 @@ export default function DuplicateInvoices() {
                     <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">{entries.length} تسجيلات</span>
                     <span className="text-xs font-bold text-slate-500">ترتيب التسجيلات حسب وقت تسجيلها، وليس تأكيدًا لترتيب التوصيل الفعلي — يمكنك قبول أو رفض أي تسجيل بشكل مستقل</span>
                     {entries.every(entry => !isDuplicateReviewPending(entry)) && <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800">تم إغلاق المراجعة</span>}
-                    {entries.length === 2 && entries.some(isDuplicateReviewPending) && !key.startsWith('unresolved:') && <button type="button" disabled={savingPairDecision || decidingOrderId !== null} onClick={() => openUnifiedDecision(key)} className="rounded-xl bg-[#008E92] px-3 py-2 text-xs font-black text-white disabled:opacity-40">مراجعة واعتماد قرار الفاتورة</button>}
+                    {canReviewDuplicatePair(entries) && !key.startsWith('unresolved:') && <button type="button" disabled={savingPairDecision || decidingOrderId !== null} onClick={() => openUnifiedDecision(key)} className="rounded-xl bg-[#008E92] px-3 py-2 text-xs font-black text-white disabled:opacity-40">مراجعة واعتماد قرار الفاتورة</button>}
                   </div>
                   <div className="grid gap-3 lg:grid-cols-2">
                     {entries.map((order, index) => {
