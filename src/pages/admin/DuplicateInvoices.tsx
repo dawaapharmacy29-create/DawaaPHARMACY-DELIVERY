@@ -44,6 +44,24 @@ const VISIT_GATEWAY_ENABLED = import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENA
 const DUAL_VISIT_APPROVAL_ENABLED = import.meta.env.VITE_DELIVERY_DUAL_DUPLICATE_APPROVAL_V1_ENABLED === 'true'
 const DECISION_REQUEST_TIMEOUT_MS = 20000
 
+function duplicateDecisionErrorMessage(error: unknown): string | null {
+  const value = String((error as { message?: string })?.message || error || '')
+  const reasons: Record<string, string> = {
+    dual_visits_require_two_deliveries_and_bconnect_match: 'لا يمكن اعتماد الزيارتين: لازم يكون التسجيلان تسليمًا فعليًا، وكل منهما مطابقًا لفاتورة BConnect.',
+    approved_order_has_other_exclusion: 'أحد التسجيلين مستبعد من الاحتساب لسبب آخر. راجع سبب الاستبعاد قبل الاعتماد.',
+    later_duplicate_visit_note_missing: 'التسجيل الثاني لا يحتوي على ملاحظة كافية توضّح سبب الزيارة الإضافية.',
+    later_duplicate_reason_missing: 'سبب تكرار الفاتورة غير مسجّل على الزيارة الثانية.',
+    invoice_pair_mismatch: 'رقم الفاتورة أو الفرع غير متطابق بين التسجيلين.',
+    invoice_pair_changed: 'تغيّرت تسجيلات هذه الفاتورة؛ حدّث القائمة وراجعها مجددًا.',
+    pair_order_changed: 'ترتيب التسجيلين تغيّر؛ حدّث القائمة قبل اتخاذ قرار.',
+    duplicate_decision_already_final: 'يوجد قرار نهائي سابق لأحد التسجيلين؛ حدّث القائمة للتحقق منه.',
+    manager_session_not_found: 'جلسة المدير غير صالحة؛ سجّل الدخول مجددًا.',
+    independent_visit_evidence_required: 'اكتب ملاحظة إدارية من 10 أحرف على الأقل توضح الزيارتين.',
+  }
+  const match = Object.keys(reasons).find(code => value.includes(code))
+  return match ? reasons[match] : null
+}
+
 const DUAL_VISIT_NOTE_PRESETS = [
   { label: 'تأجيل الاستلام وإعادة الزيارة', note: 'العميل أجّل الاستلام وطلب إعادة الزيارة؛ تمت مراجعة تسجيلين لزيارتين مستقلتين لنفس الفاتورة.' },
   { label: 'تسليم على زيارتين', note: 'تم تسليم الطلب على زيارتين مستقلتين، ولكل مندوب زيارة فعلية منفصلة مرتبطة بنفس الفاتورة.' },
@@ -92,6 +110,7 @@ export default function DuplicateInvoices() {
   const [searchTerm, setSearchTerm] = useState('')
   const [detailsOrder, setDetailsOrder] = useState<DeliveryOrder | null>(null)
   const [decisionInvoice, setDecisionInvoice] = useState<string | null>(null)
+  const [decisionFailure, setDecisionFailure] = useState<string | null>(null)
   const [decisionChoice, setDecisionChoice] = useState<'first' | 'second' | 'both' | 'none' | null>(null)
   const [decisionNote, setDecisionNote] = useState('')
   const [decisionRejectReason, setDecisionRejectReason] = useState('')
@@ -297,6 +316,7 @@ export default function DuplicateInvoices() {
     setDecisionRejectReason('')
     setDecisionCustomReason('')
     setDecisionUncertain(false)
+    setDecisionFailure(null)
     setDecisionInvoice(key)
   }
 
@@ -310,7 +330,7 @@ export default function DuplicateInvoices() {
       const shouldApprove = choice === 'both' || (choice === 'first' && index === 0) || (choice === 'second' && index === 1)
       const order = byId.get(id)
       return order?.duplicate_review_status === (shouldApprove ? 'approved' : 'rejected') &&
-        order.not_countable === !shouldApprove && order.needs_review === false &&
+        (shouldApprove ? order.not_countable !== true : order.not_countable === true) && order.needs_review === false &&
         (choice !== 'both' || order.is_countable === true)
     })
   }
@@ -374,6 +394,7 @@ export default function DuplicateInvoices() {
     const token = getRiderSession().session_token || ''
     if (!window.confirm(`تأكيد القرار النهائي لفاتورة ${decisionGroup.invoice}؟\n${decisionChoice === 'both' ? 'سيُحسب مشواران مستقلان، كل زيارة بمعاملها المسجّل، وقيمة الفاتورة مرة واحدة فقط.' : 'سيتم تسجيل قرار كل مندوب وحفظ سبب الرفض.'}\nلا يمكن التراجع تلقائيًا عن قرار نهائي.`)) return
     let responseReceived = false
+    setDecisionFailure(null)
     try {
       decidingRef.current = true
       setSavingPairDecision(true)
@@ -399,6 +420,7 @@ export default function DuplicateInvoices() {
     } catch (error) {
       responseReceived = true
       console.error(error)
+      const rejectionMessage = duplicateDecisionErrorMessage(error)
       // A timed-out HTTP response does not imply the PostgreSQL transaction failed.
       // Reconcile both committed order states before ever inviting another write.
       let committed = false
@@ -414,7 +436,8 @@ export default function DuplicateInvoices() {
         void refreshCommittedPair(String(first.id), String(second.id))
       } else {
         setDecisionUncertain(true)
-        toast.error('لم نتمكن من تأكيد نتيجة الحفظ. لا تعِد الإرسال؛ تحقّق من الحالة أولًا.')
+        setDecisionFailure(rejectionMessage)
+        toast.error(rejectionMessage || 'لم نتمكن من تأكيد نتيجة الحفظ. لا تعِد الإرسال؛ تحقّق من الحالة أولًا.')
       }
     } finally {
       decidingRef.current = false
@@ -433,7 +456,7 @@ export default function DuplicateInvoices() {
         toast.success('تم التأكد: القرار النهائي محفوظ للتسجيلين')
         void refreshCommittedPair(String(decisionGroup.entries[0].id), String(decisionGroup.entries[1].id))
       } else {
-        toast.error('لم يتم إثبات حفظ القرارين. راجع حالة الفاتورة مع الإدارة قبل اتخاذ قرار جديد.')
+        toast.error(decisionFailure || 'لم يتم إثبات حفظ القرارين. راجع حالة الفاتورة مع الإدارة قبل اتخاذ قرار جديد.')
       }
     } catch {
       toast.error('تعذر التحقق من قاعدة البيانات الآن. لا تعِد اعتماد الفاتورة.')
@@ -743,7 +766,7 @@ export default function DuplicateInvoices() {
             </label>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-white p-3 sm:px-5">
-              {decisionUncertain && <p role="alert" className="w-full text-sm font-bold text-amber-900">النتيجة غير مؤكدة بسبب تأخر الاتصال. لا تعِد الحفظ؛ اضغط «تحقق من القرار» لمراجعة الحالة الفعلية.</p>}
+              {decisionUncertain && <p role="alert" className="w-full text-sm font-bold text-amber-900">{decisionFailure || 'النتيجة غير مؤكدة بسبب تأخر الاتصال.'} لا تعِد الحفظ؛ اضغط «تحقق من القرار» لمراجعة الحالة الفعلية.</p>}
               <button type="button" disabled={savingPairDecision} onClick={() => setDecisionInvoice(null)} className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-black disabled:opacity-50">إغلاق</button>
               {decisionUncertain && <button type="button" disabled={savingPairDecision} onClick={() => void recheckUnifiedDecision()} className="rounded-xl bg-amber-600 px-4 py-3 text-sm font-black text-white disabled:opacity-40">تحقق من القرار</button>}
               <button type="button" disabled={savingPairDecision || decisionUncertain || !decisionChoice || (decisionChoice === 'both' ? !DUAL_VISIT_APPROVAL_ENABLED || decisionNote.trim().length < 10 : (decisionRejectReason === 'سبب آخر' ? decisionCustomReason.trim().length < 5 : decisionRejectReason.trim().length < 5))} onClick={() => void saveUnifiedDecision()} className="rounded-xl bg-teal-700 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">{savingPairDecision ? 'جاري حفظ القرار...' : decisionChoice === 'both' && !DUAL_VISIT_APPROVAL_ENABLED ? 'اعتماد الاثنين ينتظر نشر ضمانات الحسابات' : decisionChoice === 'both' ? (decisionNote.trim().length < 10 ? 'اكتب سبب الزيارتين أولًا' : 'اعتماد الزيارتين المستقلتين') : decisionChoice && (decisionRejectReason === 'سبب آخر' ? decisionCustomReason.trim().length < 5 : decisionRejectReason.trim().length < 5) ? 'اختار سبب الرفض أولًا' : 'اعتماد القرار النهائي'}</button>
