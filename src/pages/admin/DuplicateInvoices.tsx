@@ -673,14 +673,15 @@ export default function DuplicateInvoices() {
               {([
                 ['first', `${riderMap.get(decisionGroup.entries[0].rider_id)?.name || (decisionGroup.entries[0] as any).rider_name || 'المندوب الأول'} فقط`],
                 ['second', `${riderMap.get(decisionGroup.entries[1].rider_id)?.name || (decisionGroup.entries[1] as any).rider_name || 'المندوب الثاني'} فقط`],
-                ['both', 'الاثنان — زيارتان مستقلتان (بانتظار تحقق الحسابات)'],
+                ['both', 'الاثنان — زيارتان مستقلتان (بانتظار تحقق الحسابات — غير متاح الآن)'],
                 ['none', 'لا أحد — رفض التسجيلين'],
               ] as const).map(([value, label]) => (
-                <label key={value} className={`flex cursor-pointer items-center gap-2 rounded-xl border p-2.5 text-sm font-black ${decisionChoice === value ? 'border-teal-500 bg-teal-50' : 'border-slate-200'}`}>
-                  <input type="radio" checked={decisionChoice === value} onChange={() => setDecisionChoice(value)} />{label}
+                <label key={value} className={`flex items-center gap-2 rounded-xl border p-2.5 text-sm font-black ${value === 'both' ? 'cursor-not-allowed border-amber-200 bg-amber-50 text-amber-900' : 'cursor-pointer'} ${decisionChoice === value ? 'border-teal-500 bg-teal-50' : value === 'both' ? '' : 'border-slate-200'}`}>
+                  <input type="radio" checked={decisionChoice === value} disabled={value === 'both'} onChange={() => setDecisionChoice(value)} />{label}
                 </label>
               ))}
             </fieldset>
+            <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-900" role="note">اعتماد المندوبين معًا متوقف حاليًا لحماية الحسابات من احتساب قيمة الفاتورة مرتين. الملاحظة الإدارية اختيارية ولن تفتح الاختيار؛ يلزم التحقق من مسار احتساب الزيارتين أولًا.</p>
             {decisionChoice && decisionChoice !== 'both' && (
               <fieldset className="space-y-2 rounded-xl border border-slate-200 p-3">
                 <legend className="px-1 text-sm font-black">سبب رفض {decisionChoice === 'none' ? 'التسجيلين' : decisionChoice === 'first' ? (riderMap.get(decisionGroup.entries[1].rider_id)?.name || (decisionGroup.entries[1] as any).rider_name || 'المندوب الثاني') : (riderMap.get(decisionGroup.entries[0].rider_id)?.name || (decisionGroup.entries[0] as any).rider_name || 'المندوب الأول')}</legend>
@@ -712,7 +713,7 @@ export default function DuplicateInvoices() {
               {decisionUncertain && <p role="alert" className="w-full text-sm font-bold text-amber-900">النتيجة غير مؤكدة بسبب تأخر الاتصال. لا تعِد الحفظ؛ اضغط «تحقق من القرار» لمراجعة الحالة الفعلية.</p>}
               <button type="button" disabled={savingPairDecision} onClick={() => setDecisionInvoice(null)} className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-black disabled:opacity-50">إغلاق</button>
               {decisionUncertain && <button type="button" disabled={savingPairDecision} onClick={() => void recheckUnifiedDecision()} className="rounded-xl bg-amber-600 px-4 py-3 text-sm font-black text-white disabled:opacity-40">تحقق من القرار</button>}
-              <button type="button" disabled={savingPairDecision || decisionUncertain || !decisionChoice || decisionChoice === 'both' || (decisionRejectReason === 'سبب آخر' ? decisionCustomReason.trim().length < 5 : decisionRejectReason.trim().length < 5)} onClick={() => void saveUnifiedDecision()} className="rounded-xl bg-teal-700 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">{savingPairDecision ? 'جاري حفظ القرار...' : 'اعتماد القرار النهائي'}</button>
+              <button type="button" disabled={savingPairDecision || decisionUncertain || !decisionChoice || decisionChoice === 'both' || (decisionRejectReason === 'سبب آخر' ? decisionCustomReason.trim().length < 5 : decisionRejectReason.trim().length < 5)} onClick={() => void saveUnifiedDecision()} className="rounded-xl bg-teal-700 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">{savingPairDecision ? 'جاري حفظ القرار...' : decisionChoice === 'both' ? 'اعتماد الاثنين متوقف لحماية الحسابات' : decisionChoice && (decisionRejectReason === 'سبب آخر' ? decisionCustomReason.trim().length < 5 : decisionRejectReason.trim().length < 5) ? 'اختار سبب الرفض أولًا' : 'اعتماد القرار النهائي'}</button>
             </div>
           </section>
         </div>

@@ -10,6 +10,7 @@ test('manager never preselects a rejection explanation', () => {
   assert.match(manager, /setDecisionRejectReason\(''\)/)
   assert.match(manager, /اختار سبب الرفض بنفسك/)
   assert.match(manager, /سبب الرفض لم يُحدد/)
+  assert.match(manager, /اختار سبب الرفض أولًا/)
 })
 
 test('unified decision can be committed atomically through the manager gateway, but never double-credits', () => {
@@ -19,6 +20,8 @@ test('unified decision can be committed atomically through the manager gateway, 
   assert.match(manager, /بانتظار تحقق الحسابات/)
   assert.match(reviewSql, /dual_approval_requires_accounting_verification/)
   assert.match(reviewSql, /approved_order_has_other_exclusion/)
+  assert.match(manager, /disabled=\{value === 'both'\}/)
+  assert.match(manager, /الملاحظة الإدارية اختيارية ولن تفتح الاختيار/)
 })
 
 test('proposed transaction enforces manager access and an audit trail', () => {
