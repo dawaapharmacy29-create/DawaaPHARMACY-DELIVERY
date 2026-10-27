@@ -44,6 +44,14 @@ const VISIT_GATEWAY_ENABLED = import.meta.env.VITE_DELIVERY_VISIT_GATEWAY_V1_ENA
 const DUAL_VISIT_APPROVAL_ENABLED = import.meta.env.VITE_DELIVERY_DUAL_DUPLICATE_APPROVAL_V1_ENABLED === 'true'
 const DECISION_REQUEST_TIMEOUT_MS = 20000
 
+const DUAL_VISIT_NOTE_PRESETS = [
+  { label: 'تأجيل الاستلام وإعادة الزيارة', note: 'العميل أجّل الاستلام وطلب إعادة الزيارة؛ تمت مراجعة تسجيلين لزيارتين مستقلتين لنفس الفاتورة.' },
+  { label: 'تسليم على زيارتين', note: 'تم تسليم الطلب على زيارتين مستقلتين، ولكل مندوب زيارة فعلية منفصلة مرتبطة بنفس الفاتورة.' },
+  { label: 'استكمال صنف ناقص', note: 'تم تنفيذ زيارة أولى لتسليم المتاح، ثم زيارة ثانية مستقلة لاستكمال صنف ناقص من نفس الفاتورة.' },
+  { label: 'استلام مرتجع منفصل', note: 'تمت زيارة لتسليم الطلب، ثم زيارة مستقلة لاستلام مرتجع مرتبط بنفس الفاتورة.' },
+  { label: 'زيارة ثانية بطلب العميل', note: 'العميل طلب زيارة ثانية مستقلة لنفس الفاتورة، وتم تنفيذ الزيارتين بواسطة المندوبين المسجلين.' },
+]
+
 async function boundedDecisionRequest<T>(request: PromiseLike<T>, timeoutMs = DECISION_REQUEST_TIMEOUT_MS): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
@@ -712,8 +720,26 @@ export default function DuplicateInvoices() {
               {decisionChoice === 'both' && <p className="mt-2 text-xs text-emerald-900">مشواران مستحقان بمعاملين مسجّلين، وفاتورة بيع واحدة. بدون احتساب تلقائي لأي زيارة غير مسلّمة أو غير مطابقة لـBConnect.</p>}
               <p className="mt-2 text-xs">لن يُحفظ شيء قبل التأكيد. يعتمد الحفظ النهائي على تحقق قاعدة البيانات من هوية الفاتورة وحالة التسجيلين.</p>
             </div>
+            {decisionChoice === 'both' && (
+              <fieldset className="space-y-2 rounded-xl border border-teal-100 bg-teal-50/50 p-3">
+                <legend className="px-1 text-sm font-black text-teal-900">ملاحظات تأكيد سريعة — اختار السبب المناسب</legend>
+                <div className="flex flex-wrap gap-2">
+                  {DUAL_VISIT_NOTE_PRESETS.map(preset => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      aria-pressed={decisionNote === preset.note}
+                      disabled={savingPairDecision || decisionUncertain}
+                      onClick={() => setDecisionNote(preset.note)}
+                      className={`rounded-xl border px-3 py-2 text-xs font-black transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${decisionNote === preset.note ? 'border-teal-700 bg-teal-700 text-white' : 'border-teal-200 bg-white text-teal-900 hover:border-teal-500 hover:bg-teal-50'}`}
+                    >{preset.label}</button>
+                  ))}
+                </div>
+                <p className="text-xs font-bold text-teal-900">الاختيار بيكتب الملاحظة فقط، وتقدر تعدّلها. اختار سببًا حصل فعلًا بعد مراجعة الزيارتين؛ مفيش اعتماد تلقائي.</p>
+              </fieldset>
+            )}
             <label className="block text-sm font-bold">ملاحظة إدارية {decisionChoice === 'both' ? '(إجبارية — 10 أحرف على الأقل)' : '(اختيارية)'}
-              <textarea value={decisionNote} onChange={event => setDecisionNote(event.target.value)} rows={2} placeholder={decisionChoice === 'both' ? 'مثال: المندوب عاد مرة ثانية لتسليم صنف ناقص / استلام مرتجع' : 'توضيح عند الحاجة'} className="mt-2 w-full resize-y rounded-xl border border-slate-200 p-2.5" />
+              <textarea value={decisionNote} onChange={event => setDecisionNote(event.target.value)} rows={3} maxLength={2000} placeholder={decisionChoice === 'both' ? 'اختار ملاحظة جاهزة من فوق أو اكتب سبب الزيارتين بنفسك' : 'توضيح عند الحاجة'} className="mt-2 w-full resize-y rounded-xl border border-slate-200 p-2.5" />
             </label>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-white p-3 sm:px-5">
