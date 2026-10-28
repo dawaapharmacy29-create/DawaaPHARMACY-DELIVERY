@@ -10,6 +10,7 @@ import { finalizeReconciliationBatch, writeReconciliationBatchChunks } from '../
 import { fetchAllRows } from '../../lib/fetchAllRows'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
+import { riderOrderEarning } from '../../lib/duplicateVisitAccounting'
 import { duplicateReasonLabel, formatCairoDateTime, formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
 import { findInvoiceEvidenceConflicts, isConfirmedAdminExclusion, preserveHumanDecision, selectVerifiedSystemInvoice } from '../../lib/reconciliationDecision'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
@@ -260,6 +261,8 @@ export default function Reconciliation() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<FilterKey>('all')
   const [searchTerm, setSearchTerm] = useState('')
+  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([])
+  const [bulkApproving, setBulkApproving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [report, setReport] = useState<ReconciliationReport | null>(null)
   const [latestUploadLog, setLatestUploadLog] = useState<ReconciliationUploadLog | null>(null)
@@ -481,19 +484,33 @@ export default function Reconciliation() {
     const counts = new Map<string, number>()
     orders.forEach(o => {
       const inv = normalizeOrderInvoice(o)
-      if (inv) counts.set(inv, (counts.get(inv) ?? 0) + 1)
+      const branch = normalizeBranchName((o as any).branch_name || riders.find(r => r.id === o.rider_id)?.branch_name)
+      if (inv && branch) {
+        const key = systemInvoiceKey(inv, branch)
+        counts.set(key, (counts.get(key) ?? 0) + 1)
+      }
     })
     return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([inv]) => inv))
-  }, [orders])
+  }, [orders, riders])
+
+  const orderDuplicateKey = (order: DeliveryOrder) => systemInvoiceKey(
+    normalizeOrderInvoice(order),
+    (order as any).branch_name || riders.find(r => r.id === order.rider_id)?.branch_name,
+  )
+  const isOrderDuplicate = (order: DeliveryOrder) => Boolean(
+    order.is_duplicate_invoice || duplicateInvoiceSet.has(orderDuplicateKey(order)),
+  )
 
   const duplicateGroups = useMemo(() => {
     const groups = new Map<string, DeliveryOrder[]>()
     orders.forEach(order => {
       const inv = normalizeOrderInvoice(order)
-      if (!inv) return
-      const current = groups.get(inv) || []
+      const branch = normalizeBranchName((order as any).branch_name || riders.find(r => r.id === order.rider_id)?.branch_name)
+      if (!inv || !branch) return
+      const key = systemInvoiceKey(inv, branch)
+      const current = groups.get(key) || []
       current.push(order)
-      groups.set(inv, current)
+      groups.set(key, current)
     })
     groups.forEach(group => group.sort((a, b) => {
       const aTime = new Date((a as any).registered_at || (a as any).created_at || 0).getTime()
@@ -501,7 +518,7 @@ export default function Reconciliation() {
       return aTime - bTime
     }))
     return groups
-  }, [orders])
+  }, [orders, riders])
 
   const duplicatePendingTotal = orders.filter(order =>
     !(order as any).deleted_at &&
@@ -516,7 +533,7 @@ export default function Reconciliation() {
     const inv = normalizeOrderInvoice(order)
     const isFailed = order.status === 'failed'
     const isDeleted = Boolean((order as any).deleted_at)
-    const isDuplicate = duplicateInvoiceSet.has(inv) || order.is_duplicate_invoice
+    const isDuplicate = isOrderDuplicate(order)
     const isMultiplier = (order.order_multiplier ?? 1) >= 1.5
     const finalStatus = (order as any).final_count_status
     const branchName = String((order as any).branch_name || '')
@@ -585,6 +602,145 @@ export default function Reconciliation() {
       return new Date((a as any).registered_at || 0).getTime() - new Date((b as any).registered_at || 0).getTime()
     })
   }, [filteredOrders, filter])
+
+  // Bulk decisions never override duplicate, multiplier, failed, or human-review workflows.
+  const isBulkApprovalEligible = (order: DeliveryOrder) =>
+    order.status === 'delivered' &&
+    !(order as any).deleted_at &&
+    (order as any).is_countable !== true &&
+    !String((order as any).final_count_status || '').startsWith('counted') &&
+    !String((order as any).final_count_status || '').startsWith('excluded') &&
+    !isConfirmedAdminExclusion(order as any) &&
+    !isOrderDuplicate(order) &&
+    !order.needs_review &&
+    Number(order.order_multiplier ?? 1) === 1 &&
+    order.bconnect_match_status === 'matched' &&
+    Boolean(normalizeOrderInvoice(order)) &&
+    Boolean(normalizeBranchName((order as any).branch_name || riderMap.get(order.rider_id)?.branch_name))
+
+  const selectableIds = displayedOrders.filter(isBulkApprovalEligible).map(order => order.id)
+  const selectedEligibleIds = selectedOrderIds.filter(id => selectableIds.includes(id))
+
+  async function approveSelectedOrders() {
+    if (bulkApproving || !selectedEligibleIds.length) return
+    if (!window.confirm(`اعتماد ${selectedEligibleIds.length} أوردر مطابق لـ BConnect؟ لن يتم اعتماد المكرر أو ×1.5 أو الفاشل أو المستبعد.`)) return
+    setBulkApproving(true)
+    const approved: string[] = []
+    const failed: string[] = []
+    try {
+      for (const id of selectedEligibleIds) {
+        const order = orders.find(row => row.id === id)
+        if (!order || !isBulkApprovalEligible(order)) {
+          failed.push(id)
+          continue
+        }
+        try {
+          await updateOrderWithConfirmation(id, {
+            bconnect_match_status: 'manually_approved',
+            is_countable: true,
+            final_count_status: 'counted_manual_approval',
+            count_exclusion_reason: null,
+            needs_review: false,
+            reconciliation_notes: 'اعتماد جماعي من الإدارة بعد مطابقة BConnect',
+            updated_at: new Date().toISOString(),
+          })
+          approved.push(id)
+        } catch (error) {
+          console.error('Bulk approval failed for order', id, error)
+          failed.push(id)
+        }
+      }
+      setSelectedOrderIds(failed)
+      if (approved.length) toast.success(`تم اعتماد ${approved.length} أوردر وتأكيد حفظها`)
+      if (failed.length) toast.error(`تعذر تأكيد ${failed.length} أوردر؛ راجعها منفردة قبل إعادة المحاولة`)
+    } finally {
+      setBulkApproving(false)
+    }
+  }
+
+  function exportFilteredOrdersXlsx() {
+    if (!filteredOrders.length) {
+      toast.error('لا توجد أوردرات ظاهرة لتصديرها')
+      return
+    }
+
+    const filterLabels: Record<FilterKey, string> = {
+      all: 'الكل',
+      counted: 'المحتسبة',
+      pending: 'بانتظار الاعتماد',
+      not_found: 'غير الموجودة',
+      failed: 'الفاشلة',
+      duplicate: 'المكررة',
+      multiplier: 'مضاعف_1.5',
+      customer_mismatch: 'اختلاف_اسم_العميل',
+      deleted: 'المحذوفة',
+    }
+
+    const rows = filteredOrders.map(order => {
+      const rider = riderMap.get(order.rider_id)
+      const finalStatus = String((order as any).final_count_status || '')
+      const reviewStatus = String((order as any).review_status || (order as any).duplicate_review_status || '')
+      return {
+        'رقم الفاتورة': normalizeOrderInvoice(order),
+        'تاريخ الأوردر': String((order as any).delivery_date || (order as any).work_date || '').slice(0, 10),
+        'وقت التسجيل': (order as any).registered_at ? new Date((order as any).registered_at).toLocaleString('ar-EG') : '',
+        'الدليفري': rider?.name || (order as any).rider_name || '',
+        'اسم المستخدم': rider?.username || '',
+        'الفرع': (order as any).branch_name || rider?.branch_name || '',
+        'اسم العميل': order.customer_name_snapshot || (order as any).customer_name || '',
+        'كود العميل': (order as any).customer_code_snapshot || (order as any).customer_code || '',
+        'رقم الهاتف': order.customer_phone_snapshot || (order as any).customer_phone || '',
+        'العنوان': (order as any).delivery_address || (order as any).customer_address || '',
+        'قيمة الفاتورة': Number(order.invoice_amount || (order as any).invoice_value || 0),
+        'حالة الأوردر': order.status || '',
+        'حالة المطابقة': order.bconnect_match_status || '',
+        'حالة الاحتساب النهائية': finalStatus,
+        'حالة المراجعة': reviewStatus,
+        'محتسب': (order as any).is_countable === true ? 'نعم' : 'لا',
+        'معامل الأوردر': Number(order.order_multiplier || 1),
+        'قيمة احتساب الأوردر': Number((order as any).order_earning || 0),
+        'مكرر': isOrderDuplicate(order) ? 'نعم' : 'لا',
+        'فاشل': order.status === 'failed' ? 'نعم' : 'لا',
+        'غير موجود في B-Connect': order.bconnect_match_status === 'invoice_not_found' ? 'نعم' : 'لا',
+        'سبب الاستبعاد': (order as any).count_exclusion_reason || '',
+        'ملاحظات المطابقة': (order as any).reconciliation_notes || '',
+        'دكتور التحضير': (order as any).preparing_doctor_name || '',
+        'محذوف': (order as any).deleted_at ? 'نعم' : 'لا',
+        'سبب الحذف': (order as any).deletion_reason || '',
+        'معرف الأوردر': order.id,
+      }
+    })
+
+    const worksheet = XLSX.utils.json_to_sheet(rows)
+    worksheet['!cols'] = [
+      { wch: 15 }, { wch: 14 }, { wch: 22 }, { wch: 20 }, { wch: 18 }, { wch: 16 },
+      { wch: 25 }, { wch: 14 }, { wch: 16 }, { wch: 30 }, { wch: 14 }, { wch: 16 },
+      { wch: 22 }, { wch: 24 }, { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 18 },
+      { wch: 12 }, { wch: 10 }, { wch: 22 }, { wch: 24 }, { wch: 35 }, { wch: 20 },
+      { wch: 12 }, { wch: 24 }, { wch: 38 },
+    ]
+    worksheet['!autofilter'] = { ref: worksheet['!ref'] || 'A1:A1' }
+
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'الأوردرات المفلترة')
+
+    const summarySheet = XLSX.utils.aoa_to_sheet([
+      ['تقرير المطابقة المفلتر'],
+      ['الفترة من', selectedFrom],
+      ['الفترة إلى', selectedTo],
+      ['الفلتر', filterLabels[filter]],
+      ['كلمة البحث', searchTerm || '—'],
+      ['عدد الأوردرات', filteredOrders.length],
+      ['تاريخ التصدير', new Date().toLocaleString('ar-EG')],
+    ])
+    summarySheet['!cols'] = [{ wch: 22 }, { wch: 35 }]
+    XLSX.utils.book_append_sheet(workbook, summarySheet, 'ملخص التصدير')
+
+    const safeLabel = filterLabels[filter].replace(/\s+/g, '_')
+    const fileName = 'مطابقة_الأوردرات_' + safeLabel + '_' + selectedFrom + '_' + selectedTo + '.xlsx'
+    XLSX.writeFile(workbook, fileName)
+    toast.success('تم تصدير ' + filteredOrders.length + ' أوردر إلى Excel')
+  }
 
   async function readImportFile(file: File): Promise<Record<string, unknown>[]> {
     const buffer = await file.arrayBuffer()
@@ -786,7 +942,7 @@ export default function Reconciliation() {
       for (const order of currentOrders) {
         const inv = normalizeOrderInvoice(order)
         const isFailed = order.status === 'failed'
-        const isDuplicate = duplicateInvoiceSet.has(inv) || order.is_duplicate_invoice
+        const isDuplicate = isOrderDuplicate(order)
         const isMultiplier = (order.order_multiplier ?? 1) >= 1.5
         const match = findSystemMatch(order)
         const nameMismatch = Boolean(match && customerNamesDiffer((order as any).customer_name || order.customer_name_snapshot, match.customer_name))
@@ -1083,10 +1239,9 @@ export default function Reconciliation() {
   async function handleManualMatch(orderId: string) {
     try {
       const order = orders.find(o => o.id === orderId)
-      const duplicate = Boolean(order && (order.is_duplicate_invoice || duplicateInvoiceSet.has(normalizeOrderInvoice(order))))
+      const duplicate = Boolean(order && isOrderDuplicate(order))
       if (duplicate && (!order?.duplicate_reason || (order as any).duplicate_review_status !== 'approved')) {
-        toast.error('لازم تراجع سبب التكرار وتعتمد التكرار أولًا من صفحة الأوردرات المكررة')
-        navigate(`/admin/duplicate-invoices?from=${encodeURIComponent(selectedFrom)}&to=${encodeURIComponent(selectedTo)}&status=pending`)
+        toast.error('الأوردر مكرر في نفس الفرع؛ راجع سبب التكرار من بطاقة الأوردر هنا ثم اعتمده')
         return
       }
       const isMultiplier = ((order?.order_multiplier ?? 1) >= 1.5)
@@ -1223,19 +1378,40 @@ export default function Reconciliation() {
     }
   }
 
+  const isPayableOrder = (order: DeliveryOrder) => {
+    const finalStatus = String((order as any).final_count_status || '')
+    const duplicateReview = String(order.duplicate_review_status || '')
+    if (order.status !== 'delivered' || finalStatus.startsWith('pending') || finalStatus.startsWith('excluded') || finalStatus === 'rejected') return false
+    if (isConfirmedAdminExclusion(order as any)) return false
+    // The original delivered visit keeps its earned credit. Only the extra
+    // duplicate registration requires an explicit second-visit approval.
+    if ((order.is_duplicate_invoice || finalStatus.startsWith('pending_duplicate')) && duplicateReview !== 'approved') return false
+    // A matched order can still carry an unresolved multiplier/value review.
+    // Keep it visible in the review column, never in confirmed payroll.
+    if (order.needs_review || finalStatus.includes('pending_value_review')) return false
+    return (order as any).is_countable === true || finalStatus.startsWith('counted')
+  }
+
   function buildRiderSummaryRows() {
     return riders.map(rider => {
       const riderOrders = orders.filter(o => o.rider_id === rider.id && !(o as any).deleted_at)
-      const normal = riderOrders.filter(o => ((o as any).is_countable === true || (o as any).final_count_status === 'counted' || (o as any).final_count_status === 'counted_manual_approval') && (o.order_multiplier ?? 1) < 1.5).length
-      const multiplier = riderOrders.filter(o => ((o as any).is_countable === true || String((o as any).final_count_status || '').startsWith('counted')) && (o.order_multiplier ?? 1) >= 1.5).length
+      const normal = riderOrders.filter(o => isPayableOrder(o) && (o.order_multiplier ?? 1) < 1.5).length
+      const multiplier = riderOrders.filter(o => isPayableOrder(o) && (o.order_multiplier ?? 1) >= 1.5).length
       const failed = riderOrders.filter(o => o.status === 'failed').length
-      const wrongAfterReview = riderOrders.filter(o => ['rejected','excluded','excluded_failed','excluded_duplicate','excluded_legacy_unassigned'].includes(String((o as any).final_count_status || ''))).length
+      const wrongAfterReview = riderOrders.filter(o => String((o as any).final_count_status || '').startsWith('excluded') || String((o as any).final_count_status || '') === 'rejected' || isConfirmedAdminExclusion(o as any)).length
       const notFound = riderOrders.filter(o => o.bconnect_match_status === 'invoice_not_found' || String((o as any).final_count_status || '').includes('not_found')).length
-      const duplicates = riderOrders.filter(o => duplicateInvoiceSet.has(normalizeOrderInvoice(o)) || o.is_duplicate_invoice).length
-      const pending = riderOrders.filter(o => !((o as any).is_countable === true) && !['failed'].includes(o.status) && !String((o as any).final_count_status || '').startsWith('excluded')).length
+      const duplicates = riderOrders.filter(isOrderDuplicate).length
+      const pending = riderOrders.filter(o => !isPayableOrder(o) && o.status !== 'failed' && !String((o as any).final_count_status || '').startsWith('excluded')).length
+      const reviewOrders = riderOrders.filter(o => o.status === 'delivered' && !isConfirmedAdminExclusion(o as any) && (o.needs_review || String((o as any).final_count_status || '').includes('pending_value_review')))
+      const reviewUnits = reviewOrders.reduce((sum, o) => sum + Number(o.order_multiplier || 1), 0)
+      const reviewAmount = reviewOrders.reduce((sum, o) => {
+        const saved = Number(o.order_earning)
+        const fallback = Number(o.order_rate || rider.order_rate || 0) * Number(o.order_multiplier || 1)
+        return sum + (Number.isFinite(saved) && saved > 0 ? saved : fallback)
+      }, 0)
       const deleted = orders.filter(o => o.rider_id === rider.id && Boolean((o as any).deleted_at)).length
-      const approvedTrips = trips.filter(t => t.rider_id === rider.id && ['approved','completed'].includes(t.status)).length
-      const pendingTrips = trips.filter(t => t.rider_id === rider.id && ['pending','pending_approval'].includes(t.status as any)).length
+      const approvedTrips = trips.filter(t => t.rider_id === rider.id && ['approved','completed'].includes(t.status) && !t.needs_review).length
+      const pendingTrips = trips.filter(t => t.rider_id === rider.id && (['pending','pending_approval'].includes(t.status as any) || (['approved','completed'].includes(t.status) && t.needs_review))).length
       const allTrips = trips.filter(t => t.rider_id === rider.id).length
       const riderAttendance = attendanceRows.filter(a => a.rider_id === rider.id)
       const attendanceDays = new Set(riderAttendance.filter(a => a.check_in_at).map(a => a.work_date)).size
@@ -1258,12 +1434,326 @@ export default function Reconciliation() {
       const countedUnits = normal + (multiplier * 1.5)
       const riskScore = failed + notFound + duplicates + deleted + pendingTrips + wrongAfterReview
       return {
-        rider, normal, multiplier, countedUnits, failed, wrongAfterReview, notFound, duplicates, pending, deleted,
+        rider, normal, multiplier, countedUnits, failed, wrongAfterReview, notFound, duplicates, pending, reviewUnits, reviewAmount, deleted,
         approvedTrips, pendingTrips, allTrips, riskScore, totalOrders: riderOrders.length,
         attendanceDays, attendanceHours: Math.round((attendanceMinutes / 60) * 100) / 100, permissions,
         deductionsAmount, rewardsAmount, incentiveBase, incentiveAfterDeductions, deductionDetails, rewardDetails,
       }
     }).filter(row => row.totalOrders || row.allTrips || row.deleted || row.attendanceDays || row.deductionsAmount || row.rewardsAmount)
+  }
+
+  async function loadStyledXlsx(): Promise<any> {
+    const win = window as any
+    if (win.XLSX?.style_version) return win.XLSX
+
+    return await new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-dawaa-xlsx-style="1"]') as HTMLScriptElement | null
+      if (existing) {
+        if (win.XLSX?.style_version) return resolve(win.XLSX)
+        existing.addEventListener('load', () => resolve(win.XLSX), { once: true })
+        existing.addEventListener('error', () => reject(new Error('تعذر تحميل محرك Excel المصمم')), { once: true })
+        return
+      }
+
+      const script = document.createElement('script')
+      script.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js'
+      script.async = true
+      script.dataset.dawaaXlsxStyle = '1'
+      script.onload = () => win.XLSX?.style_version ? resolve(win.XLSX) : reject(new Error('محرك Excel المصمم لم يبدأ بشكل صحيح'))
+      script.onerror = () => reject(new Error('تعذر تحميل محرك Excel المصمم'))
+      document.head.appendChild(script)
+    })
+  }
+
+  async function exportRiderCycleApprovalXlsx() {
+    try {
+      const SX = await loadStyledXlsx().catch(error => {
+        console.warn('Styled Excel unavailable, exporting a compatible workbook', error)
+        toast.warning('التنسيق المتقدم غير متاح حاليًا؛ سيتم تصدير ملف Excel كامل بدون ألوان مخصصة')
+        return XLSX
+      })
+      const activeSummary = buildRiderSummaryRows()
+      const summaryByRider = new Map(activeSummary.map(row => [row.rider.id, row]))
+
+      const rows = riders
+        .map(rider => {
+          const existing = summaryByRider.get(rider.id)
+          const normal = Number(existing?.normal || 0)
+          const multiplier = Number(existing?.multiplier || 0)
+          const totalOrders = Number(existing?.totalOrders || 0)
+          const approvedOrders = normal + multiplier
+          const approvedOrderUnits = Number(existing?.countedUnits || 0)
+          const allTrips = Number(existing?.allTrips || 0)
+          const approvedTrips = Number(existing?.approvedTrips || 0)
+          return { rider, totalOrders, normal, multiplier, approvedOrders, approvedOrderUnits, allTrips, approvedTrips }
+        })
+        .sort((a, b) => {
+          const branchA = String((a.rider as any).branch_name || '')
+          const branchB = String((b.rider as any).branch_name || '')
+          const byBranch = branchA.localeCompare(branchB, 'ar')
+          return byBranch !== 0 ? byBranch : String(a.rider.name || '').localeCompare(String(b.rider.name || ''), 'ar')
+        })
+
+      if (!rows.length) {
+        toast.error('لا يوجد مندوبون لتصدير تقرير الدورة')
+        return
+      }
+
+      const total = rows.reduce((acc, row) => ({
+        totalOrders: acc.totalOrders + row.totalOrders,
+        normal: acc.normal + row.normal,
+        multiplier: acc.multiplier + row.multiplier,
+        approvedOrders: acc.approvedOrders + row.approvedOrders,
+        approvedOrderUnits: acc.approvedOrderUnits + row.approvedOrderUnits,
+        allTrips: acc.allTrips + row.allTrips,
+        approvedTrips: acc.approvedTrips + row.approvedTrips,
+      }), { totalOrders: 0, normal: 0, multiplier: 0, approvedOrders: 0, approvedOrderUnits: 0, allTrips: 0, approvedTrips: 0 })
+
+      const tripApprovalRate = total.allTrips ? total.approvedTrips / total.allTrips : 0
+      const title = 'صيدليات دواء — تقرير اعتماد الدليفري'
+      const cycleText = 'الدورة: ' + selectedFrom + ' إلى ' + selectedTo
+      const generatedText = 'تاريخ التصدير: ' + new Date().toLocaleString('ar-EG')
+      const headers = ['م','اسم الدليفري','الفرع','عدد الأوردرات','أوردرات معتمدة ×1','أوردرات معتمدة ×1.5','عدد الأوردرات المعتمدة فعليًا','إجمالي وحدات الأوردرات المعتمدة','عدد المشاوير','إجمالي المشاوير المعتمدة']
+
+      const dataRows = rows.map((row, index) => [
+        index + 1, row.rider.name || '', (row.rider as any).branch_name || '', row.totalOrders,
+        row.normal, row.multiplier, row.approvedOrders, row.approvedOrderUnits, row.allTrips, row.approvedTrips,
+      ])
+
+      const totalRowNumber = 11 + dataRows.length
+      const noteRowNumber = totalRowNumber + 2
+      const sheetData = [
+        [title], [cycleText], [generatedText], [],
+        ['عدد المناديب','', 'الأوردرات المعتمدة فعليًا','', 'وحدات الأوردرات بعد ×1.5','', 'المشاوير المعتمدة','', 'نسبة اعتماد المشاوير',''],
+        [rows.length,'', total.approvedOrders,'', total.approvedOrderUnits,'', total.approvedTrips,'', tripApprovalRate,''],
+        [], ['ملخص المناديب للدورة'], [], headers,
+        ...dataRows,
+        ['', 'الإجمالي العام', '', total.totalOrders, total.normal, total.multiplier, total.approvedOrders, total.approvedOrderUnits, total.allTrips, total.approvedTrips],
+        [],
+        ['ملاحظة: إجمالي وحدات الأوردرات المعتمدة = أوردر ×1 بوحدة واحدة + أوردر ×1.5 بوحدة ونصف. المشاوير المعتمدة تشمل فقط الحالات approved / completed.'],
+      ]
+
+      const ws = SX.utils.aoa_to_sheet(sheetData)
+      ws['!merges'] = [
+        SX.utils.decode_range('A1:J1'), SX.utils.decode_range('A2:J2'), SX.utils.decode_range('A3:J3'),
+        SX.utils.decode_range('A5:B5'), SX.utils.decode_range('A6:B6'), SX.utils.decode_range('C5:D5'), SX.utils.decode_range('C6:D6'),
+        SX.utils.decode_range('E5:F5'), SX.utils.decode_range('E6:F6'), SX.utils.decode_range('G5:H5'), SX.utils.decode_range('G6:H6'),
+        SX.utils.decode_range('I5:J5'), SX.utils.decode_range('I6:J6'), SX.utils.decode_range('A8:J8'),
+        SX.utils.decode_range('A' + noteRowNumber + ':J' + noteRowNumber),
+      ]
+      ws['!cols'] = [{wch:6},{wch:24},{wch:17},{wch:16},{wch:20},{wch:22},{wch:28},{wch:30},{wch:17},{wch:25}]
+      ws['!rows'] = [{hpt:34},{hpt:25},{hpt:22},{hpt:8},{hpt:23},{hpt:32},{hpt:8},{hpt:25},{hpt:8},{hpt:38}]
+      ws['!autofilter'] = { ref: 'A10:J' + (totalRowNumber - 1) }
+      ws['!margins'] = { left:0.25, right:0.25, top:0.35, bottom:0.35, header:0.15, footer:0.15 }
+
+      const border = {
+        top: { style:'thin', color:{ rgb:'D8E4E2' } }, bottom: { style:'thin', color:{ rgb:'D8E4E2' } },
+        left: { style:'thin', color:{ rgb:'D8E4E2' } }, right: { style:'thin', color:{ rgb:'D8E4E2' } },
+      }
+      const center = { horizontal:'center', vertical:'center', wrapText:true }
+      const titleStyle = { fill:{fgColor:{rgb:'073B3A'}}, font:{bold:true,color:{rgb:'FFFFFF'},sz:20}, alignment:center }
+      const cycleStyle = { fill:{fgColor:{rgb:'0F766E'}}, font:{bold:true,color:{rgb:'FFFFFF'},sz:12}, alignment:center }
+      const dateStyle = { fill:{fgColor:{rgb:'CCFBF1'}}, font:{bold:true,color:{rgb:'134E4A'},sz:10}, alignment:center }
+      const kpiLabel = { fill:{fgColor:{rgb:'F0FDFA'}}, font:{bold:true,color:{rgb:'115E59'},sz:10}, alignment:center, border }
+      const kpiValue = { fill:{fgColor:{rgb:'FFFFFF'}}, font:{bold:true,color:{rgb:'0F766E'},sz:18}, alignment:center, border }
+      const sectionStyle = { fill:{fgColor:{rgb:'E6FFFB'}}, font:{bold:true,color:{rgb:'134E4A'},sz:13}, alignment:{horizontal:'right',vertical:'center'} }
+      const headerStyle = { fill:{fgColor:{rgb:'0F766E'}}, font:{bold:true,color:{rgb:'FFFFFF'},sz:10}, alignment:center, border }
+      const totalStyle = { fill:{fgColor:{rgb:'064E3B'}}, font:{bold:true,color:{rgb:'FFFFFF'},sz:11}, alignment:center, border }
+      const noteStyle = { fill:{fgColor:{rgb:'FFFBEB'}}, font:{bold:true,color:{rgb:'92400E'},sz:10}, alignment:{horizontal:'right',vertical:'center',wrapText:true}, border:{top:{style:'thin',color:{rgb:'F59E0B'}},bottom:{style:'thin',color:{rgb:'F59E0B'}},left:{style:'thin',color:{rgb:'F59E0B'}},right:{style:'thin',color:{rgb:'F59E0B'}}} }
+
+      const ensure = (addr: string) => { if (!ws[addr]) ws[addr] = { t:'s', v:'' }; return ws[addr] }
+      const styleRange = (ref: string, style: any) => {
+        const rg = SX.utils.decode_range(ref)
+        for (let r = rg.s.r; r <= rg.e.r; r += 1) for (let c = rg.s.c; c <= rg.e.c; c += 1) ensure(SX.utils.encode_cell({r,c})).s = style
+      }
+
+      styleRange('A1:J1', titleStyle); styleRange('A2:J2', cycleStyle); styleRange('A3:J3', dateStyle)
+      ;['A5:B5','C5:D5','E5:F5','G5:H5','I5:J5'].forEach(ref => styleRange(ref, kpiLabel))
+      ;['A6:B6','C6:D6','E6:F6','G6:H6','I6:J6'].forEach(ref => styleRange(ref, kpiValue))
+      styleRange('A8:J8', sectionStyle); styleRange('A10:J10', headerStyle)
+      ensure('I6').z = '0.0%'
+
+      const maxUnits = Math.max(...rows.map(r => r.approvedOrderUnits), 1)
+      const maxTrips = Math.max(...rows.map(r => r.approvedTrips), 1)
+      const heat = (value: number, max: number) => {
+        const ratio = max ? value / max : 0
+        if (ratio >= 0.80) return '99F6E4'
+        if (ratio >= 0.60) return 'CCFBF1'
+        if (ratio >= 0.40) return 'D1FAE5'
+        if (ratio >= 0.20) return 'ECFDF5'
+        return 'FFFFFF'
+      }
+
+      rows.forEach((row, idx) => {
+        const excelRow = 11 + idx
+        const altFill = idx % 2 === 0 ? 'FFFFFF' : 'F8FAFC'
+        for (let c = 0; c < 10; c += 1) {
+          const cell = ensure(SX.utils.encode_cell({ r: excelRow - 1, c }))
+          cell.s = { fill:{fgColor:{rgb:altFill}}, font:{color:{rgb:'1E293B'},sz:10}, alignment:center, border:{bottom:{style:'hair',color:{rgb:'E2E8F0'}}} }
+        }
+        ensure('B' + excelRow).s.alignment = { horizontal:'right', vertical:'center' }
+        const branch = String((row.rider as any).branch_name || '')
+        ensure('C' + excelRow).s = branch.includes('الشامي')
+          ? { fill:{fgColor:{rgb:'ECFEFF'}}, font:{bold:true,color:{rgb:'155E75'}}, alignment:center, border }
+          : { fill:{fgColor:{rgb:'F5F3FF'}}, font:{bold:true,color:{rgb:'5B21B6'}}, alignment:center, border }
+        ensure('F' + excelRow).s = { ...ensure('F' + excelRow).s, font:{bold:true,color:{rgb:'B45309'}}, alignment:center }
+        ensure('G' + excelRow).s = { ...ensure('G' + excelRow).s, font:{bold:true,color:{rgb:'047857'}}, alignment:center }
+        ensure('H' + excelRow).s = { ...ensure('H' + excelRow).s, fill:{fgColor:{rgb:heat(row.approvedOrderUnits,maxUnits)}}, font:{bold:true,color:{rgb:'047857'}}, alignment:center, border }
+        ensure('J' + excelRow).s = { ...ensure('J' + excelRow).s, fill:{fgColor:{rgb:heat(row.approvedTrips,maxTrips)}}, font:{bold:true,color:{rgb:'047857'}}, alignment:center, border }
+        ;['D','E','F','G','I','J'].forEach(col => ensure(col + excelRow).z = '#,##0')
+        ensure('H' + excelRow).z = '#,##0.0'
+      })
+
+      styleRange('A' + totalRowNumber + ':J' + totalRowNumber, totalStyle)
+      ;['D','E','F','G','I','J'].forEach(col => ensure(col + totalRowNumber).z = '#,##0')
+      ensure('H' + totalRowNumber).z = '#,##0.0'
+      styleRange('A' + noteRowNumber + ':J' + noteRowNumber, noteStyle)
+
+      const wb = SX.utils.book_new()
+      wb.Props = { Title:title, Subject:cycleText, Author:'Dawaa Pharmacy Delivery', CreatedDate:new Date() }
+      SX.utils.book_append_sheet(wb, ws, 'اعتماد الدليفري')
+
+      // Payroll sheet uses the actual per-rider rates stored in the app. Pending,
+      // failed and rejected work stays visible for review but earns no amount.
+      const payrollHeaders = ['م', 'اسم الدليفري', 'الفرع', 'إجمالي الأوردرات', 'مقبول ×1', 'مقبول ×1.5', 'وحدات محتسبة', 'معلق', 'فاشل', 'مرفوض/مستبعد', 'سعر الأوردر', 'مستحق الأوردرات', 'إجمالي المشاوير', 'مشاوير معتمدة', 'مشاوير معلقة', 'سعر المشوار', 'مستحق المشاوير', 'إجمالي المستحق المؤكد', 'وحدات تحت المراجعة', 'قيمة تقديرية معلقة']
+      const payrollRows = rows.map((row, index) => {
+        const summary = summaryByRider.get(row.rider.id)
+        const orderRate = Number(row.rider.order_rate || 0)
+        const tripRate = Number(row.rider.trip_rate || 0)
+        const orderAmount = orders.filter(o => o.rider_id === row.rider.id && isPayableOrder(o))
+          .reduce((sum, order) => sum + riderOrderEarning(order as any, orderRate), 0)
+        const tripAmount = trips.filter(t => t.rider_id === row.rider.id && ['approved', 'completed'].includes(t.status) && !t.needs_review)
+          .reduce((sum, trip) => {
+            const saved = Number(trip.trip_earning)
+            const fallback = Number(trip.trip_rate || tripRate) * Number(trip.trip_multiplier || 1)
+            return sum + (Number.isFinite(saved) && saved > 0 ? saved : fallback)
+          }, 0)
+        return [index + 1, row.rider.name || '', row.rider.branch_name || '', row.totalOrders,
+          row.normal, row.multiplier, row.approvedOrderUnits, summary?.pending || 0,
+          summary?.failed || 0, summary?.wrongAfterReview || 0,
+          orderRate, orderAmount, row.allTrips, row.approvedTrips, summary?.pendingTrips || 0,
+          tripRate, tripAmount, orderAmount + tripAmount, summary?.reviewUnits || 0, summary?.reviewAmount || 0]
+      })
+      const payrollTotals = payrollHeaders.map((_, column) =>
+        column === 1 ? 'الإجمالي' : [3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17, 18, 19].includes(column)
+          ? payrollRows.reduce((sum, row) => sum + Number(row[column] || 0), 0) : '',
+      )
+      const payrollSheet = SX.utils.aoa_to_sheet([
+        ['صيدليات دواء — مستحقات الدليفري للدورة'],
+        [cycleText],
+        ['الأسعار من ملف المندوب؛ الأوردرات ذات المراجعة المفتوحة تظهر في آخر عمودين، خارج المستحق المؤكد حتى اعتمادها.'],
+        [], payrollHeaders, ...payrollRows, payrollTotals,
+      ])
+      payrollSheet['!merges'] = [SX.utils.decode_range('A1:T1'), SX.utils.decode_range('A2:T2'), SX.utils.decode_range('A3:T3')]
+      payrollSheet['!cols'] = payrollHeaders.map((_, idx) => ({ wch: idx === 1 ? 25 : idx === 2 ? 17 : 19 }))
+      payrollSheet['!autofilter'] = { ref: `A5:T${5 + payrollRows.length}` }
+      const payrollEnd = 6 + payrollRows.length
+      for (let column = 0; column < payrollHeaders.length; column += 1) {
+        const head = SX.utils.encode_cell({ r: 4, c: column })
+        if (payrollSheet[head]) payrollSheet[head].s = headerStyle
+        const end = SX.utils.encode_cell({ r: payrollEnd - 1, c: column })
+        if (payrollSheet[end]) payrollSheet[end].s = totalStyle
+        for (let idx = 0; idx < payrollRows.length; idx += 1) {
+          const addr = SX.utils.encode_cell({ r: idx + 5, c: column })
+          if (payrollSheet[addr]) payrollSheet[addr].s = { alignment:center, fill:{fgColor:{rgb:idx % 2 ? 'F8FAFC' : 'FFFFFF'}}, border }
+        }
+      }
+      ;['A1:T1','A2:T2'].forEach((ref, index) => {
+        const area = SX.utils.decode_range(ref)
+        for (let col = area.s.c; col <= area.e.c; col += 1) {
+          const addr = SX.utils.encode_cell({r:area.s.r,c:col})
+          if (!payrollSheet[addr]) payrollSheet[addr] = {t:'s',v:''}
+          payrollSheet[addr].s = index ? cycleStyle : titleStyle
+        }
+      })
+      SX.utils.book_append_sheet(wb, payrollSheet, 'مستحقات المرتبات')
+
+      const orderAuditRows = orders.map(order => {
+        const rider = riderMap.get(order.rider_id)
+        const counted = isPayableOrder(order)
+        const amount = counted ? riderOrderEarning(order as any, Number(rider?.order_rate || 0)) : 0
+        return [order.id, rider?.name || order.rider_id, (order as any).branch_name || rider?.branch_name || '',
+          normalizeOrderInvoice(order), order.delivery_date, order.registered_at, order.status,
+          (order as any).final_count_status || '', order.duplicate_review_status || '',
+          Number(order.order_multiplier || 1), counted ? 'نعم' : 'لا', amount,
+          counted ? 'محتسب' : (order as any).count_exclusion_reason || order.review_reason || 'معلق / غير محتسب']
+      })
+      const tripAuditRows = trips.map(trip => {
+        const rider = riderMap.get(trip.rider_id)
+        const counted = ['approved', 'completed'].includes(trip.status) && !trip.needs_review
+        const saved = Number(trip.trip_earning)
+        const rate = Number(trip.trip_rate || rider?.trip_rate || 0)
+        const amount = counted ? (Number.isFinite(saved) && saved > 0 ? saved : rate * Number(trip.trip_multiplier || 1)) : 0
+        return [trip.id, rider?.name || trip.rider_id, rider?.branch_name || '', trip.trip_date,
+          trip.registered_at, trip.from_label, trip.to_label, trip.status, trip.needs_review ? 'نعم' : 'لا',
+          counted ? 'نعم' : 'لا', amount, trip.rejection_reason || trip.review_reason || trip.notes || '']
+      })
+      const addAuditSheet = (name: string, headers: string[], entries: (string | number | null | undefined)[][]) => {
+        const sheet = SX.utils.aoa_to_sheet([headers, ...entries])
+        sheet['!cols'] = headers.map((header, index) => ({ wch: index === 0 ? 38 : Math.max(15, Math.min(30, header.length * 1.7)) }))
+        sheet['!autofilter'] = { ref: `A1:${SX.utils.encode_col(headers.length - 1)}${entries.length + 1}` }
+        headers.forEach((_, index) => {
+          const addr = SX.utils.encode_cell({ r: 0, c: index })
+          sheet[addr].s = headerStyle
+        })
+        SX.utils.book_append_sheet(wb, sheet, name)
+      }
+      addAuditSheet('تفاصيل الأوردرات', ['معرف الأوردر', 'الدليفري', 'الفرع', 'الفاتورة', 'تاريخ التسليم', 'وقت التسجيل', 'حالة الأوردر', 'قرار الحساب', 'قرار التكرار', 'المعامل', 'محتسب؟', 'مستحق جنيه', 'سبب عدم الاحتساب'], orderAuditRows)
+      addAuditSheet('تفاصيل المشاوير', ['معرف المشوار', 'الدليفري', 'الفرع', 'تاريخ المشوار', 'وقت التسجيل', 'من', 'إلى', 'الحالة', 'مراجعة؟', 'محتسب؟', 'مستحق جنيه', 'ملاحظات'], tripAuditRows)
+
+      const cairoDay = (value: string | null | undefined) => {
+        if (!value) return ''
+        const date = new Date(value)
+        return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('sv-SE', {
+          timeZone:'Africa/Cairo', year:'numeric', month:'2-digit', day:'2-digit',
+        }).format(date)
+      }
+      const auditWarnings: string[][] = []
+      orders.forEach(order => {
+        const registeredDay = cairoDay(order.registered_at)
+        if (registeredDay && (registeredDay < selectedFrom || registeredDay > selectedTo)) {
+          auditWarnings.push(['اختلاف تاريخ الدورة - أوردر', order.id, `تاريخ التنفيذ ${order.delivery_date}، لكن التسجيل ${registeredDay}`])
+        }
+      })
+      trips.forEach(trip => {
+        const registeredDay = cairoDay(trip.registered_at)
+        if (registeredDay && (registeredDay < selectedFrom || registeredDay > selectedTo)) {
+          auditWarnings.push(['اختلاف تاريخ الدورة - مشوار', trip.id, `تاريخ المشوار ${trip.trip_date}، لكن التسجيل ${registeredDay}`])
+        }
+      })
+      rows.forEach(row => {
+        if (row.approvedOrderUnits > 0 && Number(row.rider.order_rate || 0) <= 0) auditWarnings.push(['سعر الأوردر غير محدد', row.rider.id, row.rider.name])
+        if (row.approvedTrips > 0 && Number(row.rider.trip_rate || 0) <= 0) auditWarnings.push(['سعر المشوار غير محدد', row.rider.id, row.rider.name])
+        const pendingValue = Number(summaryByRider.get(row.rider.id)?.reviewAmount || 0)
+        if (pendingValue > 0) auditWarnings.push(['مستحقات قيد المراجعة', row.rider.id, `${row.rider.name}: ${pendingValue.toFixed(2)} جنيه تقديريًا، غير داخل المستحق المؤكد`])
+      })
+      addAuditSheet('تنبيهات المراجعة', ['نوع التنبيه', 'معرف السجل', 'تفاصيل'], auditWarnings.length ? auditWarnings : [['لا توجد تناقضات ظاهرة في السجلات المحملة', '', '']])
+
+      const notes = SX.utils.aoa_to_sheet([
+        ['البند','التعريف'],
+        ['الدورة','26 من الشهر السابق إلى 25 من الشهر الحالي.'],
+        ['أوردرات معتمدة ×1','الأوردرات الصحيحة المعتمدة بمعامل 1.'],
+        ['أوردرات معتمدة ×1.5','الأوردرات المعتمدة التي تستحق معامل 1.5.'],
+        ['عدد الأوردرات المعتمدة فعليًا','عدد الأوردرات المقبولة بدون تأثير الوزن.'],
+        ['إجمالي وحدات الأوردرات المعتمدة','×1 + (×1.5 × 1.5)، وهو الرقم المرجعي لحساب الوحدات.'],
+        ['إجمالي المشاوير المعتمدة','المشاوير بحالة approved أو completed فقط.'],
+      ])
+      notes['!cols'] = [{wch:34},{wch:85}]
+      const notesRange = SX.utils.decode_range('A1:B7')
+      for (let r = notesRange.s.r; r <= notesRange.e.r; r += 1) for (let c = 0; c <= 1; c += 1) {
+        const addr = SX.utils.encode_cell({r,c}); if (!notes[addr]) notes[addr] = {t:'s',v:''}
+        notes[addr].s = r === 0 ? headerStyle : { fill:{fgColor:{rgb:r % 2 ? 'FFFFFF' : 'F8FAFC'}}, font:{color:{rgb:'334155'}}, alignment:{horizontal:c===0?'center':'right',vertical:'center',wrapText:true}, border }
+      }
+      SX.utils.book_append_sheet(wb, notes, 'تعريف الأعمدة')
+
+      const fileName = 'تقرير_اعتماد_الدليفري_' + selectedFrom + '_' + selectedTo + '.xlsx'
+      SX.writeFile(wb, fileName, { compression:true, cellStyles:true })
+      if (auditWarnings.length) toast.warning(`تم تصدير التقرير مع ${auditWarnings.length} تنبيهًا للمراجعة. لا تعتمد المرتبات قبل حلها.`)
+      else toast.success('تم تصدير Excel: ' + total.approvedOrderUnits + ' وحدة أوردر · ' + total.approvedTrips + ' مشوار معتمد')
+    } catch (error: any) {
+      console.error(error)
+      toast.error(error?.message || 'تعذر تصدير ملف Excel المصمم')
+    }
   }
 
   function printMonthlyReport() {
@@ -1316,7 +1806,7 @@ export default function Reconciliation() {
   const countedTotal = activeOrders.filter(o => (o as any).is_countable === true || (o as any).final_count_status === 'counted').length
   const failedTotal = activeOrders.filter(o => o.status === 'failed').length
   const notFoundTotal = activeOrders.filter(o => isConfirmedAdminExclusion(o as any)).length
-  const duplicateTotal = activeOrders.filter(o => duplicateInvoiceSet.has(normalizeOrderInvoice(o)) || o.is_duplicate_invoice).length
+  const duplicateTotal = activeOrders.filter(isOrderDuplicate).length
   const multiplierTotal = activeOrders.filter(o => (o.order_multiplier ?? 1) >= 1.5).length
   const pendingTotal = activeOrders.filter(o => String((o as any).final_count_status || '').startsWith('pending')).length
   const riskTotal = failedTotal + notFoundTotal + duplicateTotal + deletedTotal
@@ -1445,6 +1935,9 @@ export default function Reconciliation() {
         </div>
 
         <div className="flex flex-wrap justify-end gap-2">
+          <button onClick={exportRiderCycleApprovalXlsx} className="flex items-center gap-2 rounded-2xl bg-teal-700 px-5 py-3 font-black text-white shadow-lg ring-2 ring-teal-200 transition hover:bg-teal-800" title="تقرير Excel مصمم للدورة: أوردرات ×1 و×1.5 والمشاوير المعتمدة">
+            <FileSpreadsheet size={19} /> Excel اعتماد الدورة — مصمم
+          </button>
           <button onClick={printMonthlyReport} className="flex items-center gap-2 rounded-2xl bg-[#061827] px-5 py-3 font-black text-white shadow-sm hover:bg-[#0b2a42]">
             <Printer size={18} /> تصدير تقرير نهاية الدورة PDF
           </button>
@@ -1609,9 +2102,27 @@ export default function Reconciliation() {
             <FilterButton active={filter === 'multiplier'} onClick={() => applyMainFilter('multiplier')}>×1.5 ({multiplierTotal})</FilterButton>
             <FilterButton active={filter === 'deleted'} onClick={() => applyMainFilter('deleted')}>محذوفة ({deletedTotal})</FilterButton>
           </div>
-          <div className="relative">
-            <Search className="absolute right-3 top-3 text-slate-400" size={20} />
-            <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="بحث برقم الفاتورة أو العميل أو الدليفري" className="dawaa-input pr-10" />
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold">
+              <input type="checkbox" checked={selectableIds.length > 0 && selectedEligibleIds.length === selectableIds.length} onChange={event => setSelectedOrderIds(event.target.checked ? selectableIds : [])} disabled={bulkApproving || selectableIds.length === 0} />
+              تحديد المؤهل ({selectableIds.length})
+            </label>
+            <button type="button" onClick={() => void approveSelectedOrders()} disabled={!selectedEligibleIds.length || bulkApproving} className="flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
+              <CheckCircle2 size={17} /> {bulkApproving ? 'جارٍ اعتماد القرارات...' : `اعتماد المحدد (${selectedEligibleIds.length})`}
+            </button>
+            <button
+              type="button"
+              onClick={exportFilteredOrdersXlsx}
+              disabled={filteredOrders.length === 0}
+              className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              title="تصدير نفس الأوردرات الظاهرة بعد تطبيق الفلتر والبحث"
+            >
+              <FileSpreadsheet size={18} /> تصدير الظاهر Excel ({filteredOrders.length})
+            </button>
+            <div className="relative">
+              <Search className="absolute right-3 top-3 text-slate-400" size={20} />
+              <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="بحث برقم الفاتورة أو العميل أو الدليفري" className="dawaa-input pr-10" />
+            </div>
           </div>
         </div>
 
@@ -1629,11 +2140,13 @@ export default function Reconciliation() {
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex-1">
                       <div className="mb-2 flex flex-wrap items-center gap-2">
+                        {isBulkApprovalEligible(order) && <label className="flex items-center gap-1 text-xs font-bold text-emerald-700"><input type="checkbox" checked={selectedEligibleIds.includes(order.id)} disabled={bulkApproving} onChange={event => setSelectedOrderIds(previous => event.target.checked ? [...new Set([...previous, order.id])] : previous.filter(id => id !== order.id))} /> تحديد</label>}
                         <span className="text-lg font-black">فاتورة {inv}</span>
                         <StatusPill counted={isCounted} status={order.status} finalStatus={finalStatus} />
                         {(order.order_multiplier ?? 1) >= 1.5 && <span className="rounded-full bg-blue-100 px-2 py-1 text-xs font-black text-blue-700">×1.5 مراجعة</span>}
-                        {(duplicateInvoiceSet.has(inv) || order.is_duplicate_invoice) && <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-black text-amber-700">مكرر</span>}
+                        {isOrderDuplicate(order) && <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-black text-amber-700">مكرر</span>}
                         {(order as any).deleted_at && <span className="rounded-full bg-slate-200 px-2 py-1 text-xs font-black text-slate-700">محذوف محفوظ</span>}
+                        {String(order.bconnect_match_status || '') === 'invoice_found_non_delivery_type' && <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-700">رقم موجود — نوع الفاتورة يحتاج مراجعة</span>}
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
                         <Info label="الدليفري" value={rider?.name || (order as any).rider_name || 'غير محدد'} />
@@ -1642,7 +2155,7 @@ export default function Reconciliation() {
                         <Info label="التليفون" value={order.customer_phone_snapshot || (order as any).customer_phone || '—'} />
                         <Info label="قيمة الفاتورة" value={formatMoney(order.invoice_amount || (order as any).invoice_value || 0)} />
                         <Info label="تاريخ ووقت التسجيل (القاهرة)" value={formatCairoDateTime((order as any).registered_at || (order as any).created_at)} />
-                        {!(duplicateInvoiceSet.has(inv) || order.is_duplicate_invoice) && (
+                        {!isOrderDuplicate(order) && (
                           <>
                             <Info label="حالة المطابقة" value={friendlyReason(order.bconnect_match_status || 'pending')} />
                             <Info label="سبب القرار" value={friendlyReason((order as any).count_exclusion_reason)} />
@@ -1650,9 +2163,9 @@ export default function Reconciliation() {
                           </>
                         )}
                       </div>
-                      {(duplicateInvoiceSet.has(inv) || order.is_duplicate_invoice) && (
+                      {isOrderDuplicate(order) && (
                         <div className="mt-3">
-                          <DuplicateDecisionPanel order={order} siblings={duplicateGroups.get(inv) || [order]} riderMap={riderMap} />
+                          <DuplicateDecisionPanel order={order} siblings={duplicateGroups.get(orderDuplicateKey(order)) || [order]} riderMap={riderMap} />
                         </div>
                       )}
                       {(order as any).reconciliation_notes && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-sm font-bold text-slate-600">{(order as any).reconciliation_notes}</p>}
