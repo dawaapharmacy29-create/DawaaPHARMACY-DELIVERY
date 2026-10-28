@@ -500,9 +500,13 @@ export default function DuplicateInvoices() {
     try {
       decidingRef.current = true
       setDecidingOrderId(orderId)
-      await approveDuplicateInvoice(orderId)
+      const saved = await approveDuplicateInvoice(orderId)
       applyCommittedSingle(orderId, 'approved')
-      toast.success('تم اعتماد هذا التسجيل فقط')
+      if ((saved as any).is_countable === true && String((saved as any).final_count_status || '').startsWith('counted')) {
+        toast.success('تم اعتماد التسجيل وإضافته للأوردرات المحتسبة')
+      } else {
+        toast.info('تم حفظ قرار التكرار فقط؛ الأوردر لم يدخل المستحقات لعدم اكتمال شروط الحساب')
+      }
       refreshSingleInBackground(orderId)
     } catch (error) {
       console.error(error)
