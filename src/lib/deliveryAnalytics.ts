@@ -1,16 +1,13 @@
 export type CycleRange = { start: string; end: string }
+import { cycleForDate } from './deliveryCycles'
 
 export function isoDate(value: Date = new Date()) {
   return value.toISOString().slice(0, 10)
 }
 
 export function getCycleRange(date: Date = new Date()): CycleRange {
-  const y = date.getFullYear()
-  const m = date.getMonth()
-  const d = date.getDate()
-  const start = d >= 26 ? new Date(y, m, 26) : new Date(y, m - 1, 26)
-  const end = d >= 26 ? new Date(y, m + 1, 25) : new Date(y, m, 25)
-  return { start: isoDate(start), end: isoDate(end) }
+  const { start, end } = cycleForDate(date)
+  return { start, end }
 }
 
 export function monthRange(month: string): CycleRange {
