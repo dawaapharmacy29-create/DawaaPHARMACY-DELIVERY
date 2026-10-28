@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { displayBranchName } from '../../lib/branchUtils'
 import CycleSelector from '../../components/CycleSelector'
+import { getOperationalPeriod } from '../../lib/helpers'
 
 type OrderRow = Record<string, any>
 type RangeMode = 'cycle' | 'quarter' | 'all'
@@ -31,10 +32,8 @@ function iso(date: Date) {
 }
 
 function currentCycleRange() {
-  const now = new Date()
-  const start = now.getDate() >= 26 ? new Date(now.getFullYear(), now.getMonth(), 26) : new Date(now.getFullYear(), now.getMonth() - 1, 26)
-  const end = new Date(start.getFullYear(), start.getMonth() + 1, 25)
-  return { start: iso(start), end: iso(end) }
+  const cycle = getOperationalPeriod()
+  return { start: cycle.start, end: cycle.end }
 }
 
 function quarterRangeForCycle(cycleStartIso: string) {
