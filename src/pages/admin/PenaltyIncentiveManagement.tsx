@@ -14,6 +14,7 @@ import EmptyState from '../../components/ui/EmptyState'
 import SearchInput from '../../components/ui/SearchInput'
 import ConfirmDialog from '../../components/ui/ConfirmDialog'
 import TeamAdminTabs from '../../components/TeamAdminTabs'
+import { cycleForDate } from '../../lib/deliveryCycles'
 
 type Staff = {
   id: string
@@ -210,14 +211,7 @@ export default function PenaltyIncentiveManagement() {
         setStaffList(processedStaff as Staff[])
       }
 
-      const cycleStart = new Date()
-      cycleStart.setDate(cycleStart.getDate() >= 26 ? 26 : 26 - 30)
-      const cycleEnd = new Date(cycleStart)
-      cycleEnd.setMonth(cycleEnd.getMonth() + 1)
-      cycleEnd.setDate(25)
-
-      const cycleStartStr = cycleStart.toISOString().slice(0, 10)
-      const cycleEndStr = cycleEnd.toISOString().slice(0, 10)
+      const { start: cycleStartStr, end: cycleEndStr } = cycleForDate()
 
       const { data: recordsData } = await supabase
         .from('rider_adjustments')
@@ -258,14 +252,7 @@ export default function PenaltyIncentiveManagement() {
 
     setSubmitting(true)
     try {
-      const cycleStart = new Date()
-      cycleStart.setDate(cycleStart.getDate() >= 26 ? 26 : 26 - 30)
-      const cycleEnd = new Date(cycleStart)
-      cycleEnd.setMonth(cycleEnd.getMonth() + 1)
-      cycleEnd.setDate(25)
-
-      const cycleStartStr = cycleStart.toISOString().slice(0, 10)
-      const cycleEndStr = cycleEnd.toISOString().slice(0, 10)
+      const { start: cycleStartStr, end: cycleEndStr } = cycleForDate()
 
       const selectedStaff = staffList.find(s => s.id === form.employeeId)
 
