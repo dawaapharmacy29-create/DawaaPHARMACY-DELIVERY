@@ -792,16 +792,43 @@ export async function rejectTrip(tripId: string, reason: string) {
 }
 
 export async function approveDuplicateInvoice(orderId: string) {
+  // Synchronize a manager's approval with accounting only when the visit was
+  // delivered, matched in BConnect, and has no separate exclusion.
+  const { data: current, error: lookupError } = await supabase
+    .from('delivery_orders')
+    .select('*')
+    .eq('id', orderId)
+    .single()
+  if (lookupError) throw lookupError
+
+  const canCount = current.status === 'delivered' &&
+    current.final_count_status === 'pending_duplicate_review' &&
+    current.bconnect_match_status === 'matched' &&
+    current.not_countable !== true &&
+    current.approval_status !== 'rejected'
+
   const { data, error } = await supabase
     .from('delivery_orders')
     .update({
       duplicate_review_status: 'approved',
-      needs_review: false
+      needs_review: canCount ? false : current.needs_review,
+      ...(canCount ? {
+        is_countable: true,
+        not_countable: false,
+        review_status: 'approved',
+        review_reason: null,
+        final_count_status: 'counted_duplicate_visit_approved',
+        count_exclusion_reason: null,
+      } : {}),
     })
     .eq('id', orderId)
+    .eq('status', current.status)
+    .eq('final_count_status', current.final_count_status)
+    .eq('duplicate_review_status', current.duplicate_review_status)
     .select('*')
-    .single()
+    .maybeSingle()
   if (error) throw error
+  if (!data) throw new Error('تغيرت حالة الأوردر أثناء الاعتماد؛ حدّث القائمة وأعد المراجعة')
   return data as DeliveryOrder
 }
 
