@@ -1383,8 +1383,12 @@ export default function Reconciliation() {
     const duplicateReview = String(order.duplicate_review_status || '')
     if (order.status !== 'delivered' || finalStatus.startsWith('pending') || finalStatus.startsWith('excluded') || finalStatus === 'rejected') return false
     if (isConfirmedAdminExclusion(order as any)) return false
-    if (isOrderDuplicate(order) && duplicateReview !== 'approved') return false
-    // Explicit accounting decisions take precedence over a stale needs_review flag.
+    // The original delivered visit keeps its earned credit. Only the extra
+    // duplicate registration requires an explicit second-visit approval.
+    if ((order.is_duplicate_invoice || finalStatus.startsWith('pending_duplicate')) && duplicateReview !== 'approved') return false
+    // A matched order can still carry an unresolved multiplier/value review.
+    // Keep it visible in the review column, never in confirmed payroll.
+    if (order.needs_review || finalStatus.includes('pending_value_review')) return false
     return (order as any).is_countable === true || finalStatus.startsWith('counted')
   }
 
@@ -1394,10 +1398,17 @@ export default function Reconciliation() {
       const normal = riderOrders.filter(o => isPayableOrder(o) && (o.order_multiplier ?? 1) < 1.5).length
       const multiplier = riderOrders.filter(o => isPayableOrder(o) && (o.order_multiplier ?? 1) >= 1.5).length
       const failed = riderOrders.filter(o => o.status === 'failed').length
-      const wrongAfterReview = riderOrders.filter(o => ['rejected','excluded','excluded_failed','excluded_duplicate','excluded_legacy_unassigned'].includes(String((o as any).final_count_status || ''))).length
+      const wrongAfterReview = riderOrders.filter(o => String((o as any).final_count_status || '').startsWith('excluded') || String((o as any).final_count_status || '') === 'rejected' || isConfirmedAdminExclusion(o as any)).length
       const notFound = riderOrders.filter(o => o.bconnect_match_status === 'invoice_not_found' || String((o as any).final_count_status || '').includes('not_found')).length
       const duplicates = riderOrders.filter(isOrderDuplicate).length
-      const pending = riderOrders.filter(o => !((o as any).is_countable === true) && !['failed'].includes(o.status) && !String((o as any).final_count_status || '').startsWith('excluded')).length
+      const pending = riderOrders.filter(o => !isPayableOrder(o) && o.status !== 'failed' && !String((o as any).final_count_status || '').startsWith('excluded')).length
+      const reviewOrders = riderOrders.filter(o => o.status === 'delivered' && !isConfirmedAdminExclusion(o as any) && (o.needs_review || String((o as any).final_count_status || '').includes('pending_value_review')))
+      const reviewUnits = reviewOrders.reduce((sum, o) => sum + Number(o.order_multiplier || 1), 0)
+      const reviewAmount = reviewOrders.reduce((sum, o) => {
+        const saved = Number(o.order_earning)
+        const fallback = Number(o.order_rate || rider.order_rate || 0) * Number(o.order_multiplier || 1)
+        return sum + (Number.isFinite(saved) && saved > 0 ? saved : fallback)
+      }, 0)
       const deleted = orders.filter(o => o.rider_id === rider.id && Boolean((o as any).deleted_at)).length
       const approvedTrips = trips.filter(t => t.rider_id === rider.id && ['approved','completed'].includes(t.status) && !t.needs_review).length
       const pendingTrips = trips.filter(t => t.rider_id === rider.id && (['pending','pending_approval'].includes(t.status as any) || (['approved','completed'].includes(t.status) && t.needs_review))).length
@@ -1423,7 +1434,7 @@ export default function Reconciliation() {
       const countedUnits = normal + (multiplier * 1.5)
       const riskScore = failed + notFound + duplicates + deleted + pendingTrips + wrongAfterReview
       return {
-        rider, normal, multiplier, countedUnits, failed, wrongAfterReview, notFound, duplicates, pending, deleted,
+        rider, normal, multiplier, countedUnits, failed, wrongAfterReview, notFound, duplicates, pending, reviewUnits, reviewAmount, deleted,
         approvedTrips, pendingTrips, allTrips, riskScore, totalOrders: riderOrders.length,
         attendanceDays, attendanceHours: Math.round((attendanceMinutes / 60) * 100) / 100, permissions,
         deductionsAmount, rewardsAmount, incentiveBase, incentiveAfterDeductions, deductionDetails, rewardDetails,
@@ -1456,7 +1467,11 @@ export default function Reconciliation() {
 
   async function exportRiderCycleApprovalXlsx() {
     try {
-      const SX = await loadStyledXlsx()
+      const SX = await loadStyledXlsx().catch(error => {
+        console.warn('Styled Excel unavailable, exporting a compatible workbook', error)
+        toast.warning('التنسيق المتقدم غير متاح حاليًا؛ سيتم تصدير ملف Excel كامل بدون ألوان مخصصة')
+        return XLSX
+      })
       const activeSummary = buildRiderSummaryRows()
       const summaryByRider = new Map(activeSummary.map(row => [row.rider.id, row]))
 
@@ -1600,7 +1615,7 @@ export default function Reconciliation() {
 
       // Payroll sheet uses the actual per-rider rates stored in the app. Pending,
       // failed and rejected work stays visible for review but earns no amount.
-      const payrollHeaders = ['م', 'اسم الدليفري', 'الفرع', 'إجمالي الأوردرات', 'مقبول ×1', 'مقبول ×1.5', 'وحدات محتسبة', 'معلق', 'فاشل', 'مرفوض/مستبعد', 'سعر الأوردر', 'مستحق الأوردرات', 'إجمالي المشاوير', 'مشاوير معتمدة', 'مشاوير معلقة', 'سعر المشوار', 'مستحق المشاوير', 'إجمالي المستحق']
+      const payrollHeaders = ['م', 'اسم الدليفري', 'الفرع', 'إجمالي الأوردرات', 'مقبول ×1', 'مقبول ×1.5', 'وحدات محتسبة', 'معلق', 'فاشل', 'مرفوض/مستبعد', 'سعر الأوردر', 'مستحق الأوردرات', 'إجمالي المشاوير', 'مشاوير معتمدة', 'مشاوير معلقة', 'سعر المشوار', 'مستحق المشاوير', 'إجمالي المستحق المؤكد', 'وحدات تحت المراجعة', 'قيمة تقديرية معلقة']
       const payrollRows = rows.map((row, index) => {
         const summary = summaryByRider.get(row.rider.id)
         const orderRate = Number(row.rider.order_rate || 0)
@@ -1617,21 +1632,21 @@ export default function Reconciliation() {
           row.normal, row.multiplier, row.approvedOrderUnits, summary?.pending || 0,
           summary?.failed || 0, summary?.wrongAfterReview || 0,
           orderRate, orderAmount, row.allTrips, row.approvedTrips, summary?.pendingTrips || 0,
-          tripRate, tripAmount, orderAmount + tripAmount]
+          tripRate, tripAmount, orderAmount + tripAmount, summary?.reviewUnits || 0, summary?.reviewAmount || 0]
       })
       const payrollTotals = payrollHeaders.map((_, column) =>
-        column === 1 ? 'الإجمالي' : [3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17].includes(column)
+        column === 1 ? 'الإجمالي' : [3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17, 18, 19].includes(column)
           ? payrollRows.reduce((sum, row) => sum + Number(row[column] || 0), 0) : '',
       )
       const payrollSheet = SX.utils.aoa_to_sheet([
         ['صيدليات دواء — مستحقات الدليفري للدورة'],
         [cycleText],
-        ['الأسعار المعروضة من ملف المندوب؛ المستحقات تعتمد على قيمة كل أوردر/مشوار المحفوظة إن وجدت. المعلق والمرفوض والفاشل خارج الحساب.'],
+        ['الأسعار من ملف المندوب؛ الأوردرات ذات المراجعة المفتوحة تظهر في آخر عمودين، خارج المستحق المؤكد حتى اعتمادها.'],
         [], payrollHeaders, ...payrollRows, payrollTotals,
       ])
-      payrollSheet['!merges'] = [SX.utils.decode_range('A1:R1'), SX.utils.decode_range('A2:R2'), SX.utils.decode_range('A3:R3')]
+      payrollSheet['!merges'] = [SX.utils.decode_range('A1:T1'), SX.utils.decode_range('A2:T2'), SX.utils.decode_range('A3:T3')]
       payrollSheet['!cols'] = payrollHeaders.map((_, idx) => ({ wch: idx === 1 ? 25 : idx === 2 ? 17 : 19 }))
-      payrollSheet['!autofilter'] = { ref: `A5:R${5 + payrollRows.length}` }
+      payrollSheet['!autofilter'] = { ref: `A5:T${5 + payrollRows.length}` }
       const payrollEnd = 6 + payrollRows.length
       for (let column = 0; column < payrollHeaders.length; column += 1) {
         const head = SX.utils.encode_cell({ r: 4, c: column })
@@ -1643,7 +1658,7 @@ export default function Reconciliation() {
           if (payrollSheet[addr]) payrollSheet[addr].s = { alignment:center, fill:{fgColor:{rgb:idx % 2 ? 'F8FAFC' : 'FFFFFF'}}, border }
         }
       }
-      ;['A1:R1','A2:R2'].forEach((ref, index) => {
+      ;['A1:T1','A2:T2'].forEach((ref, index) => {
         const area = SX.utils.decode_range(ref)
         for (let col = area.s.c; col <= area.e.c; col += 1) {
           const addr = SX.utils.encode_cell({r:area.s.r,c:col})
@@ -1709,6 +1724,8 @@ export default function Reconciliation() {
       rows.forEach(row => {
         if (row.approvedOrderUnits > 0 && Number(row.rider.order_rate || 0) <= 0) auditWarnings.push(['سعر الأوردر غير محدد', row.rider.id, row.rider.name])
         if (row.approvedTrips > 0 && Number(row.rider.trip_rate || 0) <= 0) auditWarnings.push(['سعر المشوار غير محدد', row.rider.id, row.rider.name])
+        const pendingValue = Number(summaryByRider.get(row.rider.id)?.reviewAmount || 0)
+        if (pendingValue > 0) auditWarnings.push(['مستحقات قيد المراجعة', row.rider.id, `${row.rider.name}: ${pendingValue.toFixed(2)} جنيه تقديريًا، غير داخل المستحق المؤكد`])
       })
       addAuditSheet('تنبيهات المراجعة', ['نوع التنبيه', 'معرف السجل', 'تفاصيل'], auditWarnings.length ? auditWarnings : [['لا توجد تناقضات ظاهرة في السجلات المحملة', '', '']])
 
