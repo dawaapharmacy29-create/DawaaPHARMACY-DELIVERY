@@ -7,6 +7,7 @@ import { displayBranchName } from '../../lib/branchUtils'
 import { fetchAllRows } from '../../lib/fetchAllRows'
 import CustomerAdminTabs from '../../components/CustomerAdminTabs'
 import { deliveryCommercialInvoiceKey } from '../../lib/duplicateVisitAccounting'
+import { cycleForDate } from '../../lib/deliveryCycles'
 
 type OrderRow = Record<string, any>
 const orderColumns = 'id,customer_id,customer_code,customer_code_snapshot,customer_phone,customer_phone_snapshot,customer_name,customer_name_snapshot,branch_name,branch,invoice_number,invoice_no,invoice_amount,invoice_value,amount,delivery_date,work_date,registered_at,created_at,status,deleted_at'
@@ -34,12 +35,8 @@ function localIso(date: Date) {
 }
 
 function currentCycle() {
-  const now = new Date()
-  const start = now.getDate() >= 26
-    ? new Date(now.getFullYear(), now.getMonth(), 26)
-    : new Date(now.getFullYear(), now.getMonth() - 1, 26)
-  const end = new Date(start.getFullYear(), start.getMonth() + 1, 25)
-  return { start: localIso(start), end: localIso(end) }
+  const { start, end } = cycleForDate()
+  return { start, end }
 }
 
 function quarterRange(startIso: string) {

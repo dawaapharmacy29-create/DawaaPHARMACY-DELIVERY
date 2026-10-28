@@ -18,31 +18,49 @@ function pad(value: number) {
   return String(value).padStart(2, '0')
 }
 
+/** Business calendar is always Africa/Cairo, independent of device/hosting timezone. */
+export function cairoDateParts(date: Date = new Date()) {
+  const values = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date)
+  const part = (type: string) => Number(values.find(value => value.type === type)?.value)
+  return { year: part('year'), month: part('month'), day: part('day') }
+}
+
+export function cairoIsoDate(date: Date = new Date()) {
+  const { year, month, day } = cairoDateParts(date)
+  return `${year}-${pad(month)}-${pad(day)}`
+}
+
+function isoFromParts(year: number, monthIndex: number, day: number) {
+  const date = new Date(Date.UTC(year, monthIndex, day))
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`
+}
+
 export function localIso(date: Date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
 export function parseIsoDate(value: string) {
   const [year, month, day] = value.split('-').map(Number)
-  return new Date(year, (month || 1) - 1, day || 1, 12, 0, 0, 0)
+  return new Date(Date.UTC(year, (month || 1) - 1, day || 1, 12, 0, 0, 0))
 }
 
 export function cycleForDate(date = new Date()): DeliveryCycleRange {
-  const start = date.getDate() >= 26
-    ? new Date(date.getFullYear(), date.getMonth(), 26, 12)
-    : new Date(date.getFullYear(), date.getMonth() - 1, 26, 12)
+  const { year, month, day } = cairoDateParts(date)
+  const start = new Date(Date.UTC(year, month - (day >= 26 ? 1 : 2), 26, 12))
   return cycleFromStart(start, date)
 }
 
 export function cycleFromStart(startDate: Date, now = new Date()): DeliveryCycleRange {
-  const start = new Date(startDate.getFullYear(), startDate.getMonth(), 26, 12)
-  const end = new Date(start.getFullYear(), start.getMonth() + 1, 25, 12)
-  const startIso = localIso(start)
-  const endIso = localIso(end)
+  const start = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), 26, 12))
+  const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 25, 12))
+  const startIso = isoFromParts(start.getUTCFullYear(), start.getUTCMonth(), 26)
+  const endIso = isoFromParts(start.getUTCFullYear(), start.getUTCMonth() + 1, 25)
   const current = cycleForDateUnsafe(now)
   const isCurrent = current.start === startIso
-  const cycleMonth = end.getMonth()
-  const cycleYear = end.getFullYear()
+  const cycleMonth = end.getUTCMonth()
+  const cycleYear = end.getUTCFullYear()
   return {
     key: `${startIso}_${endIso}`,
     label: `دورة ${ARABIC_MONTHS[cycleMonth]} ${cycleYear}`,
@@ -54,16 +72,14 @@ export function cycleFromStart(startDate: Date, now = new Date()): DeliveryCycle
 }
 
 function cycleForDateUnsafe(date: Date) {
-  const start = date.getDate() >= 26
-    ? new Date(date.getFullYear(), date.getMonth(), 26, 12)
-    : new Date(date.getFullYear(), date.getMonth() - 1, 26, 12)
-  const end = new Date(start.getFullYear(), start.getMonth() + 1, 25, 12)
-  return { start: localIso(start), end: localIso(end) }
+  const { year, month, day } = cairoDateParts(date)
+  const startMonth = month - (day >= 26 ? 1 : 2)
+  return { start: isoFromParts(year, startMonth, 26), end: isoFromParts(year, startMonth + 1, 25) }
 }
 
 export function shiftCycle(cycle: DeliveryCycleRange, months: number): DeliveryCycleRange {
   const base = parseIsoDate(cycle.start)
-  return cycleFromStart(new Date(base.getFullYear(), base.getMonth() + months, 26, 12))
+  return cycleFromStart(new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + months, 26, 12)))
 }
 
 export function getDeliveryCycleOptions(count = 18, now = new Date()) {
@@ -75,17 +91,18 @@ export function getDeliveryCycleOptions(count = 18, now = new Date()) {
 }
 
 export function todayRange(now = new Date()) {
-  const value = localIso(now)
+  const value = cairoIsoDate(now)
   return { start: value, end: value }
 }
 
 export function currentWeekRange(now = new Date()) {
-  const day = now.getDay()
-  const start = new Date(now)
-  start.setDate(now.getDate() - day)
+  const { year, month, day } = cairoDateParts(now)
+  const anchor = new Date(Date.UTC(year, month - 1, day))
+  const start = new Date(anchor)
+  start.setUTCDate(anchor.getUTCDate() - anchor.getUTCDay())
   const end = new Date(start)
-  end.setDate(start.getDate() + 6)
-  return { start: localIso(start), end: localIso(end) }
+  end.setUTCDate(start.getUTCDate() + 6)
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) }
 }
 
 export function lastCyclesRange(count: number, now = new Date()) {

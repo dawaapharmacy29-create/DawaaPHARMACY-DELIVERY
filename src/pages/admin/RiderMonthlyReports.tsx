@@ -4,19 +4,14 @@ import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import ReportsAdminTabs from '../../components/ReportsAdminTabs'
 import { isRiderOrderCountable, riderOrderEarning } from '../../lib/duplicateVisitAccounting'
+import { cycleForDate } from '../../lib/deliveryCycles'
 
 type Row = Record<string, any>
 type AdjustmentType = 'reward' | 'penalty'
 
-function iso(date: Date) {
-  return date.toISOString().slice(0, 10)
-}
-
 function currentCycleRange() {
-  const now = new Date()
-  const start = now.getDate() >= 26 ? new Date(now.getFullYear(), now.getMonth(), 26) : new Date(now.getFullYear(), now.getMonth() - 1, 26)
-  const end = new Date(start.getFullYear(), start.getMonth() + 1, 25)
-  return { start: iso(start), end: iso(end) }
+  const cycle = cycleForDate()
+  return { start: cycle.start, end: cycle.end }
 }
 
 function money(value: number) {
