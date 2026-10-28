@@ -20,7 +20,13 @@ import CycleSelector from '../../components/CycleSelector'
 void Trash2
 void Pencil
 
-type FilterKey = 'all' | 'counted' | 'pending' | 'not_found' | 'failed' | 'duplicate' | 'multiplier' | 'customer_mismatch' | 'deleted'
+type FilterKey = 'all' | 'counted' | 'pending' | 'not_found' | 'failed' | 'duplicate' | 'multiplier' | 'customer_mismatch' | 'deleted' | 'previous_cycle'
+
+// A delivery registration confirmed as already paid in the preceding cycle is
+// audit history, not another current-cycle order or an unresolved invoice.
+const isPreviousCycleResolved = (order: DeliveryOrder) =>
+  String((order as any).final_count_status || '') === 'excluded_prior_cycle_counted' &&
+  String((order as any).count_exclusion_reason || '') === 'already_counted_previous_cycle'
 
 type BConnectRow = {
   invoice_number: string
@@ -294,7 +300,7 @@ export default function Reconciliation() {
 
   useEffect(() => {
     const incoming = searchParams.get('filter') as FilterKey | null
-    if (incoming && ['all','counted','pending','not_found','failed','duplicate','multiplier','customer_mismatch','deleted'].includes(incoming)) setFilter(incoming)
+    if (incoming && ['all','counted','pending','not_found','failed','duplicate','multiplier','customer_mismatch','deleted','previous_cycle'].includes(incoming)) setFilter(incoming)
     const q = searchParams.get('q')
     if (q) setSearchTerm(q)
   }, [searchParams])
@@ -530,6 +536,7 @@ export default function Reconciliation() {
   ).length
 
   const filteredOrders = orders.filter(order => {
+    if (isPreviousCycleResolved(order) && filter !== 'previous_cycle') return false
     const inv = normalizeOrderInvoice(order)
     const isFailed = order.status === 'failed'
     const isDeleted = Boolean((order as any).deleted_at)
@@ -562,6 +569,7 @@ export default function Reconciliation() {
       (filter === 'multiplier' && isMultiplier && !isDeleted) ||
       (filter === 'customer_mismatch' && String((order as any).bconnect_match_status) === 'matched_customer_name_mismatch' && !isDeleted) ||
       (filter === 'deleted' && isDeleted)
+      || (filter === 'previous_cycle' && isPreviousCycleResolved(order))
     const rider = riderMap.get(order.rider_id)
     const haystack = [
       inv,
@@ -1394,7 +1402,7 @@ export default function Reconciliation() {
 
   function buildRiderSummaryRows() {
     return riders.map(rider => {
-      const riderOrders = orders.filter(o => o.rider_id === rider.id && !(o as any).deleted_at)
+      const riderOrders = orders.filter(o => o.rider_id === rider.id && !(o as any).deleted_at && !isPreviousCycleResolved(o))
       const normal = riderOrders.filter(o => isPayableOrder(o) && (o.order_multiplier ?? 1) < 1.5).length
       const multiplier = riderOrders.filter(o => isPayableOrder(o) && (o.order_multiplier ?? 1) >= 1.5).length
       const failed = riderOrders.filter(o => o.status === 'failed').length
@@ -1796,6 +1804,7 @@ export default function Reconciliation() {
   if (loading) return <div className="min-h-screen bg-[#F3F7F8] p-8 text-center text-lg font-bold">جاري التحميل...</div>
 
   const scopedOrders = orders.filter(order => {
+    if (isPreviousCycleResolved(order)) return false
     const rider = riderMap.get(order.rider_id)
     const branch = normalizeBranchName((order as any).branch_name || rider?.branch_name || '')
     return (selectedBranch === 'all' || branch === selectedBranch) &&
@@ -1803,6 +1812,9 @@ export default function Reconciliation() {
   })
   const activeOrders = scopedOrders.filter(o => !(o as any).deleted_at)
   const deletedTotal = scopedOrders.filter(o => Boolean((o as any).deleted_at)).length
+  const previousCycleTotal = orders.filter(o => isPreviousCycleResolved(o) &&
+    (selectedBranch === 'all' || normalizeBranchName((o as any).branch_name || '') === selectedBranch) &&
+    (selectedRider === 'all' || o.rider_id === selectedRider)).length
   const countedTotal = activeOrders.filter(o => (o as any).is_countable === true || (o as any).final_count_status === 'counted').length
   const failedTotal = activeOrders.filter(o => o.status === 'failed').length
   const notFoundTotal = activeOrders.filter(o => isConfirmedAdminExclusion(o as any)).length
@@ -2101,6 +2113,7 @@ export default function Reconciliation() {
             <FilterButton active={filter === 'duplicate'} onClick={() => openDuplicateQueue('all')}>مكررة — الكل ({duplicateTotal})</FilterButton>
             <FilterButton active={filter === 'multiplier'} onClick={() => applyMainFilter('multiplier')}>×1.5 ({multiplierTotal})</FilterButton>
             <FilterButton active={filter === 'deleted'} onClick={() => applyMainFilter('deleted')}>محذوفة ({deletedTotal})</FilterButton>
+            <FilterButton active={filter === 'previous_cycle'} onClick={() => applyMainFilter('previous_cycle')}>محسومة بالدورة السابقة ({previousCycleTotal})</FilterButton>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold">
