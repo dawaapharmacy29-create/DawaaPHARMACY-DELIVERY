@@ -11,7 +11,6 @@ import { fetchAllRows } from '../../lib/fetchAllRows'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
 import { riderOrderEarning } from '../../lib/duplicateVisitAccounting'
-import { canReviewDuplicatePair } from '../../lib/duplicateInvoiceReviewState'
 import { duplicateReasonLabel, formatCairoDateTime, formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
 import { findInvoiceEvidenceConflicts, isConfirmedAdminExclusion, preserveHumanDecision, selectVerifiedSystemInvoice } from '../../lib/reconciliationDecision'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
@@ -2463,7 +2462,12 @@ function InlineDuplicateDecision({
   const [busy, setBusy] = useState(false)
   const [uncertain, setUncertain] = useState(false)
   const savingRef = useRef(false)
-  const pending = ordered.length === 2 && canReviewDuplicatePair(ordered)
+  // The reconciliation queue also contains legacy pairs where neither record
+  // has yet been flagged as a duplicate. Allow those to enter this workflow;
+  // the second registration's evidence is captured before the atomic review.
+  const pending = ordered.length === 2 && ordered.every(order =>
+    ['pending', 'not_required'].includes(String(order.duplicate_review_status || 'not_required')),
+  )
   const [first, second] = ordered
   if (!pending || !first || !second) return null
 
