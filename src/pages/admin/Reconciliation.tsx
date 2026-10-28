@@ -11,6 +11,7 @@ import { fetchAllRows } from '../../lib/fetchAllRows'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
 import { riderOrderEarning } from '../../lib/duplicateVisitAccounting'
+import { canReviewDuplicatePair } from '../../lib/duplicateInvoiceReviewState'
 import { duplicateReasonLabel, formatCairoDateTime, formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
 import { findInvoiceEvidenceConflicts, isConfirmedAdminExclusion, preserveHumanDecision, selectVerifiedSystemInvoice } from '../../lib/reconciliationDecision'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
@@ -20,7 +21,13 @@ import CycleSelector from '../../components/CycleSelector'
 void Trash2
 void Pencil
 
-type FilterKey = 'all' | 'counted' | 'pending' | 'not_found' | 'failed' | 'duplicate' | 'multiplier' | 'customer_mismatch' | 'deleted'
+type FilterKey = 'all' | 'counted' | 'pending' | 'not_found' | 'failed' | 'duplicate' | 'multiplier' | 'customer_mismatch' | 'deleted' | 'previous_cycle'
+
+// A delivery registration confirmed as already paid in the preceding cycle is
+// audit history, not another current-cycle order or an unresolved invoice.
+const isPreviousCycleResolved = (order: DeliveryOrder) =>
+  String((order as any).final_count_status || '') === 'excluded_prior_cycle_counted' &&
+  String((order as any).count_exclusion_reason || '') === 'already_counted_previous_cycle'
 
 type BConnectRow = {
   invoice_number: string
@@ -294,7 +301,7 @@ export default function Reconciliation() {
 
   useEffect(() => {
     const incoming = searchParams.get('filter') as FilterKey | null
-    if (incoming && ['all','counted','pending','not_found','failed','duplicate','multiplier','customer_mismatch','deleted'].includes(incoming)) setFilter(incoming)
+    if (incoming && ['all','counted','pending','not_found','failed','duplicate','multiplier','customer_mismatch','deleted','previous_cycle'].includes(incoming)) setFilter(incoming)
     const q = searchParams.get('q')
     if (q) setSearchTerm(q)
   }, [searchParams])
@@ -530,6 +537,7 @@ export default function Reconciliation() {
   ).length
 
   const filteredOrders = orders.filter(order => {
+    if (isPreviousCycleResolved(order) && filter !== 'previous_cycle') return false
     const inv = normalizeOrderInvoice(order)
     const isFailed = order.status === 'failed'
     const isDeleted = Boolean((order as any).deleted_at)
@@ -562,6 +570,7 @@ export default function Reconciliation() {
       (filter === 'multiplier' && isMultiplier && !isDeleted) ||
       (filter === 'customer_mismatch' && String((order as any).bconnect_match_status) === 'matched_customer_name_mismatch' && !isDeleted) ||
       (filter === 'deleted' && isDeleted)
+      || (filter === 'previous_cycle' && isPreviousCycleResolved(order))
     const rider = riderMap.get(order.rider_id)
     const haystack = [
       inv,
@@ -674,6 +683,7 @@ export default function Reconciliation() {
       multiplier: 'مضاعف_1.5',
       customer_mismatch: 'اختلاف_اسم_العميل',
       deleted: 'المحذوفة',
+      previous_cycle: 'محسومة_بالدورة_السابقة',
     }
 
     const rows = filteredOrders.map(order => {
@@ -1394,7 +1404,7 @@ export default function Reconciliation() {
 
   function buildRiderSummaryRows() {
     return riders.map(rider => {
-      const riderOrders = orders.filter(o => o.rider_id === rider.id && !(o as any).deleted_at)
+      const riderOrders = orders.filter(o => o.rider_id === rider.id && !(o as any).deleted_at && !isPreviousCycleResolved(o))
       const normal = riderOrders.filter(o => isPayableOrder(o) && (o.order_multiplier ?? 1) < 1.5).length
       const multiplier = riderOrders.filter(o => isPayableOrder(o) && (o.order_multiplier ?? 1) >= 1.5).length
       const failed = riderOrders.filter(o => o.status === 'failed').length
@@ -1796,6 +1806,7 @@ export default function Reconciliation() {
   if (loading) return <div className="min-h-screen bg-[#F3F7F8] p-8 text-center text-lg font-bold">جاري التحميل...</div>
 
   const scopedOrders = orders.filter(order => {
+    if (isPreviousCycleResolved(order)) return false
     const rider = riderMap.get(order.rider_id)
     const branch = normalizeBranchName((order as any).branch_name || rider?.branch_name || '')
     return (selectedBranch === 'all' || branch === selectedBranch) &&
@@ -1803,6 +1814,9 @@ export default function Reconciliation() {
   })
   const activeOrders = scopedOrders.filter(o => !(o as any).deleted_at)
   const deletedTotal = scopedOrders.filter(o => Boolean((o as any).deleted_at)).length
+  const previousCycleTotal = orders.filter(o => isPreviousCycleResolved(o) &&
+    (selectedBranch === 'all' || normalizeBranchName((o as any).branch_name || '') === selectedBranch) &&
+    (selectedRider === 'all' || o.rider_id === selectedRider)).length
   const countedTotal = activeOrders.filter(o => (o as any).is_countable === true || (o as any).final_count_status === 'counted').length
   const failedTotal = activeOrders.filter(o => o.status === 'failed').length
   const notFoundTotal = activeOrders.filter(o => isConfirmedAdminExclusion(o as any)).length
@@ -2101,6 +2115,7 @@ export default function Reconciliation() {
             <FilterButton active={filter === 'duplicate'} onClick={() => openDuplicateQueue('all')}>مكررة — الكل ({duplicateTotal})</FilterButton>
             <FilterButton active={filter === 'multiplier'} onClick={() => applyMainFilter('multiplier')}>×1.5 ({multiplierTotal})</FilterButton>
             <FilterButton active={filter === 'deleted'} onClick={() => applyMainFilter('deleted')}>محذوفة ({deletedTotal})</FilterButton>
+            <FilterButton active={filter === 'previous_cycle'} onClick={() => applyMainFilter('previous_cycle')}>محسومة بالدورة السابقة ({previousCycleTotal})</FilterButton>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold">
@@ -2166,6 +2181,16 @@ export default function Reconciliation() {
                       {isOrderDuplicate(order) && (
                         <div className="mt-3">
                           <DuplicateDecisionPanel order={order} siblings={duplicateGroups.get(orderDuplicateKey(order)) || [order]} riderMap={riderMap} />
+                          {order.id === (duplicateGroups.get(orderDuplicateKey(order)) || [order])[0]?.id && <InlineDuplicateDecision
+                            siblings={duplicateGroups.get(orderDuplicateKey(order)) || [order]}
+                            onRefresh={async ids => {
+                              const { data, error } = await supabase.from('delivery_orders').select('*').in('id', ids)
+                              if (error || !data || data.length !== ids.length) throw error || new Error('تعذر تأكيد حالة التسجيلين')
+                              decisionRevisionRef.current += 1
+                              const byId = new Map(data.map(item => [item.id, item as DeliveryOrder]))
+                              setOrders(current => current.map(item => byId.get(item.id) || item))
+                            }}
+                          />}
                         </div>
                       )}
                       {(order as any).reconciliation_notes && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-sm font-bold text-slate-600">{(order as any).reconciliation_notes}</p>}
@@ -2397,6 +2422,192 @@ function DuplicateDecisionPanel({
           )
         })}
       </div>
+    </div>
+  )
+}
+
+type InlinePairChoice = 'first' | 'second' | 'both' | 'none'
+const INLINE_DUAL_VISIT_ENABLED = import.meta.env.VITE_DELIVERY_DUAL_DUPLICATE_APPROVAL_V1_ENABLED === 'true'
+const DUPLICATE_REASON_OPTIONS = [
+  { value: 'second_visit', label: 'زيارة ثانية بطلب العميل' },
+  { value: 'preparation_error', label: 'استكمال صنف ناقص أو خطأ تجهيز' },
+  { value: 'return', label: 'زيارة منفصلة لمرتجع' },
+  { value: 'other', label: 'سبب آخر موضح بالملاحظة' },
+]
+const DUPLICATE_REJECTION_OPTIONS = [
+  'تسجيل مكرر لنفس الزيارة',
+  'لم تتم زيارة ثانية فعلية',
+  'الزيارة غير مثبتة',
+  'بيانات الفاتورة غير صحيحة',
+]
+
+// Reuse the same atomic pair gateway as the dedicated duplicate page. An
+// invoice is never marked payable here by toggling is_countable directly.
+function InlineDuplicateDecision({
+  siblings,
+  onRefresh,
+}: {
+  siblings: DeliveryOrder[]
+  onRefresh: (ids: string[]) => Promise<void>
+}) {
+  const ordered = [...siblings].sort((a, b) => {
+    const at = new Date((a as any).registered_at || (a as any).created_at || 0).getTime()
+    const bt = new Date((b as any).registered_at || (b as any).created_at || 0).getTime()
+    return at - bt || a.id.localeCompare(b.id)
+  })
+  const [choice, setChoice] = useState<InlinePairChoice | ''>('')
+  const [reason, setReason] = useState('second_visit')
+  const [visitNote, setVisitNote] = useState('')
+  const [rejectReason, setRejectReason] = useState(DUPLICATE_REJECTION_OPTIONS[0])
+  const [managerNote, setManagerNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [uncertain, setUncertain] = useState(false)
+  const savingRef = useRef(false)
+  const pending = ordered.length === 2 && canReviewDuplicatePair(ordered)
+  const [first, second] = ordered
+  if (!pending || !first || !second) return null
+
+  const needsVisitEvidence = Boolean(
+    !second.is_duplicate_invoice ||
+    !String(second.duplicate_reason || '').trim() ||
+    String(second.duplicate_review_status || 'not_required') !== 'pending' ||
+    String(second.duplicate_note || '').trim().length < 5,
+  )
+
+  async function confirmCommitted(ids: string[], selected: InlinePairChoice): Promise<boolean> {
+    const { data, error } = await supabase.from('delivery_orders')
+      .select('id,duplicate_review_status,not_countable,is_countable,needs_review')
+      .in('id', ids)
+    if (error || data?.length !== 2) return false
+    return data.every(row => {
+      const index = ids.indexOf(String(row.id))
+      const approve = selected === 'both' || (selected === 'first' && index === 0) || (selected === 'second' && index === 1)
+      return row.duplicate_review_status === (approve ? 'approved' : 'rejected') &&
+        (approve ? row.not_countable !== true : row.not_countable === true) &&
+        row.needs_review === false && (selected !== 'both' || row.is_countable === true)
+    })
+  }
+
+  async function submit() {
+    if (!choice || busy || uncertain || savingRef.current) return
+    if (choice === 'both' && !INLINE_DUAL_VISIT_ENABLED) {
+      toast.error('اعتماد الزيارتين ينتظر تفعيل ضمانات الحسابات على Production')
+      return
+    }
+    if (needsVisitEvidence && visitNote.trim().length < 5) {
+      toast.error('اكتب سبب الزيارة الثانية وملاحظة من 5 أحرف على الأقل')
+      return
+    }
+    if (choice === 'both' && managerNote.trim().length < 10) {
+      toast.error('سبب اعتماد زيارتين مستقلتين مطلوب (10 أحرف على الأقل)')
+      return
+    }
+    if (choice !== 'both' && rejectReason.trim().length < 5) return
+    const firstBranch = String(first.branch_id || normalizeBranchName((first as any).branch_name))
+    const secondBranch = String(second.branch_id || normalizeBranchName((second as any).branch_name))
+    if (!firstBranch || firstBranch !== secondBranch ||
+      normalizeOrderInvoice(first) !== normalizeOrderInvoice(second)) {
+      toast.error('هوية الفاتورة أو الفرع غير متطابقة؛ لا يمكن الاعتماد الجماعي')
+      return
+    }
+    if (!window.confirm(`تأكيد قرار فاتورة ${normalizeOrderInvoice(first)}؟\n${choice === 'both' ? 'سيتم احتساب زيارتين فقط إذا أكد النظام تسليمهما ومطابقتهما لـ BConnect.' : 'سيُحفظ قرار الاعتماد أو الرفض لكل تسجيل مع سبب الرفض.'}\nهذا القرار نهائي ويُسجل للمراجعة.`)) return
+    const ids = [first.id, second.id]
+    savingRef.current = true
+    setBusy(true)
+    try {
+      // Older registrations can lack the duplicate metadata. Complete only
+      // the second visit's evidence, using a conditional write. A failed pair
+      // decision then remains pending and cannot silently award earnings.
+      if (needsVisitEvidence) {
+        const previousStatus = String(second.duplicate_review_status || 'not_required')
+        const { data, error } = await supabase.from('delivery_orders')
+          .update({
+            is_duplicate_invoice: true,
+            duplicate_reason: String(second.duplicate_reason || '').trim() || reason,
+            duplicate_note: String(second.duplicate_note || '').trim().length >= 5 ? second.duplicate_note : visitNote.trim(),
+            original_order_id: first.id,
+            duplicate_review_status: 'pending',
+          }).eq('id', second.id).eq('duplicate_review_status', previousStatus).select('id').maybeSingle()
+        if (error || !data) throw error || new Error('تغيّر التسجيل أثناء استكمال سبب التكرار')
+      }
+      const { data, error } = await supabase.rpc('review_duplicate_invoice_pair_v1', {
+        p_token: getRiderSession().session_token || '',
+        p_first_order_id: first.id,
+        p_second_order_id: second.id,
+        p_choice: choice,
+        p_rejection_reason: choice === 'both' ? null : rejectReason.trim(),
+        p_manager_note: managerNote.trim() || null,
+      })
+      if (error || !(data as any)?.first_status || !(data as any)?.second_status) throw error || new Error('تعذر تأكيد قرار التسجيلين')
+      await onRefresh(ids)
+      toast.success('تم حفظ القرار للتسجيلين وتحديث الاحتساب من نفس الصفحة')
+    } catch (error) {
+      console.error('Inline duplicate decision failed', error)
+      // The RPC response can fail after a database commit. Read first; never
+      // automatically retry a financial write on an ambiguous result.
+      let committed = false
+      try { committed = await confirmCommitted(ids, choice) } catch { /* read-only check failed */ }
+      if (committed) {
+        try { await onRefresh(ids) } catch { /* committed states remain in DB */ }
+        toast.success('القرار محفوظ بالفعل للتسجيلين وتم التحقق منه')
+      } else {
+        setUncertain(true)
+        toast.error('لم نتأكد من نتيجة القرار. حدّث القائمة وراجع التسجيلين قبل أي محاولة أخرى.')
+      }
+    } finally {
+      savingRef.current = false
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+      <h4 className="mb-2 font-black text-emerald-900">اتخاذ قرار التسجيلين من هنا مباشرة</h4>
+      <p className="mb-3 text-xs font-bold text-slate-600">القرار يحفظ في قاعدة البيانات بنفس ضوابط صفحة الأوردرات المكررة، ولا يُنشئ فاتورة بيع إضافية.</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {([
+          ['first', `اعتماد الأول (${formatCairoDateTime((first as any).registered_at)}) ورفض الثاني`],
+          ['second', `اعتماد الثاني (${formatCairoDateTime((second as any).registered_at)}) ورفض الأول`],
+          ['both', 'اعتماد الزيارتين المستقلتين'],
+          ['none', 'رفض التسجيلين'],
+        ] as [InlinePairChoice, string][]).map(([value, label]) => (
+          <label key={value} className={`flex cursor-pointer items-center gap-2 rounded-xl border p-3 text-sm font-bold ${choice === value ? 'border-emerald-600 bg-white' : 'border-emerald-100 bg-white/60'} ${value === 'both' && !INLINE_DUAL_VISIT_ENABLED ? 'opacity-60' : ''}`}>
+            <input type="radio" name={`inline-decision-${first.id}`} checked={choice === value} disabled={busy || uncertain || (value === 'both' && !INLINE_DUAL_VISIT_ENABLED)} onChange={() => setChoice(value)} />
+            {label}
+          </label>
+        ))}
+      </div>
+      {needsVisitEvidence && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <label className="text-sm font-bold">سبب التكرار الناقص
+            <select value={reason} onChange={e => setReason(e.target.value)} disabled={busy} className="mt-1 w-full rounded-xl border border-emerald-200 bg-white p-2.5">
+              {DUPLICATE_REASON_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </label>
+          <label className="text-sm font-bold">ملاحظة الزيارة الثانية (مطلوبة)
+            <textarea value={visitNote} onChange={e => setVisitNote(e.target.value)} disabled={busy} rows={2} maxLength={1000} placeholder="ماذا حدث في الزيارة الثانية؟" className="mt-1 w-full rounded-xl border border-emerald-200 bg-white p-2.5" />
+          </label>
+        </div>
+      )}
+      {choice && choice !== 'both' && (
+        <label className="mt-3 block text-sm font-bold">سبب رفض التسجيل غير المستحق
+          <select value={rejectReason} onChange={e => setRejectReason(e.target.value)} disabled={busy} className="mt-1 w-full rounded-xl border border-emerald-200 bg-white p-2.5">
+            {DUPLICATE_REJECTION_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </label>
+      )}
+      {choice === 'both' && <div className="mt-3 flex flex-wrap gap-2">{[
+        'تسليم على زيارتين مستقلتين بسبب صنف ناقص',
+        'العميل أجّل الاستلام وطلب زيارة ثانية منفصلة',
+        'زيارة ثانية مستقلة لاستلام مرتجع',
+      ].map(note => <button type="button" key={note} onClick={() => setManagerNote(note)} className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-emerald-800">{note}</button>)}</div>}
+      <label className="mt-3 block text-sm font-bold">ملاحظة الإدارة {choice === 'both' ? '(إلزامية)' : '(اختيارية)'}
+        <textarea value={managerNote} onChange={e => setManagerNote(e.target.value)} disabled={busy} rows={2} maxLength={1000} className="mt-1 w-full rounded-xl border border-emerald-200 bg-white p-2.5" />
+      </label>
+      <button type="button" onClick={() => void submit()} disabled={busy || uncertain || !choice || (needsVisitEvidence && visitNote.trim().length < 5) || (choice === 'both' && (!INLINE_DUAL_VISIT_ENABLED || managerNote.trim().length < 10))} className="mt-3 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
+        {busy ? 'جاري حفظ القرار والتحقق...' : 'تأكيد وحفظ القرار هنا'}
+      </button>
+      {uncertain && <p className="mt-2 text-sm font-bold text-rose-800">نتيجة الحفظ غير مؤكدة؛ حدّث الصفحة قبل إعادة القرار.</p>}
     </div>
   )
 }
