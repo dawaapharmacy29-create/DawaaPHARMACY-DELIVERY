@@ -1,27 +1,9 @@
 import type { InternalTrip, OperationalPeriod } from './types'
+import { cycleForDate } from './deliveryCycles'
 
 export function getOperationalPeriod(date: Date = new Date()): OperationalPeriod {
-  const day = date.getDate()
-  const month = date.getMonth()
-  const year = date.getFullYear()
-
-  let start: Date
-  let end: Date
-
-  if (day >= 26) {
-    // Current month 26 to next month 25
-    start = new Date(year, month, 26)
-    end = new Date(year, month + 1, 25)
-  } else {
-    // Previous month 26 to current month 25
-    start = new Date(year, month - 1, 26)
-    end = new Date(year, month, 25)
-  }
-
-  return {
-    start: localIsoDate(start),
-    end: localIsoDate(end)
-  }
+  const cycle = cycleForDate(date)
+  return { start: cycle.start, end: cycle.end }
 }
 
 export function formatMoney(value: number | null | undefined): string {
