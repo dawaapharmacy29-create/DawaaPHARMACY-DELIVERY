@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import TeamAdminTabs from '../../components/TeamAdminTabs'
 import { getRiderSession } from '../../lib/auth'
 import { isRiderOrderCountable, riderOrderEarning } from '../../lib/duplicateVisitAccounting'
+import { cycleForDate, shiftCycle } from '../../lib/deliveryCycles'
 
 type Row = Record<string, any>
 type BonusType = 'monthly' | 'quarterly'
@@ -27,17 +28,9 @@ const DEFAULT_CRITERIA: Criterion[] = [
   { key: 'custody', label: 'العهدة والتواصل', description: 'المحافظة على النقدية والعهدة والرد والمتابعة', weight: 200, score: 5 },
 ]
 
-function iso(date: Date) {
-  return date.toISOString().slice(0, 10)
-}
-
 function cycleRange(base = new Date(), offset = 0) {
-  const anchor = new Date(base.getFullYear(), base.getMonth() + offset, base.getDate())
-  const start = anchor.getDate() >= 26
-    ? new Date(anchor.getFullYear(), anchor.getMonth(), 26)
-    : new Date(anchor.getFullYear(), anchor.getMonth() - 1, 26)
-  const end = new Date(start.getFullYear(), start.getMonth() + 1, 25)
-  return { start: iso(start), end: iso(end) }
+  const { start, end } = shiftCycle(cycleForDate(base), offset)
+  return { start, end }
 }
 
 async function fetchAllPages(buildQuery: () => any, pageSize = 1000) {
