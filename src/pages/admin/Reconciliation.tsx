@@ -10,6 +10,7 @@ import { finalizeReconciliationBatch, writeReconciliationBatchChunks } from '../
 import { fetchAllRows } from '../../lib/fetchAllRows'
 import { DeliveryOrder, Rider, InternalTrip, Attendance } from '../../lib/types'
 import { getRiders } from '../../lib/delivery'
+import { riderOrderEarning } from '../../lib/duplicateVisitAccounting'
 import { duplicateReasonLabel, formatCairoDateTime, formatMoney, getOperationalPeriod, wildcardMatchText } from '../../lib/helpers'
 import { findInvoiceEvidenceConflicts, isConfirmedAdminExclusion, preserveHumanDecision, selectVerifiedSystemInvoice } from '../../lib/reconciliationDecision'
 import OrderDetailsModal from '../../components/OrderDetailsModal'
@@ -1377,27 +1378,29 @@ export default function Reconciliation() {
     }
   }
 
+  const isPayableOrder = (order: DeliveryOrder) => {
+    const finalStatus = String((order as any).final_count_status || '')
+    const duplicateReview = String(order.duplicate_review_status || '')
+    if (order.status !== 'delivered' || finalStatus.startsWith('pending') || finalStatus.startsWith('excluded') || finalStatus === 'rejected') return false
+    if (isConfirmedAdminExclusion(order as any)) return false
+    if (isOrderDuplicate(order) && duplicateReview !== 'approved') return false
+    // Explicit accounting decisions take precedence over a stale needs_review flag.
+    return (order as any).is_countable === true || finalStatus.startsWith('counted')
+  }
+
   function buildRiderSummaryRows() {
     return riders.map(rider => {
       const riderOrders = orders.filter(o => o.rider_id === rider.id && !(o as any).deleted_at)
-      const payable = (o: DeliveryOrder) => {
-        const finalStatus = String((o as any).final_count_status || '')
-        const duplicateReview = String((o as any).duplicate_review_status || '')
-        if (o.status !== 'delivered' || finalStatus.startsWith('pending') || finalStatus.startsWith('excluded') || finalStatus === 'rejected') return false
-        if (isConfirmedAdminExclusion(o as any) || (o as any).needs_review) return false
-        if (isOrderDuplicate(o) && duplicateReview !== 'approved') return false
-        return (o as any).is_countable === true || finalStatus.startsWith('counted')
-      }
-      const normal = riderOrders.filter(o => payable(o) && (o.order_multiplier ?? 1) < 1.5).length
-      const multiplier = riderOrders.filter(o => payable(o) && (o.order_multiplier ?? 1) >= 1.5).length
+      const normal = riderOrders.filter(o => isPayableOrder(o) && (o.order_multiplier ?? 1) < 1.5).length
+      const multiplier = riderOrders.filter(o => isPayableOrder(o) && (o.order_multiplier ?? 1) >= 1.5).length
       const failed = riderOrders.filter(o => o.status === 'failed').length
       const wrongAfterReview = riderOrders.filter(o => ['rejected','excluded','excluded_failed','excluded_duplicate','excluded_legacy_unassigned'].includes(String((o as any).final_count_status || ''))).length
       const notFound = riderOrders.filter(o => o.bconnect_match_status === 'invoice_not_found' || String((o as any).final_count_status || '').includes('not_found')).length
       const duplicates = riderOrders.filter(isOrderDuplicate).length
       const pending = riderOrders.filter(o => !((o as any).is_countable === true) && !['failed'].includes(o.status) && !String((o as any).final_count_status || '').startsWith('excluded')).length
       const deleted = orders.filter(o => o.rider_id === rider.id && Boolean((o as any).deleted_at)).length
-      const approvedTrips = trips.filter(t => t.rider_id === rider.id && ['approved','completed'].includes(t.status)).length
-      const pendingTrips = trips.filter(t => t.rider_id === rider.id && ['pending','pending_approval'].includes(t.status as any)).length
+      const approvedTrips = trips.filter(t => t.rider_id === rider.id && ['approved','completed'].includes(t.status) && !t.needs_review).length
+      const pendingTrips = trips.filter(t => t.rider_id === rider.id && (['pending','pending_approval'].includes(t.status as any) || (['approved','completed'].includes(t.status) && t.needs_review))).length
       const allTrips = trips.filter(t => t.rider_id === rider.id).length
       const riderAttendance = attendanceRows.filter(a => a.rider_id === rider.id)
       const attendanceDays = new Set(riderAttendance.filter(a => a.check_in_at).map(a => a.work_date)).size
@@ -1602,8 +1605,14 @@ export default function Reconciliation() {
         const summary = summaryByRider.get(row.rider.id)
         const orderRate = Number(row.rider.order_rate || 0)
         const tripRate = Number(row.rider.trip_rate || 0)
-        const orderAmount = row.approvedOrderUnits * orderRate
-        const tripAmount = row.approvedTrips * tripRate
+        const orderAmount = orders.filter(o => o.rider_id === row.rider.id && isPayableOrder(o))
+          .reduce((sum, order) => sum + riderOrderEarning(order as any, orderRate), 0)
+        const tripAmount = trips.filter(t => t.rider_id === row.rider.id && ['approved', 'completed'].includes(t.status) && !t.needs_review)
+          .reduce((sum, trip) => {
+            const saved = Number(trip.trip_earning)
+            const fallback = Number(trip.trip_rate || tripRate) * Number(trip.trip_multiplier || 1)
+            return sum + (Number.isFinite(saved) && saved > 0 ? saved : fallback)
+          }, 0)
         return [index + 1, row.rider.name || '', row.rider.branch_name || '', row.totalOrders,
           row.normal, row.multiplier, row.approvedOrderUnits, summary?.pending || 0,
           summary?.failed || 0, summary?.wrongAfterReview || 0,
@@ -1617,7 +1626,7 @@ export default function Reconciliation() {
       const payrollSheet = SX.utils.aoa_to_sheet([
         ['صيدليات دواء — مستحقات الدليفري للدورة'],
         [cycleText],
-        ['الأسعار مأخوذة من ملف كل مندوب داخل التطبيق. الحالات المعلقة والمرفوضة والفاشلة لا تُحتسب ضمن المستحقات.'],
+        ['الأسعار المعروضة من ملف المندوب؛ المستحقات تعتمد على قيمة كل أوردر/مشوار المحفوظة إن وجدت. المعلق والمرفوض والفاشل خارج الحساب.'],
         [], payrollHeaders, ...payrollRows, payrollTotals,
       ])
       payrollSheet['!merges'] = [SX.utils.decode_range('A1:R1'), SX.utils.decode_range('A2:R2'), SX.utils.decode_range('A3:R3')]
@@ -1644,6 +1653,65 @@ export default function Reconciliation() {
       })
       SX.utils.book_append_sheet(wb, payrollSheet, 'مستحقات المرتبات')
 
+      const orderAuditRows = orders.map(order => {
+        const rider = riderMap.get(order.rider_id)
+        const counted = isPayableOrder(order)
+        const amount = counted ? riderOrderEarning(order as any, Number(rider?.order_rate || 0)) : 0
+        return [order.id, rider?.name || order.rider_id, (order as any).branch_name || rider?.branch_name || '',
+          normalizeOrderInvoice(order), order.delivery_date, order.registered_at, order.status,
+          (order as any).final_count_status || '', order.duplicate_review_status || '',
+          Number(order.order_multiplier || 1), counted ? 'نعم' : 'لا', amount,
+          counted ? 'محتسب' : (order as any).count_exclusion_reason || order.review_reason || 'معلق / غير محتسب']
+      })
+      const tripAuditRows = trips.map(trip => {
+        const rider = riderMap.get(trip.rider_id)
+        const counted = ['approved', 'completed'].includes(trip.status) && !trip.needs_review
+        const saved = Number(trip.trip_earning)
+        const rate = Number(trip.trip_rate || rider?.trip_rate || 0)
+        const amount = counted ? (Number.isFinite(saved) && saved > 0 ? saved : rate * Number(trip.trip_multiplier || 1)) : 0
+        return [trip.id, rider?.name || trip.rider_id, rider?.branch_name || '', trip.trip_date,
+          trip.registered_at, trip.from_label, trip.to_label, trip.status, trip.needs_review ? 'نعم' : 'لا',
+          counted ? 'نعم' : 'لا', amount, trip.rejection_reason || trip.review_reason || trip.notes || '']
+      })
+      const addAuditSheet = (name: string, headers: string[], entries: (string | number | null | undefined)[][]) => {
+        const sheet = SX.utils.aoa_to_sheet([headers, ...entries])
+        sheet['!cols'] = headers.map((header, index) => ({ wch: index === 0 ? 38 : Math.max(15, Math.min(30, header.length * 1.7)) }))
+        sheet['!autofilter'] = { ref: `A1:${SX.utils.encode_col(headers.length - 1)}${entries.length + 1}` }
+        headers.forEach((_, index) => {
+          const addr = SX.utils.encode_cell({ r: 0, c: index })
+          sheet[addr].s = headerStyle
+        })
+        SX.utils.book_append_sheet(wb, sheet, name)
+      }
+      addAuditSheet('تفاصيل الأوردرات', ['معرف الأوردر', 'الدليفري', 'الفرع', 'الفاتورة', 'تاريخ التسليم', 'وقت التسجيل', 'حالة الأوردر', 'قرار الحساب', 'قرار التكرار', 'المعامل', 'محتسب؟', 'مستحق جنيه', 'سبب عدم الاحتساب'], orderAuditRows)
+      addAuditSheet('تفاصيل المشاوير', ['معرف المشوار', 'الدليفري', 'الفرع', 'تاريخ المشوار', 'وقت التسجيل', 'من', 'إلى', 'الحالة', 'مراجعة؟', 'محتسب؟', 'مستحق جنيه', 'ملاحظات'], tripAuditRows)
+
+      const cairoDay = (value: string | null | undefined) => {
+        if (!value) return ''
+        const date = new Date(value)
+        return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('sv-SE', {
+          timeZone:'Africa/Cairo', year:'numeric', month:'2-digit', day:'2-digit',
+        }).format(date)
+      }
+      const auditWarnings: string[][] = []
+      orders.forEach(order => {
+        const registeredDay = cairoDay(order.registered_at)
+        if (registeredDay && (registeredDay < selectedFrom || registeredDay > selectedTo)) {
+          auditWarnings.push(['اختلاف تاريخ الدورة - أوردر', order.id, `تاريخ التنفيذ ${order.delivery_date}، لكن التسجيل ${registeredDay}`])
+        }
+      })
+      trips.forEach(trip => {
+        const registeredDay = cairoDay(trip.registered_at)
+        if (registeredDay && (registeredDay < selectedFrom || registeredDay > selectedTo)) {
+          auditWarnings.push(['اختلاف تاريخ الدورة - مشوار', trip.id, `تاريخ المشوار ${trip.trip_date}، لكن التسجيل ${registeredDay}`])
+        }
+      })
+      rows.forEach(row => {
+        if (row.approvedOrderUnits > 0 && Number(row.rider.order_rate || 0) <= 0) auditWarnings.push(['سعر الأوردر غير محدد', row.rider.id, row.rider.name])
+        if (row.approvedTrips > 0 && Number(row.rider.trip_rate || 0) <= 0) auditWarnings.push(['سعر المشوار غير محدد', row.rider.id, row.rider.name])
+      })
+      addAuditSheet('تنبيهات المراجعة', ['نوع التنبيه', 'معرف السجل', 'تفاصيل'], auditWarnings.length ? auditWarnings : [['لا توجد تناقضات ظاهرة في السجلات المحملة', '', '']])
+
       const notes = SX.utils.aoa_to_sheet([
         ['البند','التعريف'],
         ['الدورة','26 من الشهر السابق إلى 25 من الشهر الحالي.'],
@@ -1663,7 +1731,8 @@ export default function Reconciliation() {
 
       const fileName = 'تقرير_اعتماد_الدليفري_' + selectedFrom + '_' + selectedTo + '.xlsx'
       SX.writeFile(wb, fileName, { compression:true, cellStyles:true })
-      toast.success('تم تصدير Excel احترافي: ' + total.approvedOrderUnits + ' وحدة أوردر معتمدة · ' + total.approvedTrips + ' مشوار معتمد')
+      if (auditWarnings.length) toast.warning(`تم تصدير التقرير مع ${auditWarnings.length} تنبيهًا للمراجعة. لا تعتمد المرتبات قبل حلها.`)
+      else toast.success('تم تصدير Excel: ' + total.approvedOrderUnits + ' وحدة أوردر · ' + total.approvedTrips + ' مشوار معتمد')
     } catch (error: any) {
       console.error(error)
       toast.error(error?.message || 'تعذر تصدير ملف Excel المصمم')
