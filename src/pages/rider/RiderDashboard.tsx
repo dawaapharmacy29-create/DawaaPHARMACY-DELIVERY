@@ -802,8 +802,21 @@ export default function RiderDashboard() {
   async function fetchPagedRows(table: "delivery_orders" | "internal_trips", riderId: string) {
     const pageSize = 1000;
     const byId = new Map<string, any>();
+    // Restrict the compatibility fallback on the server as well as on the client.
+    // Keep all legacy date candidates: some imported rows have no work_date.
+    const fallbackDate = table === "delivery_orders" ? "delivery_date" : "trip_date";
+    const nextDay = shiftIsoDate(period.end, 1);
+    const dateCandidates = ["work_date", fallbackDate, "registered_at", "created_at"];
+    const dateFilter = dateCandidates
+      .map((column) => `and(${column}.gte.${period.start},${column}.lt.${nextDay})`)
+      .join(",");
     for (let from = 0; ; from += pageSize) {
-      const { data, error } = await supabase.from(table).select("*").eq("rider_id", riderId).range(from, from + pageSize - 1);
+      const { data, error } = await supabase.from(table)
+        .select("*")
+        .eq("rider_id", riderId)
+        .or(dateFilter)
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1);
       if (error) throw error;
       const batch = data ?? [];
       batch.forEach((row: any) => {
