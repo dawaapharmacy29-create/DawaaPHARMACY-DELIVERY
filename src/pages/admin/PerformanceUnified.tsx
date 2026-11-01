@@ -11,6 +11,68 @@ function addDays(days: number) { const d = new Date(); d.setDate(d.getDate() + d
 type Period = 'daily' | 'weekly' | 'monthly' | 'quarterly'
 function rangeFor(tab: Period) { const op = getOperationalPeriod(); if (tab === 'daily') return { from: today(), to: today() }; if (tab === 'weekly') return { from: addDays(-6), to: today() }; if (tab === 'quarterly') return { from: addDays(-89), to: today() }; return { from: op.start, to: op.end } }
 function rpcResult(data:any){ return Array.isArray(data) ? data[0] : data }
+function shiftCycle(start: string, offset: number) {
+  const [year, month] = start.split('-').map(Number)
+  const first = new Date(Date.UTC(year, month - 1 + offset, 26))
+  const next = new Date(Date.UTC(year, month + offset, 26))
+  next.setUTCDate(next.getUTCDate() - 1)
+  return { from: first.toISOString().slice(0, 10), to: next.toISOString().slice(0, 10) }
+}
+const quantity = (value: unknown) => Number(value || 0) || 0
+const countableOrder = (order: any) =>
+  String(order.status || '').toLowerCase() === 'delivered' &&
+  String(order.approval_status || '').toLowerCase() === 'approved' &&
+  (order.is_countable === true || String(order.final_count_status || '').startsWith('counted')) &&
+  !String(order.final_count_status || '').startsWith('excluded')
+const approvedTrip = (trip: any) =>
+  ['approved', 'completed', 'countable'].includes(String(trip.status || trip.review_status || '').toLowerCase()) &&
+  trip.is_countable !== false && !trip.duplicate_of
+
+async function fetchAll(table: 'delivery_orders' | 'internal_trips', fields: string, dateField: string, from: string, to: string) {
+  const result: any[] = []
+  for (let start = 0; start < 50000; start += 1000) {
+    const { data, error } = await supabase.from(table).select(fields).gte(dateField, from).lte(dateField, to).range(start, start + 999)
+    if (error) throw error
+    result.push(...(data || []))
+    if (!data || data.length < 1000) return result
+  }
+  throw new Error('عدد الحركات أكبر من حد التقرير؛ لا يمكن عرض إجمالي غير مكتمل')
+}
+
+async function loadMovements(from: string, to: string) {
+  const [byWork, byDelivery, tripsWork, tripsDate] = await Promise.all([
+    fetchAll('delivery_orders', 'id,rider_id,status,approval_status,is_countable,final_count_status,order_multiplier,work_date,delivery_date,deleted_at', 'work_date', from, to),
+    fetchAll('delivery_orders', 'id,rider_id,status,approval_status,is_countable,final_count_status,order_multiplier,work_date,delivery_date,deleted_at', 'delivery_date', from, to),
+    fetchAll('internal_trips', 'id,rider_id,status,review_status,is_countable,duplicate_of,work_date,trip_date', 'work_date', from, to),
+    fetchAll('internal_trips', 'id,rider_id,status,review_status,is_countable,duplicate_of,work_date,trip_date', 'trip_date', from, to),
+  ])
+  const result = new Map<string, { near: number; far: number; trips: number; movements: number }>()
+  const get = (id: string) => {
+    if (!result.has(id)) result.set(id, { near: 0, far: 0, trips: 0, movements: 0 })
+    return result.get(id)!
+  }
+  const orders = new Map([...byWork, ...byDelivery].map(o => [o.id, o]))
+  for (const order of orders.values()) {
+    if (order.deleted_at || !countableOrder(order)) continue
+    const date = order.work_date || order.delivery_date
+    if (!date || date < from || date > to || !order.rider_id) continue
+    const stat = get(order.rider_id)
+    const multiplier = quantity(order.order_multiplier) >= 1.5 ? 1.5 : 1
+    if (multiplier === 1.5) stat.far++
+    else stat.near++
+    stat.movements += multiplier
+  }
+  const trips = new Map([...tripsWork, ...tripsDate].map(t => [t.id, t]))
+  for (const trip of trips.values()) {
+    if (!approvedTrip(trip) || !trip.rider_id) continue
+    const date = trip.work_date || trip.trip_date
+    if (!date || date < from || date > to) continue
+    const stat = get(trip.rider_id)
+    stat.trips++
+    stat.movements++
+  }
+  return result
+}
 
 function Stat({ label, value, tone = 'sky' }: { label: string; value: string | number; tone?: 'sky' | 'green' | 'rose' | 'amber' }) {
   const cls = { sky: 'bg-sky-50 border-sky-100 text-sky-700', green: 'bg-emerald-50 border-emerald-100 text-emerald-700', rose: 'bg-rose-50 border-rose-100 text-rose-700', amber: 'bg-amber-50 border-amber-100 text-amber-700' }[tone]
@@ -28,17 +90,28 @@ export default function PerformanceUnified() {
   const [totals, setTotals] = useState<any>({ orders:0, delivered:0, failed:0, trips:0, rewards:0, penalties:0 })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [sort, setSort] = useState<'orders' | 'delivered' | 'risk'>('orders')
+  const [sort, setSort] = useState<'movements' | 'orders' | 'delivered' | 'risk'>('movements')
+  const [movements, setMovements] = useState<Map<string, { near: number; far: number; trips: number; movements: number }> | null>(null)
+  const [movementError, setMovementError] = useState(false)
+  const cycleStart = getOperationalPeriod().start
+  const cycles = [0, -1, -2, -3].map(offset => ({ offset, ...shiftCycle(cycleStart, offset) }))
 
   async function load() {
     setLoading(true)
+    setMovements(null)
+    setMovementError(false)
     try {
-      const { data, error } = await supabase.rpc('delivery_performance_fast', { p_from: from, p_to: to })
+      const [{ data, error }, movementResult] = await Promise.all([
+        supabase.rpc('delivery_performance_fast', { p_from: from, p_to: to }),
+        loadMovements(from, to).then(value => ({ value })).catch(() => ({ value: null })),
+      ])
       if (error) throw error
       const result = rpcResult(data)
       if (!result?.success) throw new Error(result?.message || 'تعذر تحميل بيانات الأداء')
       setRows(Array.isArray(result.rows) ? result.rows : [])
       setTotals(result.totals || { orders:0, delivered:0, failed:0, trips:0, rewards:0, penalties:0 })
+      setMovements(movementResult.value)
+      setMovementError(!movementResult.value)
     } catch (error: any) { toast.error(error?.message || 'حصلت مشكلة في تحميل بيانات الأداء') }
     finally { setLoading(false) }
   }
@@ -46,7 +119,13 @@ export default function PerformanceUnified() {
 
   function choose(next: Period) { setTab(next); const r = rangeFor(next); setParams({ period: next, from: r.from, to: r.to }) }
 
-  const filtered = useMemo(() => [...rows.filter(r => !search || String(r.rider_name||'').includes(search) || String(r.branch_name||'').includes(search))].sort((a, b) => sort === 'orders' ? Number(b.total_orders||0) - Number(a.total_orders||0) : sort === 'delivered' ? Number(b.delivered_orders||0) - Number(a.delivered_orders||0) : Number(b.risk_rate||0) - Number(a.risk_rate||0)), [rows, search, sort])
+  const filtered = useMemo(() => [...rows.filter(r => !search || String(r.rider_name||'').includes(search) || String(r.branch_name||'').includes(search))].sort((a, b) => sort === 'movements' && movements ? (movements.get(b.rider_id)?.movements || 0) - (movements.get(a.rider_id)?.movements || 0) : sort === 'orders' || (sort === 'movements' && !movements) ? Number(b.total_orders||0) - Number(a.total_orders||0) : sort === 'delivered' ? Number(b.delivered_orders||0) - Number(a.delivered_orders||0) : Number(b.risk_rate||0) - Number(a.risk_rate||0)), [rows, search, sort, movements])
+  const movementTotal = movements ? [...movements.values()].reduce((sum, item) => sum + item.movements, 0) : null
+  const branchTotals = movements ? rows.reduce((map, row) => {
+    const branch = String(row.branch_name || 'غير محدد')
+    map.set(branch, (map.get(branch) || 0) + (movements.get(row.rider_id)?.movements || 0))
+    return map
+  }, new Map<string, number>()) : null
 
   return <div className="min-h-screen bg-[#F3F7F8]" dir="rtl"><main className="mx-auto max-w-6xl space-y-4 p-4">
     <TeamAdminTabs />
@@ -65,8 +144,10 @@ export default function PerformanceUnified() {
       </div>
     </section>
     <div className="flex gap-2 overflow-x-auto">{([['daily','يومي'],['weekly','أسبوعي'],['monthly','الدورة'],['quarterly','ربع سنوي']] as const).map(([id,label]) => <button key={id} onClick={() => choose(id)} className={`rounded-2xl px-4 py-2.5 font-black ${tab === id ? 'bg-[#008E92] text-white' : 'border bg-white text-slate-600'}`}>{label}</button>)}</div>
+    <section className="rounded-3xl border bg-white p-4"><label htmlFor="performance-cycle" className="mb-2 block text-sm font-black text-slate-700">اختار دورة الدليفري (26 إلى 25)</label><select id="performance-cycle" value={cycles.find(c => c.from === from && c.to === to)?.offset ?? 'custom'} onChange={e => { const selected = cycles.find(c => c.offset === Number(e.target.value)); if (selected) { setTab('monthly'); setParams({ period: 'monthly', from: selected.from, to: selected.to }) } }} className="w-full rounded-2xl border px-4 py-3 font-bold sm:max-w-md"><option value="custom" disabled>فترة مخصصة</option>{cycles.map(c => <option key={c.offset} value={c.offset}>{c.offset === 0 ? 'الدورة الحالية' : c.offset === -1 ? 'الدورة السابقة' : `قبل ${Math.abs(c.offset)} دورات`} — {c.from} إلى {c.to}</option>)}</select></section>
+    <section className="rounded-3xl border border-teal-100 bg-teal-50 p-4"><h2 className="mb-2 font-black text-teal-900">إجمالي الحركات المعتمدة</h2><p className="text-xs font-bold text-teal-700">أوردر ×1 + أوردر بعيد ×1.5 + مشوار معتمد ×1. لا تُحسب المعلقة أو الفاشلة.</p><p className="mt-2 text-3xl font-black text-teal-900">{loading ? 'جاري الحساب...' : movementTotal === null ? 'غير متاح' : movementTotal.toLocaleString('ar-EG')}</p>{movementError && <p role="alert" className="mt-2 text-xs font-bold text-rose-700">تعذر تأكيد الحركات من السجلات؛ تم إخفاء الرقم بدل عرض تقدير غير دقيق.</p>}{branchTotals && <div className="mt-3 flex flex-wrap gap-2">{[...branchTotals].map(([branch, value]) => <span key={branch} className="rounded-xl bg-white px-3 py-2 text-sm font-black">{branch}: {value.toLocaleString('ar-EG')}</span>)}</div>}</section>
     <section className="grid grid-cols-2 gap-3 sm:grid-cols-6"><Stat label="إجمالي الأوردرات" value={loading ? '—' : totals.orders}/><Stat label="تم التسليم" value={totals.delivered} tone="green"/><Stat label="فشل" value={totals.failed} tone="rose"/><Stat label="المشاوير" value={totals.trips} tone="sky"/><Stat label="المكافآت" value={formatMoney(totals.rewards)} tone="green"/><Stat label="الخصومات" value={formatMoney(totals.penalties)} tone="rose"/></section>
-    <section className="rounded-3xl bg-white p-4 shadow-sm"><div className="grid gap-2 lg:grid-cols-[1fr_220px]"><input value={search} onChange={e => setSearch(e.target.value)} className="rounded-2xl border px-4 py-3" placeholder="بحث باسم المندوب أو الفرع..."/><select value={sort} onChange={e => setSort(e.target.value as any)} className="rounded-2xl border px-3 py-2 font-bold"><option value="orders">ترتيب حسب الأوردرات</option><option value="delivered">حسب تم التسليم</option><option value="risk">حسب الخطر</option></select></div></section>
-    <section className="space-y-3">{loading ? <div className="rounded-3xl bg-white p-12 text-center font-black text-slate-400">جاري حساب الأداء على السيرفر...</div> : filtered.map((r, i) => <article key={r.rider_id} className="rounded-3xl bg-white p-5 shadow-sm"><div className="flex items-start justify-between"><div><div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#008E92] font-black text-white">{i+1}</span><div><h2 className="font-black">{r.rider_name}</h2><p className="text-xs font-bold text-slate-400">{r.branch_name}</p></div></div></div><button onClick={() => navigate(`/admin/riders/${r.rider_id}/performance?from=${from}&to=${to}`)} className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-black">فتح التفاصيل</button></div><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-6 text-center"><div className="rounded-2xl bg-slate-50 p-3"><b>{r.total_orders}</b><p className="text-[10px] text-slate-400">أوردرات</p></div><div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700"><b>{r.delivered_orders}</b><p className="text-[10px]">تم</p></div><div className="rounded-2xl bg-rose-50 p-3 text-rose-700"><b>{r.failed_orders}</b><p className="text-[10px]">فشل</p></div><div className="rounded-2xl bg-amber-50 p-3"><b>{r.duplicate_orders}</b><p className="text-[10px]">مكرر</p></div><div className="rounded-2xl bg-sky-50 p-3"><b>{r.multiplier_orders}</b><p className="text-[10px]">1.5x</p></div><div className="rounded-2xl bg-violet-50 p-3"><b>{r.trips}</b><p className="text-[10px]">مشاوير</p></div></div><div className="mt-3 rounded-2xl bg-slate-50 p-3 text-xs font-bold">نسبة التسليم: {Number(r.delivery_rate||0).toFixed(1)}% · الخطر: {Number(r.risk_rate||0).toFixed(1)}% · صافي الحوافز: {formatMoney(r.net_earnings)}</div></article>)}</section>
+    <section className="rounded-3xl bg-white p-4 shadow-sm"><div className="grid gap-2 lg:grid-cols-[1fr_220px]"><input value={search} onChange={e => setSearch(e.target.value)} className="rounded-2xl border px-4 py-3" placeholder="بحث باسم المندوب أو الفرع..."/><select value={sort} onChange={e => setSort(e.target.value as any)} className="rounded-2xl border px-3 py-2 font-bold"><option value="movements">ترتيب حسب الحركات المعتمدة</option><option value="orders">ترتيب حسب الأوردرات</option><option value="delivered">حسب تم التسليم</option><option value="risk">حسب الخطر</option></select></div></section>
+    <section className="space-y-3">{loading ? <div className="rounded-3xl bg-white p-12 text-center font-black text-slate-400">جاري حساب الأداء على السيرفر...</div> : filtered.map((r, i) => <article key={r.rider_id} className="rounded-3xl bg-white p-5 shadow-sm"><div className="flex items-start justify-between"><div><div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#008E92] font-black text-white">{i+1}</span><div><h2 className="font-black">{r.rider_name}</h2><p className="text-xs font-bold text-slate-400">{r.branch_name}</p></div></div></div><button onClick={() => navigate(`/admin/riders/${r.rider_id}/performance?from=${from}&to=${to}`)} className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-black">فتح التفاصيل</button></div><div className="mt-3 rounded-2xl bg-teal-50 p-3 font-black text-teal-800">الحركات المعتمدة: {movements ? (movements.get(r.rider_id)?.movements || 0).toLocaleString('ar-EG') : 'غير متاح'} {movements && <span className="block text-xs">قريب {movements.get(r.rider_id)?.near || 0} · بعيد {movements.get(r.rider_id)?.far || 0} ×1.5 · مشاوير معتمدة {movements.get(r.rider_id)?.trips || 0}</span>}</div><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-6 text-center"><div className="rounded-2xl bg-slate-50 p-3"><b>{r.total_orders}</b><p className="text-[10px] text-slate-400">أوردرات</p></div><div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700"><b>{r.delivered_orders}</b><p className="text-[10px]">تم</p></div><div className="rounded-2xl bg-rose-50 p-3 text-rose-700"><b>{r.failed_orders}</b><p className="text-[10px]">فشل</p></div><div className="rounded-2xl bg-amber-50 p-3"><b>{r.duplicate_orders}</b><p className="text-[10px]">مكرر</p></div><div className="rounded-2xl bg-sky-50 p-3"><b>{r.multiplier_orders}</b><p className="text-[10px]">1.5x</p></div><div className="rounded-2xl bg-violet-50 p-3"><b>{r.trips}</b><p className="text-[10px]">مشاوير مسجلة</p></div></div><div className="mt-3 rounded-2xl bg-slate-50 p-3 text-xs font-bold">نسبة التسليم: {Number(r.delivery_rate||0).toFixed(1)}% · الخطر: {Number(r.risk_rate||0).toFixed(1)}% · صافي الحوافز: {formatMoney(r.net_earnings)}</div></article>)}</section>
   </main></div>
 }
