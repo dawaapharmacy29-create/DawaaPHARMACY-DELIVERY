@@ -23,8 +23,7 @@ const quantity = (value: unknown) => Number(value || 0) || 0
 const countableOrder = (order: any) =>
   (String(order.status || '').toLowerCase() === 'delivered' || Boolean(order.delivered_at)) &&
   (order.is_countable === true || String(order.final_count_status || '').startsWith('counted')) &&
-  String(order.final_count_status || '').startsWith('counted') &&
-  !String(order.final_count_status || '').includes('pending')
+  String(order.final_count_status || '').startsWith('counted')
 const approvedTrip = (trip: any) =>
   ['approved', 'completed', 'countable'].includes(String(trip.status || trip.review_status || '').toLowerCase()) &&
   trip.is_countable !== false && !trip.duplicate_of
@@ -63,7 +62,7 @@ async function loadMovements(from: string, to: string) {
     const date = order.work_date || order.delivery_date
     if (!date || date < from || date > to || !order.rider_id) continue
     const stat = get(order.rider_id)
-    const multiplier = quantity(order.order_multiplier) >= 1.5 ? 1.5 : 1
+    const multiplier = !String(order.final_count_status || '').includes('multiplier_pending') && quantity(order.order_multiplier) >= 1.5 ? 1.5 : 1
     if (multiplier === 1.5) stat.far++
     else stat.near++
     stat.movements += multiplier
