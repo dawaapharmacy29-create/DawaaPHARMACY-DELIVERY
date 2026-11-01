@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Clock, RefreshCw } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { getBranches, getRiders } from '../../lib/delivery'
 import { getOperationalPeriod, localIsoDate } from '../../lib/helpers'
@@ -23,10 +23,11 @@ function Stat({title,value,hint,tone='teal'}:{title:string;value:string|number;h
 
 export default function HourlyDeliveryAnalyticsFast(){
   const navigate=useNavigate()
+  const [params] = useSearchParams()
   const initial=rangeForPreset('today')
-  const [preset,setPreset]=useState<Preset>('today')
-  const [from,setFrom]=useState(initial.from)
-  const [to,setTo]=useState(initial.to)
+  const [preset,setPreset]=useState<Preset>(params.has('from') && params.has('to') ? 'custom' : 'today')
+  const [from,setFrom]=useState(params.get('from') || initial.from)
+  const [to,setTo]=useState(params.get('to') || initial.to)
   const [branchId,setBranchId]=useState('all')
   const [riderId,setRiderId]=useState('all')
   const [status,setStatus]=useState('all')
