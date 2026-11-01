@@ -65,9 +65,7 @@ const groups: AdminNavGroup[] = [
       { to: '/admin/rider-schedules', label: 'الجداول والمواعيد', pageKey: 'rider_schedules' },
       { to: '/admin/rider-accounts', label: 'الحسابات والأجهزة', pageKey: 'rider_accounts' },
       { to: '/admin/performance', label: 'أداء الدليفري', pageKey: 'performance' },
-      { to: '/admin/hourly-analytics', label: 'الأداء حسب الساعة', pageKey: 'performance' },
       { to: '/admin/rider-actions', label: 'طلبات وقرارات الدليفري', pageKey: 'rider_actions' },
-      { to: '/admin/penalty-incentive', label: 'سجل الخصومات والمكافآت', pageKey: 'dashboard' },
       { to: '/admin/rider-compensation', label: 'مستحقات الدليفري', pageKey: 'performance' },
     ],
   },
@@ -77,7 +75,6 @@ const groups: AdminNavGroup[] = [
     icon: MapPinned,
     links: [
       { to: '/admin/customer-center', label: 'مركز العملاء والمناطق', pageKey: 'customer_analytics' },
-      { to: '/admin/customer-analytics', label: 'تحليل العملاء', pageKey: 'customer_analytics' },
       { to: '/admin/customer-import', label: 'تحديث بيانات العملاء', pageKey: 'customer_import' },
       { to: '/admin/route-planner', label: 'المناطق والمسارات', pageKey: 'dashboard' },
     ],
@@ -88,10 +85,6 @@ const groups: AdminNavGroup[] = [
     icon: BarChart3,
     links: [
       { to: '/admin/reports-center', label: 'مركز التقارير والإدارة', pageKey: 'dashboard' },
-      { to: '/admin/reports', label: 'تقرير الدليفري للدورة', pageKey: 'dashboard' },
-      { to: '/admin/cycles', label: 'أرشيف الدورات', pageKey: 'dashboard' },
-      { to: '/admin/fraud-alerts', label: 'مراجعة الحالات غير الطبيعية', pageKey: 'dashboard' },
-      { to: '/admin/cash-flow', label: 'ملخص مستحقات الدورة', pageKey: 'dashboard' },
       { to: '/admin/branch', label: 'لوحة مدير الفرع', pageKey: 'branch_dashboard' },
     ],
   },
