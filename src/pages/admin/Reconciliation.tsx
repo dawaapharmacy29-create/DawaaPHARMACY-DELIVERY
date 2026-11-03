@@ -269,6 +269,7 @@ export default function Reconciliation() {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([])
   const [bulkApproving, setBulkApproving] = useState(false)
+  const [reviewedApprovalMode, setReviewedApprovalMode] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [report, setReport] = useState<ReconciliationReport | null>(null)
   const [latestUploadLog, setLatestUploadLog] = useState<ReconciliationUploadLog | null>(null)
@@ -444,9 +445,12 @@ export default function Reconciliation() {
     }
   }
 
-  async function updateOrderWithConfirmation(orderId: string, patch: Record<string, unknown>): Promise<DeliveryOrder> {
-    const query = supabase.from('delivery_orders').update(patch).eq('id', orderId).select('*').maybeSingle()
-    const { data, error } = await query
+  async function updateOrderWithConfirmation(orderId: string, patch: Record<string, unknown>, expectedUpdatedAt?: string | null): Promise<DeliveryOrder> {
+    let query = supabase.from('delivery_orders').update(patch).eq('id', orderId)
+    if (expectedUpdatedAt !== undefined) {
+      query = expectedUpdatedAt === null ? query.is('updated_at', null) : query.eq('updated_at', expectedUpdatedAt)
+    }
+    const { data, error } = await query.select('*').maybeSingle()
     let saved = data
     if (error) {
       // The database can commit before a network timeout. Verify once, read-only;
@@ -611,7 +615,7 @@ export default function Reconciliation() {
     })
   }, [filteredOrders, filter])
 
-  // Bulk decisions never override duplicate, multiplier, failed, or human-review workflows.
+  // Review mode requires explicit selection and preserves special approval workflows.
   const isBulkApprovalEligible = (order: DeliveryOrder) =>
     order.status === 'delivered' &&
     !(order as any).deleted_at &&
@@ -619,10 +623,11 @@ export default function Reconciliation() {
     !String((order as any).final_count_status || '').startsWith('counted') &&
     !String((order as any).final_count_status || '').startsWith('excluded') &&
     !isConfirmedAdminExclusion(order as any) &&
+    !isPreviousCycleResolved(order) &&
+    Number(order.order_earning ?? 0) === 0 &&
     !isOrderDuplicate(order) &&
-    !order.needs_review &&
     Number(order.order_multiplier ?? 1) === 1 &&
-    order.bconnect_match_status === 'matched' &&
+    (reviewedApprovalMode || (!order.needs_review && order.bconnect_match_status === 'matched')) &&
     Boolean(normalizeOrderInvoice(order)) &&
     Boolean(normalizeBranchName((order as any).branch_name || riderMap.get(order.rider_id)?.branch_name))
 
@@ -631,7 +636,12 @@ export default function Reconciliation() {
 
   async function approveSelectedOrders() {
     if (bulkApproving || !selectedEligibleIds.length) return
-    if (!window.confirm(`اعتماد ${selectedEligibleIds.length} أوردر مطابق لـ BConnect؟ لن يتم اعتماد المكرر أو ×1.5 أو الفاشل أو المستبعد.`)) return
+    const reason = reviewedApprovalMode
+      ? window.prompt('اكتب سبب اعتماد الفواتير التي راجعتها يدويًا')?.trim()
+      : 'اعتماد جماعي من الإدارة بعد مطابقة BConnect'
+    if (!reason) return
+    const invoices = displayedOrders.filter(order => selectedEligibleIds.includes(order.id)).map(normalizeOrderInvoice)
+    if (!window.confirm(`تأكيد اعتماد ${invoices.length} أوردر؟\nالفواتير: ${invoices.join('، ')}\nالسبب: ${reason}`)) return
     setBulkApproving(true)
     const approved: string[] = []
     const failed: string[] = []
@@ -649,9 +659,9 @@ export default function Reconciliation() {
             final_count_status: 'counted_manual_approval',
             count_exclusion_reason: null,
             needs_review: false,
-            reconciliation_notes: 'اعتماد جماعي من الإدارة بعد مطابقة BConnect',
+            reconciliation_notes: reason,
             updated_at: new Date().toISOString(),
-          })
+          }, (order as DeliveryOrder & { updated_at?: string }).updated_at ?? null)
           approved.push(id)
         } catch (error) {
           console.error('Bulk approval failed for order', id, error)
@@ -2118,9 +2128,14 @@ export default function Reconciliation() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold">
-              <input type="checkbox" checked={selectableIds.length > 0 && selectedEligibleIds.length === selectableIds.length} onChange={event => setSelectedOrderIds(event.target.checked ? selectableIds : [])} disabled={bulkApproving || selectableIds.length === 0} />
-              تحديد المؤهل ({selectableIds.length})
+              <input type="checkbox" checked={selectableIds.length > 0 && selectedEligibleIds.length === selectableIds.length} onChange={event => setSelectedOrderIds(event.target.checked ? selectableIds : [])} disabled={reviewedApprovalMode || bulkApproving || selectableIds.length === 0} />
+              {reviewedApprovalMode ? 'حدد كل فاتورة من بطاقتها' : `تحديد المؤهل (${selectableIds.length})`}
             </label>
+            <button type="button" disabled={bulkApproving} aria-pressed={reviewedApprovalMode}
+              onClick={() => { setSelectedOrderIds([]); setReviewedApprovalMode(value => !value) }}
+              className="rounded-xl border border-teal-300 bg-white px-4 py-2 text-sm font-black text-teal-800">
+              {reviewedApprovalMode ? 'العودة للمطابق تلقائيًا' : 'اختيار فواتير راجعتها يدويًا'}
+            </button>
             <button type="button" onClick={() => void approveSelectedOrders()} disabled={!selectedEligibleIds.length || bulkApproving} className="flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
               <CheckCircle2 size={17} /> {bulkApproving ? 'جارٍ اعتماد القرارات...' : `اعتماد المحدد (${selectedEligibleIds.length})`}
             </button>
