@@ -2128,8 +2128,8 @@ export default function Reconciliation() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold">
-              <input type="checkbox" checked={selectableIds.length > 0 && selectedEligibleIds.length === selectableIds.length} onChange={event => setSelectedOrderIds(event.target.checked ? selectableIds : [])} disabled={reviewedApprovalMode || bulkApproving || selectableIds.length === 0} />
-              {reviewedApprovalMode ? 'حدد كل فاتورة من بطاقتها' : `تحديد المؤهل (${selectableIds.length})`}
+              <input type="checkbox" checked={selectableIds.length > 0 && selectedEligibleIds.length === selectableIds.length} onChange={event => setSelectedOrderIds(event.target.checked ? selectableIds : [])} disabled={bulkApproving || selectableIds.length === 0} />
+              {reviewedApprovalMode ? '`تحديد الفواتير الظاهرة المؤهلة (${selectableIds.length})` : `تحديد المؤهل (${selectableIds.length})`}
             </label>
             <button type="button" disabled={bulkApproving} aria-pressed={reviewedApprovalMode}
               onClick={() => { setSelectedOrderIds([]); setReviewedApprovalMode(value => !value) }}
