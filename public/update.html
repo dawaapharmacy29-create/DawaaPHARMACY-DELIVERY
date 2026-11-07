@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#008E92" />
+    <meta http-equiv="Cache-Control" content="no-store" />
+    <title>تحديث تطبيق دواء</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #f3f7f8; color: #17333c; font-family: Arial, sans-serif; }
+      main { width: min(100%, 420px); padding: 32px 24px; border-radius: 28px; background: white; text-align: center; box-shadow: 0 12px 40px #17333c12; }
+      .icon { display: grid; place-items: center; width: 64px; height: 64px; margin: 0 auto 20px; border-radius: 20px; background: #e4f6f3; color: #008e92; font-size: 36px; }
+      h1 { margin: 0 0 12px; font-size: 24px; }
+      p { line-height: 1.8; color: #526970; }
+      button { width: 100%; padding: 16px; margin-top: 12px; border: 0; border-radius: 16px; background: #008e92; color: white; font: bold 18px Arial, sans-serif; cursor: pointer; }
+      button:disabled { opacity: .65; cursor: wait; }
+      #status { min-height: 28px; margin-bottom: 0; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="icon" aria-hidden="true">↻</div>
+      <h1>تحديث تطبيق الدليفري</h1>
+      <p>حمّل أحدث نسخة من التطبيق لاستكمال تسجيل الأوردرات والزيارات المكررة.</p>
+      <button id="update" type="button">تحديث وفتح التطبيق</button>
+      <p id="status" role="status" aria-live="polite">يحتاج اتصالًا بالإنترنت</p>
+    </main>
+    <script>
+      const button = document.getElementById('update');
+      const status = document.getElementById('status');
+
+      button.addEventListener('click', async () => {
+        if (button.disabled) return;
+        button.disabled = true;
+        status.textContent = 'جاري تحميل أحدث نسخة…';
+
+        try {
+          const fresh = Date.now().toString();
+          const response = await fetch('/index.html?fresh=' + fresh, { cache: 'no-store' });
+          if (!response.ok) throw new Error('update_unavailable');
+
+          if ('serviceWorker' in navigator) {
+            const registrations = await navigator.serviceWorker.getRegistrations().catch(() => []);
+            await Promise.all(registrations
+              .filter(registration => registration.scope === location.origin + '/')
+              .map(registration => registration.unregister().catch(() => false)));
+          }
+
+          if ('caches' in window) {
+            const keys = await caches.keys().catch(() => []);
+            await Promise.all(keys
+              .filter(key => key.startsWith('dawaa-delivery-'))
+              .map(key => caches.delete(key).catch(() => false)));
+          }
+
+          status.textContent = 'تم التحديث، جاري فتح التطبيق…';
+          location.replace('/rider?fresh=' + fresh);
+        } catch {
+          status.textContent = 'تعذر تحميل التحديث. تحقق من الإنترنت واضغط مرة أخرى.';
+          button.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
