@@ -101,7 +101,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
     return [selectedCustomer.address, selectedCustomer.area].filter(Boolean).join(' - ')
   }, [selectedCustomer])
   const manualMode = !selectedCustomer && customerSearchDone && customerQuery.trim().length > 0 && customerResults.length === 0
-  const duplicateDetailsValid = !duplicateRequired || Boolean(duplicateReason)
+  const duplicateDetailsValid = !duplicateRequired || Boolean(duplicateReason && duplicateNote.trim().length >= 5)
   const canSave = Boolean(invoiceNumber.trim() && customerCode && (selectedCustomer || manualCustomerName.trim()) && duplicateDetailsValid)
 
   function startRuntimeContext() {
@@ -212,10 +212,6 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
       toast.error('اختار سبب التكرار')
       return
     }
-    if (duplicateRequired && !VISIT_GATEWAY_ENABLED) {
-      toast.error('تسجيل الزيارة المكررة متوقف مؤقتًا لحماية الفواتير. انتظر تفعيل المسار الآمن.')
-      return
-    }
     const effectiveDuplicateNote = duplicateNote.trim()
     if (duplicateRequired && effectiveDuplicateNote.length < 5) {
       toast.error('اكتب ملاحظة توضح سبب الزيارة المكررة (5 أحرف على الأقل)')
@@ -253,7 +249,7 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
         `GPS accuracy: ${gps.accuracy ?? 'unknown'}m`,
       ].filter(Boolean).join('\n')
 
-      const request = duplicateRequired
+      const request = duplicateRequired && VISIT_GATEWAY_ENABLED
         ? supabase.rpc('rider_register_repeated_visit_v1', {
             p_token: token,
             p_invoice_number: invoice,
@@ -261,7 +257,27 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
             p_note: effectiveDuplicateNote,
             p_client_request_id: repeatedVisitRequestIdRef.current ||= crypto.randomUUID(),
           })
-        : supabase.rpc('rider_create_order_v3', {
+        : duplicateRequired
+          ? supabase.rpc('rider_create_order', {
+              p_token: token,
+              p_customer_id: selectedCustomer?.id || null,
+              p_customer_code: code,
+              p_customer_name: name,
+              p_customer_phone: customerPhone || null,
+              p_customer_address: customerAddress || null,
+              p_invoice_number: invoice,
+              p_invoice_amount: Number.isFinite(amount) ? amount : 0,
+              p_order_multiplier: multiplier,
+              p_notes: auditNote,
+              p_is_duplicate_invoice: true,
+              p_duplicate_reason: duplicateReason,
+              p_duplicate_note: effectiveDuplicateNote,
+              p_preparing_doctor_name: duplicateDoctorName.trim() || null,
+              p_gps_lat: gps.lat,
+              p_gps_lng: gps.lng,
+              p_gps_accuracy_m: gps.accuracy,
+            })
+          : supabase.rpc('rider_create_order_v3', {
             p_token: token,
             p_customer_id: selectedCustomer?.id || null,
             p_customer_code: code,
@@ -291,6 +307,8 @@ export default function RiderQuickOrderForm({ open, rider, branchName, onClose, 
 
       if (duplicateRequired && VISIT_GATEWAY_ENABLED) {
         toast.success('تم تسجيل الزيارة المكررة للمراجعة، ولن تُحسب كفاتورة تجارية جديدة.')
+      } else if (duplicateRequired) {
+        toast.success('تم تسجيل الزيارة المكررة وهي بانتظار مراجعة الإدارة')
       } else if (result.manual_customer_entry) {
         toast.success(result.message || 'تم تسجيل أوردر العميل الجديد وسيتم مراجعته ومزامنته')
       } else if (multiplier === 1.5) {

@@ -571,7 +571,7 @@ export default function RiderDashboard() {
   const tripCaptureSessionIdRef = useRef(createTripCaptureSessionId());
   const tripOperationIdRef = useRef(createClientTripId());
   const tripSaveLockRef = useRef(false);
-  const cycleSummaryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cycleSummaryTimerRef = useRef<number | null>(null);
 
   const hasTripProofUpload =
     Boolean(tripProofUploadInfo) && tripProofUploadState === "uploaded";
@@ -1979,10 +1979,6 @@ export default function RiderDashboard() {
       toast.error("اختار سبب التكرار");
       return;
     }
-    if (isDup && !VISIT_GATEWAY_ENABLED) {
-      toast.error("تسجيل الزيارة المكررة متوقف لحين تفعيل الحماية الجديدة على قاعدة البيانات.");
-      return;
-    }
     const effectiveDupNote = dupNote.trim();
     if (isDup && effectiveDupNote.length < 5) {
       toast.error('اكتب ملاحظة إجبارية عن التكرار (5 أحرف على الأقل)');
@@ -1994,7 +1990,7 @@ export default function RiderDashboard() {
       setSaving(true);
       setOrderSaveError("");
 
-      if (isDup) {
+      if (isDup && VISIT_GATEWAY_ENABLED) {
         const token = getStoredRiderToken();
         if (!token) throw new Error('انتهت الجلسة. سجل دخول مرة أخرى.');
         if (!navigator.onLine) throw new Error('تسجيل الزيارة المكررة يحتاج اتصال بالإنترنت.');
