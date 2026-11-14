@@ -59,11 +59,12 @@ export default function Login() {
     if (!result?.success || (!result.rider_id && !result.account_id)) {
       const errMsg = friendlyRiderError(result)
       setError(errMsg)
-      // لو المشكلة في الـ device، نوضح الخطوة التالية
+      // Never erase the durable device ID after a rejected login.
+      // Erasing it makes the SAME phone appear as a new device on every retry,
+      // requiring repeated manager approval. Keep the binding intact so an
+      // administrator can approve this exact device once.
       if (result?.error === 'device_not_approved') {
-        // نمسح الـ device binding المحلي عشان المحاولة التالية تكون من جهاز جديد
-        localStorage.removeItem('dawaa_device_id_v1')
-        localStorage.removeItem('dawaa_device_label_v1')
+        console.info('Device approval required; preserving existing device identity')
       }
       return
     }
