@@ -1,12 +1,13 @@
 import { NavLink } from 'react-router-dom'
 import { useAdminAccess } from '../hooks/useAdminAccess'
-import { ClipboardCheck, CopyCheck, FileQuestion, Gauge, GitCompareArrows, Route, ShieldCheck } from 'lucide-react'
+import { ClipboardCheck, CopyCheck, Shuffle, FileQuestion, Gauge, GitCompareArrows, Route, ShieldCheck } from 'lucide-react'
 
 const items = [
   { to: '/admin/review-center', label: 'مركز مراجعة الدورة', icon: Gauge, pageKey: 'dashboard', end: true },
   { to: '/admin/reconciliation', label: 'مطابقة الأوردرات', icon: GitCompareArrows, pageKey: 'reconciliation' },
   { to: '/admin/trips', label: 'مراجعة المشاوير', icon: Route, pageKey: 'trips' },
   { to: '/admin/duplicate-invoices', label: 'الأوردرات المكررة', icon: CopyCheck, pageKey: 'duplicate_invoices' },
+  { to: '/admin/spot-checks', label: 'المراجعة الأسبوعية', icon: Shuffle, pageKey: 'reconciliation' },
   { to: '/admin/trips-without-invoice', label: 'مشاوير بدون فاتورة', icon: FileQuestion, pageKey: 'trips_without_invoice' },
   { to: '/admin/cycle-closing', label: 'إغلاق الدورة', icon: ClipboardCheck, pageKey: 'dashboard' },
   { to: '/admin/ops', label: 'متابعة التشغيل الحي', icon: ShieldCheck, pageKey: 'dashboard' },
