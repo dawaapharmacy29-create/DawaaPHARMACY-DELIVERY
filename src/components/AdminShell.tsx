@@ -53,6 +53,7 @@ const groups: AdminNavGroup[] = [
       { to: '/admin/reconciliation', label: 'مطابقة الأوردرات', pageKey: 'reconciliation' },
       { to: '/admin/trips', label: 'مراجعة المشاوير', pageKey: 'trips' },
       { to: '/admin/duplicate-invoices', label: 'الأوردرات المكررة', pageKey: 'duplicate_invoices' },
+      { to: '/admin/spot-checks', label: 'المراجعة الأسبوعية', pageKey: 'reconciliation' },
       { to: '/admin/trips-without-invoice', label: 'حالات بدون فاتورة', pageKey: 'trips_without_invoice' },
     ],
   },
